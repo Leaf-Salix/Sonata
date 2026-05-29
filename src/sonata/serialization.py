@@ -9,13 +9,15 @@
 
 """Stable JSON-like serialization helpers for Sonata scores."""
 
+from dataclasses import asdict
 import json
 from hashlib import sha256
 from typing import Any
 
-from .score import Score
+from .score import EligibilityResult, Score
 
 SCORE_SCHEMA_VERSION = 1
+ELIGIBILITY_RESULT_SCHEMA_VERSION = 1
 
 
 def score_to_dict(score: Score) -> dict[str, Any]:
@@ -64,6 +66,17 @@ def score_to_json(score: Score, *, indent: int | None = 2) -> str:
     return json.dumps(score_to_dict(score), indent=indent, sort_keys=True)
 
 
+def eligibility_result_to_dict(result: EligibilityResult) -> dict[str, Any]:
+    """Return a deterministic JSON-like dictionary for an eligibility result."""
+    return {
+        "schema_version": ELIGIBILITY_RESULT_SCHEMA_VERSION,
+        "eligible": result.eligible,
+        "reasons": list(result.reasons),
+        "reason_details": [_json_like(asdict(reason)) for reason in result.reason_details],
+        "score": score_to_dict(result.score) if result.score is not None else None,
+    }
+
+
 def score_fingerprint(score: Score, *, include_metadata: bool = False) -> str:
     """Return a stable SHA-256 fingerprint for cache/diff experiments."""
     data = score_to_dict(score)
@@ -88,7 +101,9 @@ def _json_like(value: Any) -> Any:
 
 
 __all__ = [
+    "ELIGIBILITY_RESULT_SCHEMA_VERSION",
     "SCORE_SCHEMA_VERSION",
+    "eligibility_result_to_dict",
     "score_fingerprint",
     "score_to_dict",
     "score_to_json",

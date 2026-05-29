@@ -63,12 +63,22 @@ class Dependency:
 
 
 @dataclass(frozen=True)
+class FallbackReason:
+    """Structured explanation for why a score or region is ineligible."""
+
+    code: str
+    message: str
+    severity: str = "error"
+
+
+@dataclass(frozen=True)
 class EligibilityResult:
     """Result of checking whether a score or IR region can use Sonata."""
 
     eligible: bool
     score: "Score | None" = None
     reasons: tuple[str, ...] = ()
+    reason_details: tuple[FallbackReason, ...] = ()
 
     @classmethod
     def accept(cls, score: "Score") -> "EligibilityResult":
@@ -78,7 +88,11 @@ class EligibilityResult:
     @classmethod
     def reject(cls, *reasons: str) -> "EligibilityResult":
         """Build an ineligible result with one or more explanatory reasons."""
-        return cls(eligible=False, reasons=tuple(reasons))
+        return cls(
+            eligible=False,
+            reasons=tuple(reasons),
+            reason_details=tuple(FallbackReason(code=_reason_code(reason), message=reason) for reason in reasons),
+        )
 
 
 @dataclass(frozen=True)
@@ -211,6 +225,11 @@ def _shape_dim_rejection_reason(symbol: str, dim: Any) -> str | None:
 
 def _shape_symbol_label(symbol: str) -> str:
     return symbol or "<empty>"
+
+
+def _reason_code(reason: str) -> str:
+    code = "".join(ch.lower() if ch.isalnum() else "_" for ch in reason).strip("_")
+    return "_".join(part for part in code.split("_") if part) or "fallback"
 
 
 def _visit_for_cycle(
