@@ -1,0 +1,92 @@
+diff --git a/python/pypto/backend/pto_backend.py b/python/pypto/backend/pto_backend.py
+index 7aba8e92..07699434 100644
+--- a/python/pypto/backend/pto_backend.py
++++ b/python/pypto/backend/pto_backend.py
+@@ -35,6 +35,7 @@ from pypto.compile_profiling import CompileProfiler, StageRecord
+ from pypto.pypto_core import backend as _backend_core
+ from pypto.pypto_core import codegen as _codegen_core
+ from pypto.pypto_core import ir as _ir_core
++from sonata import DEFAULT_RUNTIME_TARGET, RuntimeTarget
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -688,6 +689,7 @@ def _generate_config_file(
+     func_name_to_core_type: dict[str, _ir_core.CoreType],
+     *,
+     block_dim: int | None = None,
++    runtime_target: RuntimeTarget = DEFAULT_RUNTIME_TARGET,
+ ) -> str:
+     """Generate kernel_config.py content.
+ 
+@@ -699,9 +701,10 @@ def _generate_config_file(
+     """
+     runtime_lines = [
+         "RUNTIME_CONFIG = {",
+-        '\t"runtime": "tensormap_and_ringbuffer",',
+-        '\t"aicpu_thread_num": 4,',
++        f'\t"runtime": "{runtime_target.runtime}",',
+     ]
++    if runtime_target.aicpu_thread_num is not None:
++        runtime_lines.append(f'\t"aicpu_thread_num": {runtime_target.aicpu_thread_num},')
+     if block_dim is not None:
+         runtime_lines.append(f'\t"block_dim": {block_dim},')
+     runtime_lines.append("}\n")
+@@ -710,14 +713,13 @@ def _generate_config_file(
+         "# Kernel and Orchestration Configuration\n",
+         "from pathlib import Path\n",
+         "_ROOT_DIR = Path(__file__).parent\n",
+-        "# Runtime configuration for tensormap_and_ringbuffer.",
+-        "# This runtime requires 4 AICPU threads (3 schedulers + 1 orchestrator on thread 3).",
++        *runtime_target.config_comment,
+         "# block_dim is only emitted when the user passes compile(block_dim=...);",
+         "# otherwise the runtime default applies (simpler validates against device capacity).",
+         *runtime_lines,
+         "ORCHESTRATION = {",
+         f'\t"source": str(_ROOT_DIR / "orchestration" / "{orch_func_name}.cpp"),',
+-        '\t"function_name": "aicpu_orchestration_entry"',
++        f'\t"function_name": "{runtime_target.function_name}"',
+         "}\n",
+         "KERNELS = [",
+     ]
+diff --git a/tests/ut/backend/test_kernel_config_block_dim.py b/tests/ut/backend/test_kernel_config_block_dim.py
+index dbed8530..a8b9b2bf 100644
+--- a/tests/ut/backend/test_kernel_config_block_dim.py
++++ b/tests/ut/backend/test_kernel_config_block_dim.py
+@@ -20,6 +20,7 @@ directly and do not require the optional ``simpler`` runtime package.
+ import pytest
+ from pypto.backend.pto_backend import _generate_config_file
+ from pypto.pypto_core import ir as _ir_core
++from sonata import RuntimeTarget
+ 
+ 
+ def _inputs() -> dict:
+@@ -53,6 +54,29 @@ class TestKernelConfigBlockDim:
+         text = _generate_config_file(**_inputs(), block_dim=0)
+         assert '"block_dim": 0,' in text
+ 
++    def test_runtime_target_defaults_preserve_tensormap_config(self) -> None:
++        text = _generate_config_file(**_inputs())
++
++        assert '"runtime": "tensormap_and_ringbuffer",' in text
++        assert '"aicpu_thread_num": 4,' in text
++        assert '"function_name": "aicpu_orchestration_entry"' in text
++
++    def test_runtime_target_can_emit_host_build_graph_config(self) -> None:
++        text = _generate_config_file(
++            **_inputs(),
++            runtime_target=RuntimeTarget(
++                runtime="host_build_graph",
++                function_name="build_main_graph",
++                aicpu_thread_num=None,
++                config_comment=("# Runtime configuration for host_build_graph.",),
++            ),
++        )
++
++        assert '"runtime": "host_build_graph",' in text
++        assert '"aicpu_thread_num"' not in text
++        assert '"function_name": "build_main_graph"' in text
++        assert "# Runtime configuration for host_build_graph." in text
++
+ 
+ if __name__ == "__main__":
+     pytest.main([__file__, "-v"])

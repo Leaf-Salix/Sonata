@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypto-sonata"
+version = "0.1.0"
+description = "Experimental compile-time static DAG layer for PyPTO"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "LicenseRef-CANN-Open-Software-License-Agreement-Version-2.0" }
+authors = [{ name = "Sonata Contributors" }]
+keywords = ["pypto", "compiler", "dag", "static-analysis", "orchestration"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Compilers",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.14.8",
+]
+pypto = []
+
+[project.urls]
+Repository = "https://github.com/Leaf-Salix/pypto-sonata"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*", "patches*", "upstream*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

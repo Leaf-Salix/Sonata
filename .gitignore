@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+htmlcov/
+dist/
+build/
+.venv/
+venv/
+.env
+.env.*
+.DS_Store
+
+# Local scratch and generated outputs
+.scratch/
+build_output/

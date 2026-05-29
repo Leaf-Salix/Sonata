@@ -1,0 +1,56 @@
+# Copyright (c) PyPTO Contributors.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+"""Experimental static execution planning helpers for PyPTO Sonata."""
+
+from .dependencies import (
+    DEPENDENCY_POLICY_DATAFLOW_V0,
+    DEPENDENCY_POLICY_SEQUENTIAL_V0,
+    build_dataflow_dependencies,
+    build_dependencies,
+    build_sequential_dependencies,
+    supports_dataflow_dependencies,
+)
+from .eligibility import check_static_eligibility
+from .score import (
+    DEFAULT_RUNTIME_TARGET,
+    Dependency,
+    EligibilityResult,
+    RuntimeTarget,
+    Score,
+    ShapeAssumption,
+    Task,
+)
+from .serialization import (
+    SCORE_SCHEMA_VERSION,
+    score_fingerprint,
+    score_to_dict,
+    score_to_json,
+)
+
+__all__ = [
+    "DEPENDENCY_POLICY_DATAFLOW_V0",
+    "DEPENDENCY_POLICY_SEQUENTIAL_V0",
+    "DEFAULT_RUNTIME_TARGET",
+    "Dependency",
+    "EligibilityResult",
+    "RuntimeTarget",
+    "SCORE_SCHEMA_VERSION",
+    "Score",
+    "ShapeAssumption",
+    "Task",
+    "build_dataflow_dependencies",
+    "build_dependencies",
+    "build_sequential_dependencies",
+    "check_static_eligibility",
+    "score_fingerprint",
+    "score_to_dict",
+    "score_to_json",
+    "supports_dataflow_dependencies",
+]
