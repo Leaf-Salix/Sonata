@@ -273,7 +273,7 @@ class TestStorageCoverageThresholds:
         assert result.has_warnings()
         assert "below threshold" in result.reason_details[0].message
 
-    def test_zero_coverage_with_unknown_args_rejects(self) -> None:
+    def test_zero_coverage_with_unknown_args_warns(self) -> None:
         from sonata.eligibility import _check_storage_coverage
 
         tasks = (
@@ -284,8 +284,9 @@ class TestStorageCoverageThresholds:
         )
         result = _check_storage_coverage(self._score_with_coverage(tasks).validate())
 
-        assert not result.eligible
-        assert result.reason_details[0].code == "storage_coverage_below_threshold"
+        assert result.eligible
+        assert result.has_warnings()
+        assert "below threshold" in result.reason_details[0].message
 
     def test_no_memory_args_eligible(self) -> None:
         from sonata.eligibility import _check_storage_coverage

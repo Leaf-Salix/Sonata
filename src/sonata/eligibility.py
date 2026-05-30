@@ -101,16 +101,6 @@ def _check_storage_coverage(result: EligibilityResult) -> EligibilityResult:
     if coverage["unknown"] == 0:
         return result
 
-    # Only check coverage when params exist (storage keys can be derived).
-    # If no params, all args are necessarily "unknown" — not a coverage failure.
-    overall = result.score.metadata.get("storage_key_coverage")
-    if overall and overall["known"] == 0 and overall["total"] > 0:
-        # No storage keys derivable at all — likely no params on entry function.
-        return result
-
-    if coverage["known"] == 0:
-        return EligibilityResult.reject("memory storage key coverage is zero")
-
     if coverage["known"] / coverage["total"] < STORAGE_COVERAGE_WARN_THRESHOLD:
         return EligibilityResult.accept_with_warnings(
             result.score,
