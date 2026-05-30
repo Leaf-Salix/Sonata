@@ -153,7 +153,37 @@ def test_dataflow_dependencies_require_complete_directions() -> None:
     with pytest.raises(ValueError, match="dataflow_v0 requires complete task arg_directions"):
         build_dataflow_dependencies(tasks)
 
-    assert not supports_dataflow_dependencies(tasks)
+    assert supports_dataflow_dependencies(tasks) is not None
+
+
+class TestDataflowFallbackCodes:
+    def test_all_complete_returns_none(self) -> None:
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv", args=("a",), arg_directions=("input",)),
+            Task(task_id=1, func_id=1, core_type="aiv", args=("b",), arg_directions=("output",)),
+        )
+        assert supports_dataflow_dependencies(tasks) is None
+
+    def test_none_have_directions_returns_unavailable(self) -> None:
+        from sonata.fallback import FallbackCode
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv", args=("a",)),
+            Task(task_id=1, func_id=1, core_type="aiv", args=("b",)),
+        )
+        assert supports_dataflow_dependencies(tasks) == FallbackCode.DATAFLOW_DIRECTIONS_UNAVAILABLE
+
+    def test_partial_directions_returns_incomplete(self) -> None:
+        from sonata.fallback import FallbackCode
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv", args=("a",), arg_directions=("input",)),
+            Task(task_id=1, func_id=1, core_type="aiv", args=("b",)),
+        )
+        assert supports_dataflow_dependencies(tasks) == FallbackCode.DATAFLOW_DIRECTIONS_INCOMPLETE
+
+    def test_empty_tasks_returns_none(self) -> None:
+        assert supports_dataflow_dependencies(()) is None
 
 
 def test_build_dependencies_rejects_unknown_policy() -> None:

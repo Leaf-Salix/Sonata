@@ -92,18 +92,21 @@ def test_build_task_storage_metadata_tolerates_mismatched_arity() -> None:
 
 
 def test_build_score_metadata_records_entry_and_policy_fallback() -> None:
+    from sonata.fallback import FallbackCode
+
     metadata = build_score_metadata(
         (Entry(),),
         (),
         None,
         "sequential_v0",
         "dataflow_v0",
+        fallback_code=FallbackCode.DATAFLOW_DIRECTIONS_UNAVAILABLE,
     )
 
     assert metadata["entry_name"] == "main"
     assert metadata["dependency_policy"] == "sequential_v0"
     assert metadata["requested_dependency_policy"] == "dataflow_v0"
-    assert metadata["dependency_policy_fallback_reason"] == "task arg_directions are incomplete"
+    assert metadata["dependency_policy_fallback_reason"] == "dataflow_directions_unavailable"
 
 
 if __name__ == "__main__":

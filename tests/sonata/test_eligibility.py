@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from sonata import DEPENDENCY_POLICY_DATAFLOW_V0, RuntimeTarget, check_static_eligibility
+from sonata import DEPENDENCY_POLICY_DATAFLOW_V0, DEPENDENCY_POLICY_SEQUENTIAL_V0, RuntimeTarget, check_static_eligibility
 
 
 @dataclass
@@ -157,6 +157,58 @@ def test_static_eligibility_can_use_dataflow_dependency_policy() -> None:
     assert result.score is not None
     assert result.score.metadata["dependency_policy"] == "dataflow_v0"
     assert [(dep.producer, dep.consumer) for dep in result.score.dependencies] == [(2, 3)]
+
+
+def test_dataflow_fallback_records_unavailable_in_metadata() -> None:
+    func = Function(
+        name="main",
+        body=(
+            EvalStmt(Call("kernel.a", args=("x",))),
+            EvalStmt(Call("kernel.b", args=("y",))),
+        ),
+    )
+
+    result = check_static_eligibility(func, dependency_policy=DEPENDENCY_POLICY_DATAFLOW_V0)
+
+    assert result.eligible
+    assert result.score is not None
+    assert result.score.metadata["dependency_policy"] == "sequential_v0"
+    assert result.score.metadata["requested_dependency_policy"] == "dataflow_v0"
+    assert result.score.metadata["dependency_policy_fallback_reason"] == "dataflow_directions_unavailable"
+
+
+def test_dataflow_fallback_records_incomplete_in_metadata() -> None:
+    func = Function(
+        name="main",
+        body=(
+            EvalStmt(Call("kernel.a", args=("x",), arg_directions=("Input",))),
+            EvalStmt(Call("kernel.b", args=("y",))),
+        ),
+    )
+
+    result = check_static_eligibility(func, dependency_policy=DEPENDENCY_POLICY_DATAFLOW_V0)
+
+    assert result.eligible
+    assert result.score is not None
+    assert result.score.metadata["dependency_policy"] == "sequential_v0"
+    assert result.score.metadata["dependency_policy_fallback_reason"] == "dataflow_directions_incomplete"
+
+
+def test_sequential_policy_has_no_fallback_metadata() -> None:
+    func = Function(
+        name="main",
+        body=(
+            EvalStmt(Call("kernel.a", args=("x",))),
+            EvalStmt(Call("kernel.b", args=("y",))),
+        ),
+    )
+
+    result = check_static_eligibility(func, dependency_policy=DEPENDENCY_POLICY_SEQUENTIAL_V0)
+
+    assert result.eligible
+    assert result.score is not None
+    assert "requested_dependency_policy" not in result.score.metadata
+    assert "dependency_policy_fallback_reason" not in result.score.metadata
 
 
 def test_static_eligibility_derives_structural_storage_keys() -> None:
