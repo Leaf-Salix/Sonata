@@ -126,11 +126,19 @@ class Score:
         if cycle is not None:
             reasons.append(f"dependency graph must be acyclic, found cycle: {_format_cycle(cycle)}")
 
+        shape_symbols: set[str] = set()
         for shape in self.shape_assumptions:
-            if not shape.symbol:
+            symbol_seen = shape.symbol in shape_symbols
+            if not symbol_seen:
+                shape_symbols.add(shape.symbol)
+
+            if not shape.symbol and not symbol_seen:
                 reasons.append("shape assumption symbol must not be empty")
-            if any(dim < 0 for dim in shape.dims):
-                reasons.append(f"shape assumption {shape.symbol} has negative dimension")
+                continue
+            if symbol_seen:
+                reasons.append(f"shape assumption symbol must be unique: {_shape_symbol_label(shape.symbol)}")
+                continue
+            reasons.extend(_validate_shape_dims(shape.symbol, shape.dims))
 
         if reasons:
             return EligibilityResult.reject(*reasons)
@@ -173,6 +181,36 @@ def _validate_task(task: Task) -> list[str]:
             f"does not match args size {len(task.args)}"
         )
     return reasons
+
+
+def is_static_shape_dim(dim: Any) -> bool:
+    """Return whether ``dim`` is a positive concrete shape dimension."""
+    return isinstance(dim, int) and not isinstance(dim, bool) and dim > 0
+
+
+def _validate_shape_dims(symbol: str, dims: tuple[int, ...]) -> list[str]:
+    reasons: list[str] = []
+    seen: set[str] = set()
+    for dim in dims:
+        reason = _shape_dim_rejection_reason(symbol, dim)
+        if reason is not None and reason not in seen:
+            seen.add(reason)
+            reasons.append(reason)
+    return reasons
+
+
+def _shape_dim_rejection_reason(symbol: str, dim: Any) -> str | None:
+    if is_static_shape_dim(dim):
+        return None
+    if not isinstance(dim, int) or isinstance(dim, bool):
+        return f"shape assumption {symbol} has non-integer dimension"
+    if dim < 0:
+        return f"shape assumption {symbol} has negative dimension"
+    return f"shape assumption {symbol} has zero dimension"
+
+
+def _shape_symbol_label(symbol: str) -> str:
+    return symbol or "<empty>"
 
 
 def _visit_for_cycle(

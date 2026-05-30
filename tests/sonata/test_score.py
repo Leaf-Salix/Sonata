@@ -120,7 +120,6 @@ def test_score_validate_accumulates_rejection_reasons() -> None:
         "task 0 has unsupported core_type: gpu",
         "dependency cannot be a self-edge: 0",
         "shape assumption symbol must not be empty",
-        "shape assumption  has negative dimension",
     )
 
 
@@ -148,6 +147,129 @@ def test_score_validate_rejects_task_arg_storage_key_arity_mismatch() -> None:
 
     assert not result.eligible
     assert result.reasons == ("task 0 arg_storage_keys size 1 does not match args size 2",)
+
+
+def test_score_validate_rejects_duplicate_shape_assumption_symbols() -> None:
+    score = Score(
+        name="duplicate_shapes",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(
+            ShapeAssumption(symbol="x", dims=(16,)),
+            ShapeAssumption(symbol="x", dims=(32,)),
+        ),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption symbol must be unique: x",)
+
+
+def test_score_validate_does_not_repeat_dim_errors_for_duplicate_shape_symbols() -> None:
+    score = Score(
+        name="duplicate_bad_shapes",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(
+            ShapeAssumption(symbol="x", dims=(-1,)),
+            ShapeAssumption(symbol="x", dims=(-1,)),
+        ),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == (
+        "shape assumption x has negative dimension",
+        "shape assumption symbol must be unique: x",
+    )
+
+
+def test_score_validate_rejects_duplicate_empty_shape_assumption_symbols() -> None:
+    score = Score(
+        name="duplicate_empty_shapes",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(
+            ShapeAssumption(symbol="", dims=(16,)),
+            ShapeAssumption(symbol="", dims=(32,)),
+        ),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == (
+        "shape assumption symbol must not be empty",
+        "shape assumption symbol must be unique: <empty>",
+    )
+
+
+def test_score_validate_skips_dim_validation_for_empty_shape_symbol() -> None:
+    score = Score(
+        name="empty_shape_symbol",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="", dims=("n",)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption symbol must not be empty",)
+
+
+def test_score_validate_rejects_zero_shape_assumption_dimension() -> None:
+    score = Score(
+        name="zero_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, 16)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption x has zero dimension",)
+
+
+def test_score_validate_rejects_non_integer_shape_assumption_dimension() -> None:
+    score = Score(
+        name="symbolic_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=("n", 16)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption x has non-integer dimension",)
+
+
+def test_score_validate_rejects_bool_shape_assumption_dimension() -> None:
+    score = Score(
+        name="bool_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(True, 16)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption x has non-integer dimension",)
+
+
+def test_score_validate_reports_each_shape_dim_error_category() -> None:
+    score = Score(
+        name="multi_bad_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, -1, "n", True)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == (
+        "shape assumption x has zero dimension",
+        "shape assumption x has negative dimension",
+        "shape assumption x has non-integer dimension",
+    )
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from .dependencies import (
     build_dependencies,
     supports_dataflow_dependencies,
 )
-from .score import EligibilityResult, RuntimeTarget, Score, Task
+from .score import EligibilityResult, RuntimeTarget, Score, ShapeAssumption, Task, is_static_shape_dim
 from .storage import (
     arg_storage_keys,
     collect_call_output_vars,
@@ -76,6 +76,7 @@ def check_static_eligibility(
         or RuntimeTarget(runtime="host_build_graph", function_name=f"build_{name}_graph"),
         tasks=tasks,
         dependencies=build_dependencies(tasks, policy=resolved_policy),
+        shape_assumptions=_extract_shape_assumptions(extraction_roots),
         metadata=build_score_metadata(
             extraction_roots,
             tasks,
@@ -186,6 +187,71 @@ def _extract_tasks(nodes: tuple[Any, ...], core_types: dict[str, str]) -> tuple[
             if output_var is not None:
                 propagate_call_output_storage(output_var, child, storage_keys, arg_directions=_arg_directions)
     return tuple(tasks)
+
+
+def _extract_shape_assumptions(nodes: tuple[Any, ...]) -> tuple[ShapeAssumption, ...]:
+    assumptions: list[ShapeAssumption] = []
+    multiple_roots = len(nodes) > 1
+    for node in nodes:
+        for param in getattr(node, "params", ()):
+            symbol = _shape_symbol(node, param, multiple_roots)
+            dims = _static_shape_dims(param)
+            if symbol and dims is not None:
+                assumptions.append(ShapeAssumption(symbol=symbol, dims=dims))
+    return tuple(assumptions)
+
+
+def _shape_symbol(root: Any, param: Any, multiple_roots: bool) -> str | None:
+    symbol = _arg_name(param)
+    if symbol == _kind(param):
+        return None
+    if not multiple_roots:
+        return symbol
+    root_name = getattr(root, "name", None)
+    if isinstance(root_name, str) and root_name:
+        return f"{root_name}.{symbol}"
+    return symbol
+
+
+def _static_shape_dims(param: Any) -> tuple[int, ...] | None:
+    param_type = _param_type(param)
+    if param_type is None:
+        return None
+    shape = _shape_values(param_type)
+    if shape is None:
+        return None
+    if isinstance(shape, (str, bytes)) or not isinstance(shape, Iterable):
+        return None
+    dims: list[int] = []
+    for dim in shape:
+        value = _const_int_value(dim)
+        if value is None:
+            return None
+        dims.append(value)
+    return tuple(dims)
+
+
+def _param_type(param: Any) -> Any | None:
+    for field in ("type", "type_", "tensor_type"):
+        if hasattr(param, field):
+            return getattr(param, field)
+    return None
+
+
+def _shape_values(param_type: Any) -> Any | None:
+    for field in ("shape", "shape_", "dims", "dims_"):
+        if hasattr(param_type, field):
+            return getattr(param_type, field)
+    return None
+
+
+def _const_int_value(dim: Any) -> int | None:
+    if is_static_shape_dim(dim):
+        return dim
+    value = getattr(dim, "value", None)
+    if is_static_shape_dim(value):
+        return value
+    return None
 
 
 def _extraction_roots(node: Any, entry_name: str | None) -> tuple[Any, ...]:
