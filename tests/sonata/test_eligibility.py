@@ -157,6 +157,8 @@ def test_static_eligibility_can_use_dataflow_dependency_policy() -> None:
     assert result.score is not None
     assert result.score.metadata["dependency_policy"] == "dataflow_v0"
     assert [(dep.producer, dep.consumer) for dep in result.score.dependencies] == [(2, 3)]
+    assert "requested_dependency_policy" not in result.score.metadata
+    assert "dependency_policy_fallback_reason" not in result.score.metadata
 
 
 def test_dataflow_fallback_records_unavailable_in_metadata() -> None:
