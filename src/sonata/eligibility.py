@@ -22,7 +22,7 @@ from .dependencies import (
     DEPENDENCY_POLICY_DATAFLOW_V0,
     DEPENDENCY_POLICY_SEQUENTIAL_V0,
     build_dependencies,
-    supports_dataflow_dependencies,
+    dataflow_dependency_fallback_code,
 )
 from .score import EligibilityResult, RuntimeTarget, Score, ShapeAssumption, Task, is_static_shape_dim
 from .storage import (
@@ -301,7 +301,7 @@ def _resolve_dependency_policy(
     from .fallback import FallbackCode
 
     if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0:
-        code = supports_dataflow_dependencies(tasks)
+        code = dataflow_dependency_fallback_code(tasks)
         if code is not None:
             return DEPENDENCY_POLICY_SEQUENTIAL_V0, code
     return requested_policy, None

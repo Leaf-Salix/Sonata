@@ -662,7 +662,7 @@ class P:
 
     @pl.function(type=pl.FunctionType.Orchestration)
     def main(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
-        with pl.auto_scope():
+        with pl.manual_scope():
             a = self.k1(x)
         return a
 """
