@@ -64,7 +64,12 @@ class Dependency:
 
 @dataclass(frozen=True)
 class FallbackReason:
-    """Structured explanation for why a score or region is ineligible."""
+    """Structured explanation for why a score or region is ineligible.
+
+    ``code`` is a best-effort slug derived from ``message`` and may change if
+    the message wording changes. Do not use it as a stable routing or filtering
+    key.
+    """
 
     code: str
     message: str

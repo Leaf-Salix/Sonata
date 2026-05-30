@@ -147,6 +147,16 @@ def test_arg_storage_keys_projects_known_and_unknown_args() -> None:
     assert storage_key(unknown, {1: "buffer:known"}) is None
 
 
+def test_storage_key_uses_unique_id_to_track_aliases_across_var_objects() -> None:
+    alias = Var("x_alias", unique_id=1)
+    call = Call("kernel", args=(alias,))
+
+    keys = arg_storage_keys(call, {1: "param:1:x"})
+
+    assert storage_key(alias, {1: "param:1:x"}) == "param:1:x"
+    assert keys == ("param:1:x",)
+
+
 def test_propagate_call_output_storage_accepts_normalized_direction_names() -> None:
     out = Var("out", unique_id=1)
     result = Var("result", unique_id=2)
