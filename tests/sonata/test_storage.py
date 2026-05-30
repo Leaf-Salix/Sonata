@@ -271,6 +271,7 @@ class TestStorageCoverageThresholds:
 
         assert result.eligible
         assert result.has_warnings()
+        assert result.reason_details[0].code == "storage_coverage_below_threshold"
         assert "below threshold" in result.reason_details[0].message
 
     def test_zero_coverage_with_unknown_args_warns(self) -> None:
