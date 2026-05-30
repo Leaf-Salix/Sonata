@@ -13,6 +13,7 @@ The policies operate only on the pure-Python :class:`Task` model. This keeps
 Sonata's first dependency experiments decoupled from PyPTO's C++ IR bindings.
 """
 
+from .fallback import FallbackCode
 from .score import Dependency, Task
 
 DEPENDENCY_POLICY_SEQUENTIAL_V0 = "sequential_v0"
@@ -78,13 +79,23 @@ def build_dataflow_dependencies(tasks: tuple[Task, ...]) -> tuple[Dependency, ..
     return tuple(Dependency(producer=producer, consumer=consumer) for producer, consumer in sorted(edges))
 
 
-def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> bool:
-    """Return whether all tasks carry enough direction data for ``dataflow_v0``."""
-    return all(task.arg_directions and len(task.arg_directions) == len(task.args) for task in tasks)
+def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> FallbackCode | None:
+    """Return None when all tasks carry enough direction data, or a FallbackCode
+    explaining why dataflow dependencies cannot be built."""
+    if not tasks:
+        return None
+    has_any = [bool(task.arg_directions) for task in tasks]
+    has_complete = [h and len(task.arg_directions) == len(task.args) for h, task in zip(has_any, tasks)]
+    if all(has_complete):
+        return None
+    if not any(has_any):
+        return FallbackCode.DATAFLOW_DIRECTIONS_UNAVAILABLE
+    return FallbackCode.DATAFLOW_DIRECTIONS_INCOMPLETE
 
 
 def _require_complete_directions(tasks: tuple[Task, ...]) -> None:
-    if supports_dataflow_dependencies(tasks):
+    code = supports_dataflow_dependencies(tasks)
+    if code is None:
         return
     missing = [str(task.task_id) for task in tasks if not task.arg_directions]
     mismatched = [

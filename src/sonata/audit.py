@@ -16,6 +16,7 @@ can explain a score without changing its scheduling semantics.
 
 from typing import Any
 
+from .fallback import FallbackCode
 from .score import Task
 
 _MEMORY_DIRECTIONS = {"input", "inout", "output", "outputexisting"}
@@ -27,6 +28,8 @@ def build_score_metadata(
     entry_name: str | None,
     dependency_policy: str,
     requested_dependency_policy: str,
+    *,
+    fallback_code: FallbackCode | None = None,
 ) -> dict[str, Any]:
     """Build explanatory metadata for an extracted Sonata score."""
     metadata: dict[str, Any] = {
@@ -34,9 +37,9 @@ def build_score_metadata(
         "dependency_policy": dependency_policy,
     }
     metadata.update(build_task_storage_metadata(tasks))
-    if dependency_policy != requested_dependency_policy:
+    if fallback_code is not None:
         metadata["requested_dependency_policy"] = requested_dependency_policy
-        metadata["dependency_policy_fallback_reason"] = "task arg_directions are incomplete"
+        metadata["dependency_policy_fallback_reason"] = fallback_code.value
     entry_names = tuple(
         name for root in extraction_roots if isinstance((name := getattr(root, "name", None)), str)
     )

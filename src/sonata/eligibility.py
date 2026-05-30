@@ -70,7 +70,7 @@ def check_static_eligibility(
 
     name = str(getattr(node, "name", "sonata_score"))
     tasks = _extract_tasks(extraction_roots, _function_core_types(node))
-    resolved_policy = _resolve_dependency_policy(tasks, dependency_policy)
+    resolved_policy, fallback_code = _resolve_dependency_policy(tasks, dependency_policy)
     score = Score(
         name=name,
         runtime_target=runtime_target
@@ -84,6 +84,7 @@ def check_static_eligibility(
             entry_name,
             resolved_policy,
             dependency_policy,
+            fallback_code=fallback_code,
         ),
     )
     return _check_storage_coverage(score.validate())
@@ -294,10 +295,16 @@ def _extraction_roots(node: Any, entry_name: str | None) -> tuple[Any, ...]:
     return tuple(roots)
 
 
-def _resolve_dependency_policy(tasks: tuple[Task, ...], requested_policy: str) -> str:
-    if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0 and not supports_dataflow_dependencies(tasks):
-        return DEPENDENCY_POLICY_SEQUENTIAL_V0
-    return requested_policy
+def _resolve_dependency_policy(
+    tasks: tuple[Task, ...], requested_policy: str
+) -> tuple[str, "FallbackCode | None"]:
+    from .fallback import FallbackCode
+
+    if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0:
+        code = supports_dataflow_dependencies(tasks)
+        if code is not None:
+            return DEPENDENCY_POLICY_SEQUENTIAL_V0, code
+    return requested_policy, None
 
 
 def _function_core_types(node: Any) -> dict[str, str]:
