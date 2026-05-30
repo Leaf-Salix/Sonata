@@ -13,16 +13,12 @@ The policies operate only on the pure-Python :class:`Task` model. This keeps
 Sonata's first dependency experiments decoupled from PyPTO's C++ IR bindings.
 """
 
+from .directions import IGNORED_DIRECTIONS, READ_DIRECTIONS, WRITE_DIRECTIONS, normalize_direction
 from .fallback import FallbackCode
 from .score import Dependency, Task
 
 DEPENDENCY_POLICY_SEQUENTIAL_V0 = "sequential_v0"
 DEPENDENCY_POLICY_DATAFLOW_V0 = "dataflow_v0"
-
-_READ_DIRECTIONS = {"input", "inout"}
-_WRITE_DIRECTIONS = {"output", "outputexisting", "inout"}
-_IGNORED_DIRECTIONS = {"scalar", "nodep"}
-
 
 def build_dependencies(
     tasks: tuple[Task, ...],
@@ -125,13 +121,13 @@ def _read_write_args(task: Task) -> tuple[set[object], set[object]]:
         _storage_keys(task),
         strict=True,
     ):
-        normalized = _normalize_direction(direction)
-        if normalized in _IGNORED_DIRECTIONS:
+        normalized = normalize_direction(direction)
+        if normalized in IGNORED_DIRECTIONS:
             continue
         access_key = storage_key if storage_key is not None else arg
-        if normalized in _READ_DIRECTIONS:
+        if normalized in READ_DIRECTIONS:
             reads.add(access_key)
-        if normalized in _WRITE_DIRECTIONS:
+        if normalized in WRITE_DIRECTIONS:
             writes.add(access_key)
     return reads, writes
 
@@ -140,11 +136,6 @@ def _storage_keys(task: Task) -> tuple[object | None, ...]:
     if task.arg_storage_keys:
         return task.arg_storage_keys
     return (None,) * len(task.args)
-
-
-def _normalize_direction(direction: str) -> str:
-    return "".join(ch for ch in str(direction).lower() if ch.isalnum())
-
 
 __all__ = [
     "DEPENDENCY_POLICY_DATAFLOW_V0",

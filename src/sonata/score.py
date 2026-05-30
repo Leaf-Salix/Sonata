@@ -16,7 +16,7 @@ early analysis and tests can evolve without coupling to C++ bindings.
 from dataclasses import dataclass, field
 from typing import Any
 
-from .fallback import FallbackCode, code_for_reason
+from .fallback import FallbackCode
 
 
 @dataclass(frozen=True)
@@ -94,17 +94,18 @@ class EligibilityResult:
         return cls(eligible=True, score=score)
 
     @classmethod
-    def reject(cls, *reasons: str) -> "EligibilityResult":
+    def reject(cls, *reasons: str | FallbackReason) -> "EligibilityResult":
         """Build an ineligible result with one or more explanatory reasons."""
+        details = tuple(_coerce_fallback_reason(reason, severity="error") for reason in reasons)
         return cls(
             eligible=False,
-            reasons=tuple(reasons),
-            reason_details=tuple(_build_fallback_reason(reason) for reason in reasons),
+            reasons=tuple(reason.message for reason in details),
+            reason_details=details,
         )
 
     @classmethod
     def accept_with_warnings(
-        cls, score: "Score", *warnings: str
+        cls, score: "Score", *warnings: str | FallbackReason
     ) -> "EligibilityResult":
         """Build an eligible result with warning-level detail entries.
 
@@ -117,7 +118,7 @@ class EligibilityResult:
             eligible=True,
             score=score,
             reason_details=tuple(
-                _build_fallback_reason(w, severity="warning") for w in warnings
+                _coerce_fallback_reason(w, severity="warning") for w in warnings
             ),
         )
 
@@ -190,7 +191,7 @@ class Score:
             reasons.extend(_validate_shape_dims(shape.symbol, shape.dims))
 
         if reasons:
-            return EligibilityResult.reject(*reasons)
+            return EligibilityResult.reject(*(_score_validation_reason(reason) for reason in reasons))
         return EligibilityResult.accept(self)
 
 
@@ -267,11 +268,25 @@ def _reason_code(reason: str) -> str:
     return "_".join(part for part in code.split("_") if part) or "fallback"
 
 
+def _coerce_fallback_reason(reason: str | FallbackReason, *, severity: str) -> FallbackReason:
+    if isinstance(reason, FallbackReason):
+        if reason.severity == severity:
+            return reason
+        return FallbackReason(code=reason.code, message=reason.message, severity=severity)
+    return _build_fallback_reason(reason, severity=severity)
+
+
 def _build_fallback_reason(message: str, *, severity: str = "error") -> FallbackReason:
-    """Build a FallbackReason, preferring a stable enum code when available."""
-    enum_code = code_for_reason(message)
-    code = enum_code.value if enum_code is not None else _reason_code(message)
-    return FallbackReason(code=code, message=message, severity=severity)
+    """Build a best-effort FallbackReason for a raw string message."""
+    return FallbackReason(code=_reason_code(message), message=message, severity=severity)
+
+
+def _score_validation_reason(message: str) -> FallbackReason:
+    return FallbackReason(
+        code=FallbackCode.SCORE_VALIDATION_FAILED.value,
+        message=message,
+        severity="error",
+    )
 
 
 def _visit_for_cycle(

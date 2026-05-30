@@ -16,11 +16,9 @@ can explain a score without changing its scheduling semantics.
 
 from typing import Any
 
+from .directions import MEMORY_DIRECTIONS, normalize_direction
 from .fallback import FallbackCode
 from .score import Task
-
-_MEMORY_DIRECTIONS = {"input", "inout", "output", "outputexisting"}
-
 
 def build_score_metadata(
     extraction_roots: tuple[Any, ...],
@@ -71,11 +69,11 @@ def build_task_storage_metadata(tasks: tuple[Task, ...]) -> dict[str, Any]:
             total_args += 1
             if storage_key is not None:
                 known_storage_args += 1
-            normalized = _normalize_direction(direction)
+            normalized = normalize_direction(direction)
             arg_record = _task_arg_record(task, index, arg, storage_key)
             if normalized == "nodep":
                 nodep_args.append(arg_record)
-            if normalized in _MEMORY_DIRECTIONS:
+            if normalized in MEMORY_DIRECTIONS:
                 memory_args += 1
                 if storage_key is not None:
                     known_memory_args += 1
@@ -121,11 +119,6 @@ def _task_arg_record(task: Task, index: int, arg: Any, storage_key: Any | None) 
         "arg": arg,
         "storage_key": storage_key,
     }
-
-
-def _normalize_direction(direction: str) -> str:
-    return "".join(ch for ch in str(direction).lower() if ch.isalnum())
-
 
 __all__ = [
     "build_score_metadata",
