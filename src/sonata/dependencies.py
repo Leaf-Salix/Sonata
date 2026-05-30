@@ -79,7 +79,12 @@ def build_dataflow_dependencies(tasks: tuple[Task, ...]) -> tuple[Dependency, ..
     return tuple(Dependency(producer=producer, consumer=consumer) for producer, consumer in sorted(edges))
 
 
-def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> FallbackCode | None:
+def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> bool:
+    """Return whether all tasks carry enough direction data for dataflow_v0."""
+    return dataflow_dependency_fallback_code(tasks) is None
+
+
+def dataflow_dependency_fallback_code(tasks: tuple[Task, ...]) -> FallbackCode | None:
     """Return None when all tasks carry enough direction data, or a FallbackCode
     explaining why dataflow dependencies cannot be built."""
     if not tasks:
@@ -94,7 +99,7 @@ def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> FallbackCode | No
 
 
 def _require_complete_directions(tasks: tuple[Task, ...]) -> None:
-    code = supports_dataflow_dependencies(tasks)
+    code = dataflow_dependency_fallback_code(tasks)
     if code is None:
         return
     missing = [str(task.task_id) for task in tasks if not task.arg_directions]
@@ -147,5 +152,6 @@ __all__ = [
     "build_dataflow_dependencies",
     "build_dependencies",
     "build_sequential_dependencies",
+    "dataflow_dependency_fallback_code",
     "supports_dataflow_dependencies",
 ]
