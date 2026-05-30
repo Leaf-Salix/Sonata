@@ -79,7 +79,11 @@ def eligibility_result_to_dict(result: EligibilityResult) -> dict[str, Any]:
 
 
 def score_fingerprint(score: Score, *, include_metadata: bool = False) -> str:
-    """Return a stable SHA-256 fingerprint for the score computation identity."""
+    """Return a stable SHA-256 fingerprint for the score computation identity.
+
+    ``include_metadata`` includes only ``Score.metadata`` audit/debug data. It
+    does not include artifact identity fields such as ``runtime_target``.
+    """
     payload = json.dumps(
         _fingerprint_payload(score, include_metadata=include_metadata),
         separators=(",", ":"),
