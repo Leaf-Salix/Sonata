@@ -12,9 +12,9 @@ from sonata import (
     build_dataflow_dependencies,
     build_dependencies,
     build_sequential_dependencies,
+    dataflow_dependency_fallback_code,
     supports_dataflow_dependencies,
 )
-from sonata.dependencies import dataflow_dependency_fallback_code
 from sonata.score import Task
 
 

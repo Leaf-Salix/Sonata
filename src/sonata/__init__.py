@@ -15,6 +15,7 @@ from .dependencies import (
     build_dataflow_dependencies,
     build_dependencies,
     build_sequential_dependencies,
+    dataflow_dependency_fallback_code,
     supports_dataflow_dependencies,
 )
 from .eligibility import check_static_eligibility
@@ -62,6 +63,7 @@ __all__ = [
     "build_sequential_dependencies",
     "check_static_eligibility",
     "code_for_reason",
+    "dataflow_dependency_fallback_code",
     "eligibility_result_to_dict",
     "score_fingerprint",
     "score_to_dict",
