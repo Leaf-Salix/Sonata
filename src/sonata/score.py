@@ -116,8 +116,7 @@ class EligibilityResult:
             eligible=True,
             score=score,
             reason_details=tuple(
-                FallbackReason(code=_reason_code(w), message=w, severity="warning")
-                for w in warnings
+                _build_fallback_reason(w, severity="warning") for w in warnings
             ),
         )
 
@@ -267,11 +266,11 @@ def _reason_code(reason: str) -> str:
     return "_".join(part for part in code.split("_") if part) or "fallback"
 
 
-def _build_fallback_reason(message: str) -> FallbackReason:
+def _build_fallback_reason(message: str, *, severity: str = "error") -> FallbackReason:
     """Build a FallbackReason, preferring a stable enum code when available."""
     enum_code = code_for_reason(message)
     code = enum_code.value if enum_code is not None else _reason_code(message)
-    return FallbackReason(code=code, message=message)
+    return FallbackReason(code=code, message=message, severity=severity)
 
 
 def _visit_for_cycle(

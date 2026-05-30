@@ -78,6 +78,18 @@ class TestRejectUsesEnumCode:
         assert not result.eligible
         assert result.reason_details[0].code == "score_validation_failed"
 
+    def test_accept_with_warnings_uses_enum_code_for_known_mapping(self) -> None:
+        from sonata.score import EligibilityResult, Score, RuntimeTarget
+
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(
+            score, "ForStmt is not supported by initial Sonata eligibility"
+        )
+
+        assert result.eligible
+        assert result.reason_details[0].code == "control_flow_not_supported"
+        assert result.reason_details[0].severity == "warning"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
