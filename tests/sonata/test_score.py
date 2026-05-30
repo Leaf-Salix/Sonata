@@ -74,6 +74,9 @@ def test_score_validate_rejects_unknown_dependency_target() -> None:
     assert not result.eligible
     assert result.score is None
     assert result.reasons == ("dependency consumer is unknown: 2",)
+    assert [(reason.code, reason.message, reason.severity) for reason in result.reason_details] == [
+        ("dependency_consumer_is_unknown_2", "dependency consumer is unknown: 2", "error")
+    ]
 
 
 def test_score_validate_rejects_dependency_cycle() -> None:
