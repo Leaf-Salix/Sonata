@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 2 - Eligibility</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 2 - Eligibility：谁有资格进入 Sonata？</h1>
+
+<h2>提问：check_static_eligibility 做什么？</h2>
+
+<p>这是 Sonata 的<strong>入口函数</strong>。给它一个 IR 节点，它会判断：这个节点能不能被 Sonata 处理？
+如果能，返回一个 Score；如果不能，返回结构化的拒绝理由。</p>
+
+<pre><code>from sonata import check_static_eligibility, RuntimeTarget
+
+result = check_static_eligibility(
+    my_ir_node,
+    runtime_target=RuntimeTarget(
+        runtime="host_build_graph",
+        function_name="build_my_graph",
+    ),
+    entry_name="my_function",
+    dependency_policy="sequential_v0",
+)</code></pre>
+
+<h2>提问：什么样的节点会被拒绝？</h2>
+
+<p>Sonata v0.1 非常保守——<strong>整图 fallback</strong>。任何一个不支持的节点导致<strong>整个图</strong>被拒绝：</p>
+
+<table>
+  <tr><th>被拒内容</th><th>FallbackCode</th><th>说明</th></tr>
+  <tr><td><code>ForStmt</code></td><td><code>control_flow_not_supported</code></td><td>循环语句（如 KV-cache 循环）</td></tr>
+  <tr><td><code>IfStmt</code></td><td><code>control_flow_not_supported</code></td><td>条件分支</td></tr>
+  <tr><td><code>WhileStmt</code></td><td><code>control_flow_not_supported</code></td><td>条件循环</td></tr>
+  <tr><td><code>RuntimeScopeStmt</code></td><td><code>unsupported_runtime_scope</code></td><td>运行时作用域</td></tr>
+  <tr><td><code>tensor.read</code></td><td><code>tensor_read_not_supported</code></td><td>数据读取操作</td></tr>
+  <tr><td>非 Orchestration 函数</td><td><code>entry_function_not_orchestration</code></td><td>只有编排函数可被提取</td></tr>
+</table>
+
+<div class="callout warn">
+  <strong>与 Inductor graph break 的区别：</strong>Inductor 遇到不支持的操作时，会保留支持的部分继续编译，不支持的 fallback 到 eager。
+  Sonata v0.1 是"整图 fallback"。v0.4 的 Regionized DAG 将把图切成多个区域，每个区域独立判断 eligibility——
+  不支持的区域 fallback，支持的区域正常编译。
+</div>
+
+<p>接受条件：根节点是 <code>Function</code> 或 <code>Program</code>，函数类型是 <code>Orchestration</code>，只包含普通 Call 语句。</p>
+
+<h2>提问：提取过程是怎么工作的？</h2>
+
+<pre><code>1. 检查根节点类型  → 是否是 Function/Program？
+2. 遍历所有子节点  → 有没有不支持的控制流或操作？
+3. 找到提取根      → 确定从哪里开始（Orchestration 函数）
+4. 构建 Score      → 提取 tasks、dependencies、shape_assumptions、metadata
+5. 验证 Score      → 调用 score.validate() 做一致性检查
+6. 检查存储覆盖率  → 如果内存参数的 storage key 覆盖率太低，发 warning</code></pre>
+
+<h2>提问：_walk 是怎么遍历 IR 的？</h2>
+
+<p><code>_walk</code> 是一个深度优先遍历器，使用<strong>结构化内省</strong>——不依赖具体的 IR 类，只看字段名：</p>
+
+<pre><code>child_fields = (
+    "functions", "body", "then_body", "else_body",
+    "branches", "stmts", "statements", "seq",
+    "args", "value", "expr", "condition",
+)</code></pre>
+
+<p>它用 <code>hasattr</code> 检查每个节点是否有这些字段，有的话就递归进去。
+同时用 <code>id(current)</code> 做去重，避免循环引用。</p>
+
+<p>这种设计的好处是：如果 PyPTO 改了 IR 的类名但保持字段名不变，Sonata 不需要修改。</p>
+
+<h2>提问：Task 是怎么从 IR 提取出来的？</h2>
+
+<p><code>_extract_tasks</code> 的逻辑：</p>
+<ol>
+  <li>对每个提取根（Orchestration 函数），先用 <code>collect_storage_keys</code> 收集存储信息</li>
+  <li>遍历函数体里的所有 <code>Call</code> 节点</li>
+  <li>跳过内置操作（<code>tile.</code>、<code>tensor.</code>、<code>system.</code>、<code>array.</code> 开头的）</li>
+  <li>给每个 Call 分配 task_id 和 func_id</li>
+  <li>从 Call 的 args 和 arg_directions 构建 Task 对象</li>
+  <li>如果 Call 的输出被赋值给变量，传播 storage key 到输出变量</li>
+</ol>
+
+<p>注意：PyPTO 的 <code>Group</code>/<code>Spmd</code> 函数会展开成多个 task（如 Group → AIC + AIV），
+但 Sonata 当前只按 Call 提取一个 task。v0.1 smoke 明确排除 Group/Spmd/Submit。</p>
+
+<h2>提问：ShapeAssumption 是怎么提取的？</h2>
+
+<p><code>_extract_shape_assumptions</code> 从提取根的 <code>params</code> 提取：</p>
+
+<ol>
+  <li>取参数的 <code>type</code> / <code>type_</code> / <code>tensor_type</code></li>
+  <li>从类型里取 <code>shape</code> / <code>shape_</code> / <code>dims</code> / <code>dims_</code></li>
+  <li>每个维度必须是<strong>正整数</strong>（通过 <code>is_static_shape_dim</code> 检查）</li>
+  <li>遇到 <code>-1</code> 或 <code>0</code> 就跳过整个参数——不记录部分假设</li>
+  <li>如果有多个提取根，symbol 加函数名前缀（如 <code>func_a.x</code>）</li>
+</ol>
+
+<pre><code>def is_static_shape_dim(dim):
+    """只有正整数才是静态形状维度。-1、0、bool 都不算。"""
+    return isinstance(dim, int) and not isinstance(dim, bool) and dim > 0</code></pre>
+
+<h2>提问：EligibilityResult 有几种状态？</h2>
+
+<pre><code>result = check_static_eligibility(ir_node)
+
+if result.eligible and not result.has_warnings():
+    # 完全合格 — 使用 Score
+    score = result.score
+
+elif result.eligible and result.has_warnings():
+    # 合格但有警告（如存储覆盖率低）
+    # 仍然可用，但消费者应该知道置信度较低
+    for w in result.reason_details:
+        if w.severity == "warning":
+            print(f"警告 [{w.code}]: {w.message}")
+
+else:
+    # 不合格 — 返回拒绝原因
+    for r in result.reason_details:
+        print(f"拒绝 [{r.code}]: {r.message}")</code></pre>
+
+<p>三种构造方式：</p>
+<ul>
+  <li><code>EligibilityResult.accept(score)</code> — 完全合格</li>
+  <li><code>EligibilityResult.reject(*reasons)</code> — 不合格，返回原因列表</li>
+  <li><code>EligibilityResult.accept_with_warnings(score, *warnings)</code> — 合格但有警告</li>
+</ul>
+
+<div class="nav">
+  <a href="01-core-model.html">&larr; 上一篇：Score 数据模型</a>
+  &nbsp;|&nbsp;
+  <a href="03-dependencies.html">下一篇：依赖策略 &rarr;</a>
+</div>
+
+</body>
+</html>

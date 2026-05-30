@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Dive 1 - score.py 完整解析</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .callout.red { background: #fee2e2; border: 1px solid #fca5a5; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Deep Dive 1 - score.py 完整解析</h1>
+
+<p>本文件深入 <code>src/sonata/score.py</code> 的每一个类、每一个函数、每一个边界条件。
+配合 <code>tests/sonata/test_score.py</code> 阅读效果最佳。</p>
+
+<h2>模块总览</h2>
+
+<p><code>score.py</code> 定义了 Sonata 的核心数据模型，约 320 行代码。它是一个<strong>纯 Python 模块</strong>，不依赖 PyPTO IR 对象。唯一引入的 Sonata 内部依赖是 <code>fallback.py</code>（FallbackCode 枚举）。</p>
+
+<p>模块中的类分为两类：</p>
+<ul>
+  <li><strong>数据模型</strong>（<code>frozen=True</code> dataclass）：RuntimeTarget、ShapeAssumption、Task、Dependency、FallbackReason、EligibilityResult、Score</li>
+  <li><strong>验证/辅助函数</strong>：Score.validate()、is_static_shape_dim、_find_cycle、_validate_task、_validate_shape_dims 等</li>
+</ul>
+
+<h2>RuntimeTarget — 运行时配置</h2>
+
+<pre><code>@dataclass(frozen=True)
+class RuntimeTarget:
+    runtime: str = "tensormap_and_ringbuffer"
+    function_name: str = "aicpu_orchestration_entry"
+    aicpu_thread_num: int | None = 4
+    config_comment: tuple[str, ...] = (
+        "# Runtime configuration for tensormap_and_ringbuffer.",
+        "# This runtime requires 4 AICPU threads (3 schedulers + 1 orchestrator on thread 3).",
+    )</code></pre>
+
+<h3>设计决策：RuntimeTarget 暂留 Score 内</h3>
+
+<div class="callout info">
+  <strong>已决定（路线 C）：</strong>RuntimeTarget 是执行元数据，不是计算身份。v0.1 暂留 <code>Score.runtime_target</code> 作兼容和审计字段；默认 <code>score_fingerprint()</code> 排除它。v0.2 引入 PlanHandle 后，将 RuntimeTarget 迁入 PlanHandle。
+  <br><br>
+  <strong>为什么现在不拆：</strong>直接拆出 RuntimeTarget 会扩大 v0.1 schema 改动范围。当前更重要的是先把 fingerprint 边界定稳。
+  <br><br>
+  <strong>切换条件：</strong>如果 runtime target 被证明会改变 computation semantics（而不只是执行包装），可考虑新增 execution-sensitive fingerprint API。
+</div>
+
+<p>两种运行时目标：</p>
+<table>
+  <tr><th>Runtime</th><th>含义</th><th>Sonata 何时用</th></tr>
+  <tr><td><code>host_build_graph</code></td><td>PyPTO 最简单的静态运行时，<code>add_task()</code> + <code>add_successor()</code></td><td>eligibility 默认，测试，v0.2 验证</td></tr>
+  <tr><td><code>tensormap_and_ringbuffer</code></td><td>生产运行时，TensorMap + RingBuffer + 4 AICPU threads</td><td>默认值（但 v0.1 不真正使用）</td></tr>
+</table>
+
+<p><code>DEFAULT_RUNTIME_TARGET</code> 是 <code>RuntimeTarget()</code> 的模块级实例，代表 tensormap 运行时默认配置。</p>
+
+<h2>ShapeAssumption — Guard 条件</h2>
+
+<pre><code>@dataclass(frozen=True)
+class ShapeAssumption:
+    symbol: str          # 参数名
+    dims: tuple[int, ...]  # 形状维度（必须全是正整数）</code></pre>
+
+<h3>Guard 语义</h3>
+
+<p>ShapeAssumption 同时是两个东西：</p>
+<ol>
+  <li><strong>缓存条件</strong>：它参与 fingerprint 计算 → 形状不同 → 不同的 cache key</li>
+  <li><strong>失效条件</strong>：运行时输入不满足假设 → Score / PlanHandle 应 fallback 或 replan</li>
+</ol>
+
+<h3>Guard 抽象推迟到 v0.3</h3>
+
+<div class="callout info">
+  <strong>已决定：</strong>v0.1 不引入 <code>GuardCondition</code> 基类。ShapeAssumption 是唯一 guard fact。v0.3 时引入 GuardCondition 抽象，包含 severity（soft/hard）和可能的 TopologyGuard、StorageGuard。
+  <br><br>
+  <strong>为什么不提前抽象：</strong>v0.1 只有形状 guard 一种，一上来抽象成基类收益不大，容易锁死 v0.3/v0.4 的 guard model。
+</div>
+
+<h3>Over-guarding 问题</h3>
+
+<div class="callout warn">
+  <strong>开放问题（#9）：</strong>100 个参数的 PyPTO IR 可能产生 100 个 ShapeAssumption。任何一个参数的任何维度变化都会使 fingerprint 失效——Score 极其"脆弱"。v0.1 先记录 <code>shape_assumptions_count</code> 到 metadata，观察真实数据再决定是否需要筛选。
+</div>
+
+<h2>Task — 原子执行单元</h2>
+
+<pre><code>@dataclass(frozen=True)
+class Task:
+    task_id: int
+    func_id: int
+    core_type: str
+    args: tuple[Any, ...] = ()
+    arg_directions: tuple[str, ...] = ()
+    arg_storage_keys: tuple[Any | None, ...] = ()
+    name: str | None = None</code></pre>
+
+<h3>task_id vs func_id 的区别</h3>
+
+<table>
+  <tr><th>字段</th><th>语义</th><th>唯一性</th><th>来源</th></tr>
+  <tr><td><code>task_id</code></td><td>执行顺序编号——"第几个调用"</td><td>Score 内唯一，非负</td><td>extractor 按出现顺序分配（0, 1, 2, ...）</td></tr>
+  <tr><td><code>func_id</code></td><td>函数类型编号——"调用哪个函数"</td><td>可重复（同名函数共享）</td><td>extractor 按首次出现的 call_name 分配</td></tr>
+</table>
+
+<p>例如：</p>
+<pre><code># 三个 matmul 调用 + 一个 add 调用
+Task(task_id=0, func_id=0, name="matmul")  # matmul 第 1 次出现
+Task(task_id=1, func_id=0, name="matmul")  # matmul 第 2 次出现（func_id 相同）
+Task(task_id=2, func_id=0, name="matmul")  # matmul 第 3 次出现
+Task(task_id=3, func_id=1, name="add")     # add 第 1 次出现（新 func_id）</code></pre>
+
+<div class="callout warn">
+  <strong>func_id 对齐风险（#18）：</strong>Sonata extractor 按首次出现顺序分配 func_id，PyPTO codegen 用 <code>func_name_to_id</code>。两者可能不一致。v0.2 需要显式 <code>FuncRegistry</code> 映射 logical name → runtime id。
+</div>
+
+<h3>core_type 的三种值</h3>
+
+<table>
+  <tr><th>值</th><th>来源</th><th>含义</th></tr>
+  <tr><td><code>"aic"</code></td><td>PyPTO 函数的 <code>func_type.name == "AIC"</code></td><td>AI Core — 矩阵计算单元</td></tr>
+  <tr><td><code>"aiv"</code></td><td>PyPTO 函数的 <code>func_type.name == "AIV"</code></td><td>AI Vector Core — 向量计算单元</td></tr>
+  <tr><td><code>"mixed"</code></td><td>无法推断或两种都可能用到</td><td>默认值</td></tr>
+</table>
+
+<h3>arg_directions 的五种值</h3>
+
+<table>
+  <tr><th>值</th><th>dataflow 含义</th><th>storage 覆盖率影响</th></tr>
+  <tr><td><code>"input"</code></td><td>读</td><td>计入 memory_storage_key_coverage</td></tr>
+  <tr><td><code>"output"</code></td><td>写</td><td>计入 memory_storage_key_coverage</td></tr>
+  <tr><td><code>"outputexisting"</code></td><td>写入已有缓冲区（in-place 输出）</td><td>计入 memory_storage_key_coverage</td></tr>
+  <tr><td><code>"inout"</code></td><td>读写</td><td>计入 memory_storage_key_coverage</td></tr>
+  <tr><td><code>"scalar"</code></td><td>标量，不参与内存依赖</td><td>不计入（被 dataflow 忽略）</td></tr>
+  <tr><td><code>"nodep"</code></td><td>不参与依赖计算</td><td>不计入（被 dataflow 忽略）</td></tr>
+</table>
+
+<p><strong>注意：</strong>在 <code>dependencies.py</code> 的 dataflow 分析中，direction 会被 normalize 为小写无空格后匹配。<code>"Input"</code> 和 <code>"input"</code> 等价。</p>
+
+<h3>arg_storage_keys 的三种来源</h3>
+
+<table>
+  <tr><th>格式</th><th>来源</th><th>例子</th></tr>
+  <tr><td><code>param:&lt;id&gt;:&lt;name&gt;</code></td><td>函数参数（有 unique_id）</td><td><code>param:0:x</code></td></tr>
+  <tr><td><code>param:&lt;name&gt;</code></td><td>函数参数（无 unique_id）</td><td><code>param:x</code></td></tr>
+  <tr><td><code>alloc:&lt;name&gt;</code></td><td><code>tensor.create</code> 分配的中间结果</td><td><code>alloc:y</code></td></tr>
+</table>
+
+<p>storage key 传播路径：参数 → tensor.create 分配 → 函数调用写方向参数 → 调用输出（AssignStmt LHS）→ TupleGetItemExpr 元素。详见 <code>storage.py</code>。</p>
+
+<h3>多输出 / TupleGetItem 传播（#12）</h3>
+
+<div class="callout info">
+  <strong>开放问题：</strong>有些 PyPTO 操作返回 tuple。storage.py 的 <code>_propagate_tuple_get_storage</code> 已处理基本场景：<code>multi_output_func</code> 的写方向参数按顺序映射到 tuple 元素的 storage key。v0.3 做 liveness analysis 时如果精度不够，可能需要 Task 增加 <code>outputs</code> 字段。
+</div>
+
+<h2>Dependency — DAG 的边</h2>
+
+<pre><code>@dataclass(frozen=True)
+class Dependency:
+    producer: int
+    consumer: int</code></pre>
+
+<h3>Dependency 不区分 kind（v0.1 决策）</h3>
+
+<div class="callout info">
+  <strong>已决定（B+ 路线）：</strong>v0.1 不修改 public <code>Score.Dependency</code> schema。dataflow_v0 的边是 RAW/WAW/WAR/ordering 的<strong>保守并集</strong>，不区分 kind。NormalizedTaskFacts 预留 <code>source</code>/<code>hazard</code>/<code>provenance</code> 扩展位。
+  <br><br>
+  <strong>为什么不提前加 kind：</strong>现在还不知道最终 taxonomy 是单个 <code>kind</code>，还是拆成 <code>source</code>/<code>hazard</code>/<code>strength</code>/<code>scope</code> 等。过早写进 Score schema 可能形成错误抽象。
+  <br><br>
+  <strong>v0.3 的 kind 枚举建议：</strong><code>{data, storage, war, ordering}</code>。
+</div>
+
+<h2>FallbackReason — 结构化失败原因</h2>
+
+<pre><code>@dataclass(frozen=True)
+class FallbackReason:
+    code: str       # FallbackCode 的值（稳定路由 key）
+    message: str    # 人类可读说明
+    severity: str   # "error" 或 "warning"</code></pre>
+
+<h3>code 的两种来源</h3>
+
+<ol>
+  <li><strong>稳定枚举码</strong>：匹配到 <code>FallbackCode</code> 枚举值。可安全作路由 key。</li>
+  <li><strong>slug 兜底</strong>：未匹配时，由 <code>_reason_code()</code> 生成（字母/数字小写，其他替换为下划线）。不保证跨版本稳定。</li>
+</ol>
+
+<h3>_coerce_fallback_reason 的行为</h3>
+
+<p><code>EligibilityResult.reject()</code> 和 <code>accept_with_warnings()</code> 都接受 <code>str | FallbackReason</code> 参数。<code>_coerce_fallback_reason</code> 统一处理：</p>
+<ul>
+  <li>如果传入 <code>FallbackReason</code> 且 severity 匹配 → 直接复用</li>
+  <li>如果传入 <code>FallbackReason</code> 但 severity 不匹配 → 创建新实例，保留 code 和 message，改 severity</li>
+  <li>如果传入 <code>str</code> → 调用 <code>_build_fallback_reason()</code> 生成 slug code</li>
+</ul>
+
+<h2>EligibilityResult — 三态结果</h2>
+
+<pre><code>@dataclass(frozen=True)
+class EligibilityResult:
+    eligible: bool
+    score: "Score | None" = None
+    reasons: tuple[str, ...] = ()
+    reason_details: tuple[FallbackReason, ...] = ()</code></pre>
+
+<h3>三种状态和它们的构造方式</h3>
+
+<table>
+  <tr><th>状态</th><th>构造方式</th><th>eligible</th><th>score</th><th>reason_details 的 severity</th></tr>
+  <tr><td>完全合格</td><td><code>accept(score)</code></td><td>True</td><td>score 实例</td><td>空</td></tr>
+  <tr><td>合格但有警告</td><td><code>accept_with_warnings(score, ...)</code></td><td>True</td><td>score 实例</td><td>全是 "warning"</td></tr>
+  <tr><td>不合格</td><td><code>reject(*reasons)</code></td><td>False</td><td>None</td><td>全是 "error"</td></tr>
+</table>
+
+<p><code>accept_with_warnings</code> 的 score 参数不能为 None（会 raise ValueError）。</p>
+
+<h3>has_errors() 和 has_warnings() 的行为</h3>
+
+<p>遍历 <code>reason_details</code>，只要有任一 severity 匹配就返回 True。空 reason_details 时两者都返回 False。</p>
+
+<h2>Score — 核心数据模型</h2>
+
+<pre><code>@dataclass(frozen=True)
+class Score:
+    name: str
+    runtime_target: RuntimeTarget
+    tasks: tuple[Task, ...] = ()
+    dependencies: tuple[Dependency, ...] = ()
+    shape_assumptions: tuple[ShapeAssumption, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)</code></pre>
+
+<h3>Score.validate() 的 10 项检查</h3>
+
+<p><code>validate()</code> 是 Score 的一致性验证器。它返回 <code>EligibilityResult</code>：</p>
+
+<table>
+  <tr><th>#</th><th>检查项</th><th>错误消息</th><th>FallbackCode</th></tr>
+  <tr><td>1</td><td>name 非空</td><td><code>score name must not be empty</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>2</td><td>task_id 唯一</td><td><code>task ids must be unique</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>3</td><td>task_id 非负</td><td><code>task id must be non-negative: X</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>4</td><td>func_id 非负</td><td><code>task X func_id must be non-negative</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>5</td><td>core_type ∈ {aic, aiv, mixed}</td><td><code>task X has unsupported core_type: Y</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>6</td><td>arg_directions 长度 = args 长度</td><td><code>task X arg_directions size Y does not match args size Z</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>7</td><td>arg_storage_keys 长度 = args 长度</td><td><code>task X arg_storage_keys size Y does not match args size Z</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>8</td><td>dependency producer/consumer 指向已知 task</td><td><code>dependency producer is unknown: X</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>9</td><td>无自环（producer ≠ consumer）</td><td><code>dependency cannot be a self-edge: X</code></td><td><code>score_validation_failed</code></td></tr>
+  <tr><td>10</td><td>无环（DFS 检测）</td><td><code>dependency graph must be acyclic, found cycle: 0 -> 1 -> 0</code></td><td><code>score_validation_failed</code></td></tr>
+</table>
+
+<p><strong>注意 1：</strong>检查 #3 和 #4 会在 task_id 重复的情况下对同一个 task_id 多次报告。
+测试 <code>test_score_validate_accumulates_rejection_reasons</code> 展示了这个行为。</p>
+
+<p><strong>注意 2：</strong>arg_directions 和 arg_storage_keys 只在<strong>非空</strong>时才检查长度。空元组（默认值）不触发检查。</p>
+
+<h3>ShapeAssumption 验证的 4 项检查</h3>
+
+<table>
+  <tr><th>#</th><th>检查项</th><th>错误消息</th></tr>
+  <tr><td>1</td><td>symbol 非空</td><td><code>shape assumption symbol must not be empty</code></td></tr>
+  <tr><td>2</td><td>symbol 唯一</td><td><code>shape assumption symbol must be unique: X</code></td></tr>
+  <tr><td>3</td><td>每个 dim 必须是正整数</td><td><code>shape assumption X has negative/zero/non-integer dimension</code></td></tr>
+  <tr><td>4</td><td>空 symbol 不检查 dim</td><td>（跳过 dim 检查，只报 symbol 为空）</td></tr>
+</table>
+
+<p><strong>dim 错误去重：</strong><code>_validate_shape_dims</code> 对同一个 symbol 的每种错误类别只报一次。例如 <code>dims=(0, -1, "n", True)</code> 只产生三条消息（zero、negative、non-integer），而不是四条。</p>
+
+<p><strong>重复 symbol 处理：</strong>遇到重复 symbol 时，先检查是否为第一个出现（检查 dim），再报告重复错误。第二个出现时不重复检查 dim。</p>
+
+<h3>环检测算法：_find_cycle</h3>
+
+<p>使用 DFS + 三色标记法：</p>
+
+<pre><code># visiting: 正在访问的节点集合（灰色）——遇到灰色节点 = 发现环
+# visited: 已完成访问的节点集合（黑色）——跳过
+# stack: 当前路径栈——用于提取环的具体路径</code></pre>
+
+<p>关键细节：</p>
+<ul>
+  <li>从 <code>sorted(task_ids)</code> 开始遍历——保证确定性输出</li>
+  <li>后继节点也按 <code>sorted</code> 遍历——保证相同环总是返回相同路径</li>
+  <li>环的格式：<code>" -> ".join(str(task_id) for task_id in cycle)</code>，如 <code>"0 -> 1 -> 2 -> 0"</code></li>
+  <li>自环（producer == consumer）在 <code>validate()</code> 的第 9 项检查中先被拦截，不会进入环检测</li>
+</ul>
+
+<h3>validate() 的 reason 转换</h3>
+
+<p><code>validate()</code> 产生的所有 reason 字符串通过 <code>_score_validation_reason</code> 转为 FallbackReason：</p>
+
+<pre><code>def _score_validation_reason(message: str) -> FallbackReason:
+    return FallbackReason(
+        code=FallbackCode.SCORE_VALIDATION_FAILED.value,  # 固定 code
+        message=message,
+        severity="error",
+    )</code></pre>
+
+<p>所有 Score 验证错误共享同一个 FallbackCode <code>score_validation_failed</code>。
+下游无法通过 code 区分具体是哪项检查失败——需要看 message。</p>
+
+<h2>is_static_shape_dim — 形状维度判断</h2>
+
+<pre><code>def is_static_shape_dim(dim: Any) -> bool:
+    return isinstance(dim, int) and not isinstance(dim, bool) and dim > 0</code></pre>
+
+<p>这个函数同时被 <code>score.py</code>（验证）和 <code>eligibility.py</code>（提取）使用。
+它必须拒绝的值：</p>
+
+<table>
+  <tr><th>输入</th><th>结果</th><th>原因</th></tr>
+  <tr><td><code>1</code>, <code>64</code>, <code>100000</code></td><td>True</td><td>正整数</td></tr>
+  <tr><td><code>0</code></td><td>False</td><td>零维度</td></tr>
+  <tr><td><code>-1</code>, <code>-100</code></td><td>False</td><td>负维度（PyPTO 用 -1 表示动态）</td></tr>
+  <tr><td><code>True</code>, <code>False</code></td><td>False</td><td>bool 是 int 的子类，必须显式排除</td></tr>
+  <tr><td><code>"n"</code>, <code>3.14</code>, <code>None</code></td><td>False</td><td>非整数类型</td></tr>
+</table>
+
+<div class="callout red">
+  <strong>教训（mistakes/negative-dim-sentinel）：</strong>PyPTO 用 <code>-1</code> 作为动态形状标记。早期代码曾把 -1 当作静态值记录到 ShapeAssumption，导致 Score.validate() 拒绝合法的动态输入。修复：任何 dim ≤ 0 都视为动态/未知，跳过整个参数。
+</div>
+
+<div class="nav">
+  <a href="01-core-model.html">&larr; 回到入门层</a>
+  &nbsp;|&nbsp;
+  <a href="deep-02-eligibility.html">下一篇：eligibility.py 完整解析 &rarr;</a>
+</div>
+
+</body>
+</html>

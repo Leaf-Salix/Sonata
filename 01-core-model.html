@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 1 - Score 数据模型</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 1 - Score 数据模型</h1>
+
+<h2>提问：用一个具体例子，Score 长什么样？</h2>
+
+<p>假设我们有这样一个 PyPTO 程序（矩阵乘法 + 偏置加法）：</p>
+
+<pre><code># PyPTO DSL — 一个简单的矩阵乘法 + 偏置加法
+def matmul_bias(x, w, b):
+    y = matmul(x, w)        # task 0: matmul, AIC core
+    z = add(y, b)           # task 1: add, AIV core
+    return z</code></pre>
+
+<p>Sonata 的 <code>check_static_eligibility()</code> 会从中提取出如下 Score：</p>
+
+<pre><code>// score_to_json() 输出 — 这就是"静态执行计划"
+{
+  "schema_version": 1,
+  "name": "matmul_bias",
+  "runtime_target": {
+    "runtime": "host_build_graph",
+    "function_name": "build_matmul_bias_graph",
+    "aicpu_thread_num": 4
+  },
+  "tasks": [
+    {
+      "task_id": 0, "func_id": 0, "core_type": "aic",
+      "name": "matmul",
+      "args": ["x", "w", "y"],
+      "arg_directions": ["input", "input", "output"],
+      "arg_storage_keys": ["param:0:x", "param:1:w", "alloc:y"]
+    },
+    {
+      "task_id": 1, "func_id": 1, "core_type": "aiv",
+      "name": "add",
+      "args": ["y", "b", "z"],
+      "arg_directions": ["input", "input", "output"],
+      "arg_storage_keys": ["alloc:y", "param:2:b", "param:3:z"]
+    }
+  ],
+  "dependencies": [{"producer": 0, "consumer": 1}],
+  "shape_assumptions": [
+    {"symbol": "x", "dims": [32, 768]},
+    {"symbol": "w", "dims": [768, 512]},
+    {"symbol": "b", "dims": [512]}
+  ],
+  "metadata": {
+    "extractor": "structural_v0",
+    "dependency_policy": "dataflow_v0",
+    "memory_storage_key_coverage": {"known": 4, "unknown": 0, "total": 4}
+  }
+}</code></pre>
+
+<p>注意 <code>arg_storage_keys</code>——task 0 的输出 <code>y</code> 和 task 1 的输入 <code>y</code> 都映射到 <code>alloc:y</code>，
+这告诉依赖分析器它们访问同一块内存，因此存在 RAW 依赖。</p>
+
+<h2>提问：每个字段是什么意思？</h2>
+
+<h3>Task — 原子执行单元</h3>
+
+<pre><code>@dataclass(frozen=True)
+class Task:
+    task_id: int               # 全局唯一执行顺序编号（0, 1, 2, ...）
+    func_id: int               # 函数类型编号（所有 matmul 调用共享同一个 func_id）
+    core_type: str             # "aic"（矩阵核） | "aiv"（向量核） | "mixed"
+    args: tuple[Any, ...]      # 参数列表，如 ("x", "w", "y")
+    arg_directions: tuple[str, ...]      # 每个参数的读写方向
+    arg_storage_keys: tuple[Any | None, ...]  # 每个参数的内存位置标识
+    name: str | None = None    # 函数名，如 "matmul"</code></pre>
+
+<table>
+  <tr><th>字段</th><th>含义</th><th>类比</th></tr>
+  <tr><td><code>task_id</code></td><td>执行顺序编号，唯一且非负</td><td>执行步骤 1、2、3</td></tr>
+  <tr><td><code>func_id</code></td><td>函数类型编号，多个 task 可共享</td><td>"这是第几号菜谱"</td></tr>
+  <tr><td><code>core_type</code></td><td>AIC = 昇腾 NPU 矩阵计算单元；AIV = 向量计算单元</td><td>这道菜用烤箱还是灶台</td></tr>
+  <tr><td><code>arg_directions</code></td><td><code>input</code>/<code>output</code>/<code>inout</code>/<code>scalar</code>/<code>nodep</code></td><td>哪些材料要加工、哪些是成品</td></tr>
+  <tr><td><code>arg_storage_keys</code></td><td><code>param:0:x</code> = 入口参数 x；<code>alloc:y</code> = 分配的中间结果</td><td>"面粉在 A 柜"——两个步骤都从 A 柜取面粉，就有依赖</td></tr>
+</table>
+
+<h3>Dependency — DAG 的边</h3>
+
+<pre><code>@dataclass(frozen=True)
+class Dependency:
+    producer: int   # 生产者 task_id
+    consumer: int   # 消费者 task_id</code></pre>
+
+<p>上面 matmul_bias 的例子：<code>Dependency(producer=0, consumer=1)</code> — 必须先做完 matmul 才能做 add。</p>
+
+<p><code>Score.validate()</code> 检查：producer/consumer 都指向已知 task、无自环、整个图是无环 DAG。</p>
+
+<h3>ShapeAssumption — 计划成立的前提条件</h3>
+
+<pre><code>@dataclass(frozen=True)
+class ShapeAssumption:
+    symbol: str          # 参数名，如 "x"
+    dims: tuple[int, ...]  # 形状维度，如 (32, 768)</code></pre>
+
+<p>ShapeAssumption 同时扮演两个角色：</p>
+<ul>
+  <li><strong>缓存条件</strong>：形状不同 → 不同的 fingerprint → 不同的缓存条目</li>
+  <li><strong>失效条件</strong>：运行时发现形状与假设不符 → 丢弃这个 Score，重新提取</li>
+</ul>
+
+<p>例如：x 的形状从 [32, 768] 变成 [64, 768] → fingerprint 不同 → 缓存未命中 → 旧 Score 被跳过 → 新 Score 被提取。</p>
+
+<div class="callout info">
+  <strong>动态维度如何处理？</strong>如果某个维度是 <code>-1</code> 或 <code>0</code>（PyPTO 用来表示"运行时才知道"），
+  Sonata 直接跳过这个参数的<strong>整个</strong> shape assumption，而不是记录一个不完整的假设。
+  这保证了 Score 不会因为"假装知道"一个动态维度而失效。
+</div>
+
+<h3>RuntimeTarget — 怎么跑</h3>
+
+<pre><code>@dataclass(frozen=True)
+class RuntimeTarget:
+    runtime: str = "tensormap_and_ringbuffer"
+    function_name: str = "aicpu_orchestration_entry"
+    aicpu_thread_num: int | None = 4</code></pre>
+
+<p>Sonata 支持两种目标：</p>
+<ul>
+  <li><code>host_build_graph</code>：PyPTO 最简单的静态运行时，<code>add_task()</code> 加任务、<code>add_successor()</code> 加依赖边，与 Score 模型天然接近。eligibility 默认用这个</li>
+  <li><code>tensormap_and_ringbuffer</code>：生产运行时，更复杂（动态 fanin、TensorMap 语义），留到 v0.3</li>
+</ul>
+
+<h2>提问：Score 的核心设计原则是什么？</h2>
+
+<div class="callout success">
+  <strong>计算 ≠ 执行。</strong><br>
+  <strong>Score</strong> 只描述"算什么"——任务、依赖、形状假设。<br>
+  <strong>RuntimeTarget</strong> 描述"怎么跑"——目标运行时、入口函数、线程数。<br><br>
+  这两层分离意味着：同一个计算计划可以适配不同的运行时配置，不需要重新提取 Score。
+  Inductor、XLA、TVM、CUDA Graphs 都采用了这个分离。
+</div>
+
+<h2>提问：怎么用代码构造和验证一个 Score？</h2>
+
+<pre><code>from sonata import Score, Task, Dependency, ShapeAssumption, RuntimeTarget
+
+score = Score(
+    name="vector_add",
+    runtime_target=RuntimeTarget(
+        runtime="host_build_graph",
+        function_name="build_vector_add_graph",
+    ),
+    tasks=(
+        Task(task_id=0, func_id=0, core_type="aiv",
+             args=("a", "b", "c"), name="add"),
+        Task(task_id=1, func_id=1, core_type="aiv",
+             args=("c", "out"), name="store"),
+    ),
+    dependencies=(Dependency(producer=0, consumer=1),),
+    shape_assumptions=(ShapeAssumption(symbol="a", dims=(1024,)),),
+)
+
+result = score.validate()
+if result.eligible:
+    print("Score 是合法的")
+else:
+    print("拒绝原因:", result.reasons)</code></pre>
+
+<p><code>validate()</code> 检查：name 非空、task_id 唯一且非负、func_id 非负、core_type 合法、
+arg_directions/arg_storage_keys 与 args 长度匹配、dependency 指向已知 task、无自环、无环（DAG）、
+shape symbol 唯一且维度为正整数。</p>
+
+<div class="nav">
+  <a href="00-overview.html">&larr; 上一篇：Sonata 是什么？</a>
+  &nbsp;|&nbsp;
+  <a href="02-eligibility.html">下一篇：Eligibility &rarr;</a>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 3 - 依赖策略</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 3 - 依赖策略：Sequential vs Dataflow</h1>
+
+<h2>提问：Sonata 有两种依赖策略，有什么区别？</h2>
+
+<table>
+  <tr><th>策略</th><th>行为</th><th>适用场景</th></tr>
+  <tr>
+    <td><code>sequential_v0</code></td>
+    <td>按提取顺序串行链接（task 0 → 1 → 2 → ...）</td>
+    <td>task 的读写方向信息不完整时的<strong>保底策略</strong></td>
+  </tr>
+  <tr>
+    <td><code>dataflow_v0</code></td>
+    <td>根据读写方向构建 RAW/WAW/WAR 依赖边，无依赖的 task 可并行</td>
+    <td>所有 task 都有完整的 <code>arg_directions</code></td>
+  </tr>
+</table>
+
+<h2>提问：Sequential 是怎么工作的？</h2>
+
+<p>最简单——把所有 Task 按顺序串成一条链：</p>
+
+<pre><code>Task 0 → Task 1 → Task 2 → Task 3
+
+Dependency(producer=0, consumer=1)
+Dependency(producer=1, consumer=2)
+Dependency(producer=2, consumer=3)</code></pre>
+
+<p><strong>优点</strong>：永远正确，不需要任何额外信息。
+<strong>缺点</strong>：可能过于保守——如果 Task 0 和 Task 2 没有数据依赖，串行执行浪费并行机会。</p>
+
+<h2>提问：Dataflow 是怎么工作的？</h2>
+
+<p>通过分析每个 Task 的参数读写方向来建立精确依赖：</p>
+
+<pre><code>读方向（input, inout）                  → 这个参数是"读"
+写方向（output, outputexisting, inout） → 这个参数是"写"
+忽略方向（scalar, nodep）               → 不参与依赖计算</code></pre>
+
+<p>三种依赖边：</p>
+<ul>
+  <li><strong>RAW</strong>（Read After Write）：A 写了 x，B 读了 x → A 必须在 B 之前</li>
+  <li><strong>WAW</strong>（Write After Write）：A 写了 x，B 也写了 x → A 必须在 B 之前</li>
+  <li><strong>WAR</strong>（Write After Read）：A 读了 x，B 写了 x → A 必须在 B 之前</li>
+</ul>
+
+<p>用一个具体例子说明：</p>
+
+<pre><code># task 0: matmul(x, w, y)    — 读 x, w；写 y
+# task 1: relu(y, y2)        — 读 y；写 y2
+# task 2: add(a, b, c)       — 读 a, b；写 c
+# task 3: mul(y2, c, out)    — 读 y2, c；写 out
+
+# dataflow_v0 分析：
+# - task 0 写 y → task 1 读 y  → 依赖边 (0→1) [RAW]
+# - task 0, 1 与 task 2 无共享内存 → 无依赖 → 可并行！
+# - task 1 写 y2 → task 3 读 y2 → 依赖边 (1→3) [RAW]
+# - task 2 写 c  → task 3 读 c  → 依赖边 (2→3) [RAW]
+
+# sequential_v0 则是简单的 (0→1→2→3)，不允许并行
+# dataflow_v0 发现 task 0/1 和 task 2 可以并行执行，更高效</code></pre>
+
+<h2>提问：Dataflow 需要什么前提条件？</h2>
+
+<p>每个 Task 必须有完整的 <code>arg_directions</code>，且长度与 <code>args</code> 一致。
+如果某些 Task 缺少方向信息，Sonata 会<strong>自动降级到 Sequential</strong>：</p>
+
+<pre><code># 在 eligibility.py 里
+if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0:
+    code = dataflow_dependency_fallback_code(tasks)
+    if code is not None:
+        return DEPENDENCY_POLICY_SEQUENTIAL_V0, code  # 降级</code></pre>
+
+<p>降级时记录的 fallback code：</p>
+<ul>
+  <li><code>DATAFLOW_DIRECTIONS_UNAVAILABLE</code> — 所有 Task 都没有方向信息</li>
+  <li><code>DATAFLOW_DIRECTIONS_INCOMPLETE</code> — 部分 Task 有方向信息但不完整</li>
+</ul>
+
+<h2>提问：storage key 在 Dataflow 里起什么作用？</h2>
+
+<p>当两个不同的参数名指向同一块内存时，只靠参数名会漏掉依赖：</p>
+
+<pre><code>Task 0: args=("buf",), arg_directions=("output",)   # 写入 buf
+Task 1: args=("x",),   arg_directions=("input",)    # 读取 x</code></pre>
+
+<p>如果 <code>buf</code> 和 <code>x</code> 实际指向同一块内存，这里应该有 RAW 依赖。
+<code>arg_storage_keys</code> 提供参数到真实内存的映射。在 dataflow 分析中：</p>
+
+<pre><code>access_key = storage_key if storage_key is not None else arg</code></pre>
+
+<p>有 storage key 用它做依赖判断，否则退回到参数名。没有 storage key 时，跨变量名的依赖会被漏掉。</p>
+
+<h2>提问：v0.1 的依赖类型有什么限制？</h2>
+
+<div class="callout warn">
+  <strong>已决定（B+ 路线）：</strong>v0.1 不区分依赖类型。所有依赖关系统一合并成一条边，
+  宁可多画依赖（保守，不出错）也不少画（可能并行出错）。v0.3 会区分 RAW、WAW、WAR 等类型，
+  让调度器能做更精细的并行。<br><br>
+  v0.3 的设计参考来自 <code>tensormap_and_ringbuffer</code> 运行时——该运行时引入了额外的依赖约束
+  （tensor 生命周期管理、TensorMap producer lookup、manual scope 抑制），Sonata 需要支持这些依赖类型的显式表达。
+</div>
+
+<h2>提问：怎么指定用哪种策略？</h2>
+
+<pre><code>result = check_static_eligibility(
+    node,
+    dependency_policy="dataflow_v0",  # 或 "sequential_v0"（默认）
+)</code></pre>
+
+<p>如果不指定，默认用 <code>sequential_v0</code>。</p>
+
+<div class="nav">
+  <a href="02-eligibility.html">&larr; 上一篇：Eligibility</a>
+  &nbsp;|&nbsp;
+  <a href="04-serialization.html">下一篇：序列化与 Fingerprint &rarr;</a>
+</div>
+
+</body>
+</html>

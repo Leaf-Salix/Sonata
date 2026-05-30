@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Dive 2 - eligibility.py 完整解析</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .callout.red { background: #fee2e2; border: 1px solid #fca5a5; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Deep Dive 2 - eligibility.py 完整解析</h1>
+
+<p>本文件深入 <code>src/sonata/eligibility.py</code> 的每一个函数、每一条拒绝路径、每一个提取细节。
+这是 Sonata 的<strong>入口模块</strong>——决定一个 IR 节点能否进入 Sonata。</p>
+
+<h2>模块总览</h2>
+
+<p><code>eligibility.py</code> 是 Sonata 的最顶层模块，约 440 行。它的职责是：</p>
+<ol>
+  <li>检查 IR 节点是否满足 Sonata 的限制条件</li>
+  <li>如果满足，从 IR 中提取 Score（tasks + dependencies + shape assumptions + metadata）</li>
+  <li>如果不满足，返回结构化的拒绝理由</li>
+</ol>
+
+<p>它依赖所有其他 Sonata 模块：score、storage、dependencies、audit、fallback，以及 pypto_adapter。</p>
+
+<h2>check_static_eligibility — 入口函数</h2>
+
+<pre><code>def check_static_eligibility(
+    node: Any,
+    *,
+    runtime_target: RuntimeTarget | None = None,
+    entry_name: str | None = None,
+    dependency_policy: str = DEPENDENCY_POLICY_SEQUENTIAL_V0,
+) -> EligibilityResult:</code></pre>
+
+<h3>参数详解</h3>
+
+<table>
+  <tr><th>参数</th><th>类型</th><th>默认值</th><th>含义</th></tr>
+  <tr><td><code>node</code></td><td><code>Any</code></td><td>（必填）</td><td>IR 根节点。可以是 Function 或 Program</td></tr>
+  <tr><td><code>runtime_target</code></td><td><code>RuntimeTarget | None</code></td><td><code>None</code></td><td>目标运行时。None 时自动用 <code>host_build_graph</code></td></tr>
+  <tr><td><code>entry_name</code></td><td><code>str | None</code></td><td><code>None</code></td><td>指定提取哪个函数。None 时提取所有 Orchestration 函数</td></tr>
+  <tr><td><code>dependency_policy</code></td><td><code>str</code></td><td><code>"sequential_v0"</code></td><td>依赖策略。可选 <code>"dataflow_v0"</code></td></tr>
+</table>
+
+<h3>执行流程（6 步）</h3>
+
+<pre><code>步骤 1: 创建 adapter（PreMaterializePyPTOInputAdapter）
+步骤 2: 检查根节点类型（必须是 Function/Program）
+步骤 3: 遍历所有子节点，检查不支持的控制流/操作
+步骤 4: 检查提取根是否存在、Group/Spmd 是否在范围内
+步骤 5: 如果有拒绝理由，去重后返回
+步骤 6: 提取 Score → 验证 → 检查存储覆盖率</code></pre>
+
+<p><strong>关键设计：</strong>步骤 2~4 只收集拒绝理由，不立即返回。所有检查完成后一次性返回。
+这使得调用方能拿到<strong>所有</strong>拒绝原因，而不是只看到第一个。</p>
+
+<h2>拒绝路径逐条解析</h2>
+
+<h3>路径 1：根节点类型不支持</h3>
+
+<pre><code>root_kind = _kind(node)  # type(node).__name__
+if root_kind not in {"Function", "Program"}:
+    → FallbackCode.UNSUPPORTED_ROOT_KIND</code></pre>
+
+<p>只接受 <code>Function</code> 或 <code>Program</code> 类型的根节点。其他任何类型（包括 <code>object()</code>）都会被拒绝。</p>
+
+<h3>路径 2：控制流不支持</h3>
+
+<pre><code>_CONTROL_FLOW_KINDS = {"ForStmt", "IfStmt", "WhileStmt"}
+
+if child_kind in _CONTROL_FLOW_KINDS:
+    → FallbackCode.CONTROL_FLOW_NOT_SUPPORTED</code></pre>
+
+<p>遍历 IR 树的所有子节点（通过 <code>adapter.walk(node)</code>），只要出现任何一个控制流节点就记录拒绝理由。</p>
+
+<p><strong>注意：</strong>同一个类型的多个控制流节点会被去重。两个 ForStmt 只产生一条拒绝消息。</p>
+
+<h3>路径 3：RuntimeScopeStmt 不支持</h3>
+
+<pre><code>elif child_kind == "RuntimeScopeStmt":
+    → FallbackCode.UNSUPPORTED_RUNTIME_SCOPE</code></pre>
+
+<p>运行时作用域语句——PyPTO 在 <code>MaterializeRuntimeScopes</code> pass 中插入的 AUTO scope 包裹。
+Sonata 的 certified dump 在这个 pass 之前，所以正常情况下不会遇到。但如果有人用了错误的 dump，这里会拦住。</p>
+
+<h3>路径 4：PyPTO adapter 范围外的节点</h3>
+
+<pre><code>elif child_kind in adapter.unsupported_kinds:
+    → FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE</code></pre>
+
+<p>这是 adapter 层面的拒绝——Submit、SpmdScopeStmt、ManualScopeStmt 等节点超出了 v0.1 adapter 的范围。</p>
+
+<h3>路径 5：tensor.read 不支持</h3>
+
+<pre><code>elif child_kind == "Call" and _call_name(child) == "tensor.read":
+    → FallbackCode.TENSOR_READ_NOT_SUPPORTED</code></pre>
+
+<p>只检查 Call 节点中 op 为 <code>"tensor.read"</code> 的特定操作。</p>
+
+<h3>路径 6：入口函数不是 Orchestration</h3>
+
+<pre><code>if entry_name is not None and not extraction_roots:
+    → FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION</code></pre>
+
+<p>当显式指定了 <code>entry_name</code> 但找不到对应的 Orchestration 函数时触发。</p>
+
+<h3>路径 7：Group/Spmd 调用超出范围</h3>
+
+<pre><code>unsupported_call = adapter.has_unsupported_function_call()
+if unsupported_call is not None:
+    → FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE</code></pre>
+
+<p>v0.1 明确排除 Group/Spmd 函数调用——这些函数会把一个 Call 展开成多个 task（如 Group → AIC + AIV），超出了当前"一个 Call = 一个 Task"的提取模型。</p>
+
+<h3>去重逻辑</h3>
+
+<pre><code>def _dedupe(reasons: list[FallbackReason]) -> tuple[FallbackReason, ...]:
+    seen: set[tuple[str, str, str]] = set()  # (code, message, severity)
+    ...</code></pre>
+
+<p>去重的 key 是 <code>(code, message, severity)</code> 三元组。完全相同的消息只保留一条。</p>
+
+<h2>Score 提取流程</h2>
+
+<p>当所有检查都通过后，进入 Score 构建阶段：</p>
+
+<pre><code># 1. 确定 Score 名称
+name = str(getattr(node, "name", "sonata_score"))
+
+# 2. 通过 adapter 获取归一化事实
+facts = adapter.normalize(storage_key_resolver=_storage_key_resolver)
+
+# 3. 从 facts 提取 tasks
+tasks = _tasks_from_facts(facts.functions)
+
+# 4. 解析依赖策略（可能降级）
+resolved_policy, fallback_code = _resolve_dependency_policy(tasks, dependency_policy)
+
+# 5. 构建 Score
+score = Score(
+    name=name,
+    runtime_target=runtime_target or RuntimeTarget(runtime="host_build_graph", ...),
+    tasks=tasks,
+    dependencies=build_dependencies(tasks, policy=resolved_policy),
+    shape_assumptions=_extract_shape_assumptions(extraction_roots),
+    metadata=build_score_metadata(...),
+)
+
+# 6. 验证 + 存储覆盖率检查
+return _check_storage_coverage(score.validate())</code></pre>
+
+<h3>_tasks_from_facts — 从归一化事实提取 Task</h3>
+
+<p>这个函数遍历 <code>facts.functions</code> 中的每个函数：</p>
+<ol>
+  <li>对该函数调用 <code>collect_storage_keys</code> 收集存储信息</li>
+  <li>对该函数调用 <code>collect_call_output_vars</code> 收集 Call 输出变量</li>
+  <li>遍历函数中的每个 <code>call</code>（已由 adapter 归一化）</li>
+  <li>按 <code>call.callee_name</code> 分配 func_id（首次出现时分配新 id）</li>
+  <li>从 <code>call.arg_names</code>、<code>call.arg_directions</code>、<code>call.core_type</code> 构建 Task</li>
+  <li>如果有输出变量赋值，传播 storage key</li>
+</ol>
+
+<h3>_extract_shape_assumptions — 形状假设提取</h3>
+
+<pre><code>def _extract_shape_assumptions(nodes: tuple[Any, ...]) -> tuple[ShapeAssumption, ...]:
+    assumptions: list[ShapeAssumption] = []
+    multiple_roots = len(nodes) > 1
+    for node in nodes:
+        for param in getattr(node, "params", ()):
+            symbol = _shape_symbol(node, param, multiple_roots)
+            dims = _static_shape_dims(param)
+            if symbol and dims is not None:
+                assumptions.append(ShapeAssumption(symbol=symbol, dims=dims))
+    return tuple(assumptions)</code></pre>
+
+<h4>_shape_symbol 的三种返回</h4>
+
+<table>
+  <tr><th>场景</th><th>返回</th><th>效果</th></tr>
+  <tr><td>参数名与类型名相同（匿名变量）</td><td><code>None</code></td><td>跳过该参数</td></tr>
+  <tr><td>单个提取根</td><td>参数名（如 <code>"x"</code>）</td><td>直接使用</td></tr>
+  <tr><td>多个提取根</td><td><code>"func_name.param_name"</code>（如 <code>"main_a.x"</code>）</td><td>加函数名前缀避免冲突</td></tr>
+</table>
+
+<p><strong>匿名变量处理：</strong>如果参数没有名字（<code>_arg_name</code> 返回的是类型的 <code>__name__</code>，与 <code>_kind(param)</code> 相同），认为是匿名变量，跳过。</p>
+
+<h4>_static_shape_dims 的提取链</h4>
+
+<pre><code>param → _param_type(param) → _shape_values(type) → [_const_int_value(dim) for dim in shape]</code></pre>
+
+<p><strong>_param_type</strong> 尝试三个字段：<code>type</code>、<code>type_</code>、<code>tensor_type</code>。
+<strong>_shape_values</strong> 尝试四个字段：<code>shape</code>、<code>shape_</code>、<code>dims</code>、<code>dims_</code>。
+<strong>_const_int_value</strong> 先检查 <code>dim</code> 本身是否为正整数，再检查 <code>dim.value</code>（处理 <code>ConstInt</code> 包装）。</p>
+
+<div class="callout warn">
+  <strong>全部或无：</strong>如果某个维度无法提取（返回 None），<strong>整个参数</strong>的 shape assumption 被跳过。不会记录部分维度。这是为了保证 ShapeAssumption 的完整性——要么我们知道完整的形状，要么不知道。
+</div>
+
+<h3>_resolve_dependency_policy — 依赖策略降级</h3>
+
+<pre><code>def _resolve_dependency_policy(tasks, requested_policy):
+    if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0:
+        code = dataflow_dependency_fallback_code(tasks)
+        if code is not None:
+            return DEPENDENCY_POLICY_SEQUENTIAL_V0, code  # 降级
+    return requested_policy, None</code></pre>
+
+<p>降级条件：请求 dataflow_v0 但某些 task 缺少 <code>arg_directions</code>。
+降级时 metadata 会记录 <code>requested_dependency_policy</code> 和 <code>dependency_policy_fallback_reason</code>。</p>
+
+<h3>_check_storage_coverage — 存储覆盖率检查</h3>
+
+<pre><code>def _check_storage_coverage(result):
+    # 只在 Score 验证通过后检查
+    if not result.eligible or result.score is None:
+        return result
+
+    coverage = result.score.metadata.get("memory_storage_key_coverage")
+    # 没有覆盖率数据或全部已知 → 不需要警告
+    if not coverage or coverage["total"] == 0:
+        return result
+    if coverage["unknown"] == 0:
+        return result
+
+    # 覆盖率低于 50% → warning
+    if coverage["known"] / coverage["total"] < 0.5:
+        return EligibilityResult.accept_with_warnings(...)
+
+    return result</code></pre>
+
+<p>注意：</p>
+<ul>
+  <li>存储覆盖率检查在 <code>score.validate()</code> <strong>之后</strong>执行</li>
+  <li>只看 <code>memory_storage_key_coverage</code>（内存方向参数），不看 <code>storage_key_coverage</code>（全部参数）</li>
+  <li>低于 50% 阈值产生 warning，但<strong>不拒绝</strong> Score</li>
+  <li>覆盖率 = 0 时不触发（因为 <code>unknown == 0</code> 意味着 <code>total == 0</code>，即没有内存参数）</li>
+</ul>
+
+<h2>辅助函数详解</h2>
+
+<h3>_kind — 获取节点类型名</h3>
+
+<pre><code>def _kind(node: Any) -> str:
+    return type(node).__name__</code></pre>
+
+<p>返回类名字符串。这是 Sonata 结构化内省的基础——所有 IR 节点类型判断都通过 <code>_kind</code> 而不是 <code>isinstance</code>。</p>
+
+<h3>_call_name — 获取 Call 操作名</h3>
+
+<pre><code>def _call_name(node: Any) -> str | None:
+    # 尝试三个字段：op（字符串）、op.name、op_name
+    op = getattr(node, "op", None)
+    if isinstance(op, str): return op
+    name = getattr(op, "name", None)
+    if isinstance(name, str): return name
+    op_name = getattr(node, "op_name", None)
+    if isinstance(op_name, str): return op_name
+    return None</code></pre>
+
+<p>兼容 PyPTO IR 的多种 Call 表示方式。<code>op</code> 可以是字符串（测试 mock）或对象（真实 IR）。</p>
+
+<h3>_arg_name — 获取参数名</h3>
+
+<pre><code>def _arg_name(node: Any) -> str:
+    if isinstance(node, str): return node          # 字符串直接返回
+    name_hint = getattr(node, "name_hint", None)   # PyPTO IR 常用
+    if isinstance(name_hint, str): return name_hint
+    name = getattr(node, "name", None)
+    if isinstance(name, str): return name
+    return _kind(node)                              # 兜底：用类型名</code></pre>
+
+<p>当所有字段都找不到时，返回类型名——这会导致 <code>_shape_symbol</code> 判定为匿名变量并跳过。</p>
+
+<h3>_arg_directions — 获取参数方向</h3>
+
+<pre><code>def _arg_directions(call: Any) -> tuple[str, ...]:
+    directions = getattr(call, "arg_directions", None)
+    if directions is None:
+        attrs = getattr(call, "attrs", None)
+        if isinstance(attrs, dict):
+            directions = attrs.get("arg_directions")
+    if not directions:
+        return ()
+    return tuple(_direction_name(direction) for direction in directions)</code></pre>
+
+<p>先查 <code>arg_directions</code> 属性，再查 <code>attrs</code> 字典——兼容两种 PyPTO IR 的方向存储方式。</p>
+
+<h3>_direction_name — 归一化方向名</h3>
+
+<pre><code>def _direction_name(direction: Any) -> str:
+    name = getattr(direction, "name", None)   # 枚举值
+    if isinstance(name, str): return name
+    value = getattr(direction, "value", None)  # 另一种枚举表示
+    if isinstance(value, str): return value
+    return str(direction)                       # 兜底</code></pre>
+
+<p>兼容 PyPTO 的枚举类型。不管底层是 <code>Direction.Input</code>、<code>{"name": "Input"}</code> 还是 <code>"Input"</code> 字符串，都能提取出方向名。</p>
+
+<h2>遗留函数：_extract_tasks 和 _extraction_roots</h2>
+
+<p>这两个函数仍存在于代码中，但主要的 task 提取路径已通过 <code>_tasks_from_facts</code> 和 <code>adapter.extraction_roots()</code> 替代。它们被保留用于向后兼容和测试。</p>
+
+<div class="callout info">
+  <strong>双路径提取：</strong>当前代码有两条 task 提取路径：
+  <ul>
+    <li><code>_tasks_from_facts(facts.functions)</code>：通过 adapter 归一化后的 facts 提取（新路径）</li>
+    <li><code>_extract_tasks(extraction_roots, core_types)</code>：直接从 IR 节点提取（旧路径，测试用）</li>
+  </ul>
+  两者产生相同的 Task 结构，但新路径通过 adapter 解耦了 PyPTO IR。
+</div>
+
+<h2>测试覆盖的关键场景</h2>
+
+<table>
+  <tr><th>测试场景</th><th>验证点</th></tr>
+  <tr><td>简单直线函数</td><td>1 个 Call → 1 个 Task，eligible</td></tr>
+  <tr><td>默认 runtime target</td><td>不传 runtime_target → 自动用 host_build_graph</td></tr>
+  <tr><td>dataflow 策略 + 完整方向</td><td>4 个 task，只有 1 条 RAW 依赖边</td></tr>
+  <tr><td>dataflow 降级为 sequential</td><td>metadata 记录降级原因</td></tr>
+  <tr><td>storage key 传播</td><td>param → alloc → task arg → 输出传播</td></tr>
+  <tr><td>正/负/零/bool 维度</td><td>只有正整数维度被提取</td></tr>
+  <tr><td>混合正负维度</td><td>整个参数被跳过（不记录部分）</td></tr>
+  <tr><td>ConstInt 包装</td><td>通过 <code>.value</code> 提取</td></tr>
+  <tr><td>多种 shape 字段名</td><td>shape / shape_ / dims / dims_ 都能提取</td></tr>
+  <tr><td>多入口 + 函数名前缀</td><td>main_a.x / main_b.x 避免冲突</td></tr>
+  <tr><td>匿名变量</td><td>symbol == kind(param) → 跳过</td></tr>
+  <tr><td>控制流 + 去重</td><td>两个 ForStmt → 一条消息</td></tr>
+  <tr><td>Group/Spmd 范围外</td><td>FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE</td></tr>
+  <tr><td>Submit/SpmdScopeStmt/ManualScopeStmt</td><td>adapter unsupported_kinds 拦截</td></tr>
+</table>
+
+<div class="nav">
+  <a href="deep-01-score-model.html">&larr; 上一篇：score.py 完整解析</a>
+  &nbsp;|&nbsp;
+  <a href="deep-03-dependencies.html">下一篇：dependencies.py 完整解析 &rarr;</a>
+</div>
+
+</body>
+</html>
