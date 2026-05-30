@@ -26,6 +26,7 @@ from .dependencies import (
 )
 from .score import EligibilityResult, RuntimeTarget, Score, ShapeAssumption, Task, is_static_shape_dim
 from .storage import (
+    STORAGE_COVERAGE_WARN_THRESHOLD,
     arg_storage_keys,
     collect_call_output_vars,
     collect_storage_keys,
@@ -85,7 +86,39 @@ def check_static_eligibility(
             dependency_policy,
         ),
     )
-    return score.validate()
+    return _check_storage_coverage(score.validate())
+
+
+def _check_storage_coverage(result: EligibilityResult) -> EligibilityResult:
+    """Apply storage coverage checks after score validation passes."""
+    if not result.eligible or result.score is None:
+        return result
+
+    coverage = result.score.metadata.get("memory_storage_key_coverage")
+    if not coverage or coverage["total"] == 0:
+        return result
+
+    if coverage["unknown"] == 0:
+        return result
+
+    # Only check coverage when params exist (storage keys can be derived).
+    # If no params, all args are necessarily "unknown" — not a coverage failure.
+    overall = result.score.metadata.get("storage_key_coverage")
+    if overall and overall["known"] == 0 and overall["total"] > 0:
+        # No storage keys derivable at all — likely no params on entry function.
+        return result
+
+    if coverage["known"] == 0:
+        return EligibilityResult.reject("memory storage key coverage is zero")
+
+    if coverage["known"] / coverage["total"] < STORAGE_COVERAGE_WARN_THRESHOLD:
+        return EligibilityResult.accept_with_warnings(
+            result.score,
+            f"memory storage key coverage below threshold: "
+            f"{coverage['known']}/{coverage['total']} < {STORAGE_COVERAGE_WARN_THRESHOLD}",
+        )
+
+    return result
 
 
 def _walk(node: Any) -> Iterable[Any]:
