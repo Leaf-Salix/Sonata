@@ -15,6 +15,7 @@ from sonata import (
     ShapeAssumption,
     Task,
 )
+from sonata.score import EligibilityResult, FallbackReason
 
 
 def test_runtime_target_defaults_to_current_tensormap_contract() -> None:
@@ -75,7 +76,7 @@ def test_score_validate_rejects_unknown_dependency_target() -> None:
     assert result.score is None
     assert result.reasons == ("dependency consumer is unknown: 2",)
     assert [(reason.code, reason.message, reason.severity) for reason in result.reason_details] == [
-        ("dependency_consumer_is_unknown_2", "dependency consumer is unknown: 2", "error")
+        ("score_validation_failed", "dependency consumer is unknown: 2", "error")
     ]
 
 
@@ -273,6 +274,68 @@ def test_score_validate_reports_each_shape_dim_error_category() -> None:
         "shape assumption x has negative dimension",
         "shape assumption x has non-integer dimension",
     )
+
+
+class TestAcceptWithWarnings:
+    def test_returns_eligible_with_warning_details(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score, "dim x assumed static")
+
+        assert result.eligible
+        assert result.score is score
+        assert len(result.reason_details) == 1
+        assert result.reason_details[0].severity == "warning"
+        assert result.reason_details[0].message == "dim x assumed static"
+
+    def test_preserves_score_reference(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score, "w1", "w2")
+
+        assert result.score is score
+        assert len(result.reason_details) == 2
+
+    def test_with_empty_warnings(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score)
+
+        assert result.eligible
+        assert result.reason_details == ()
+
+    def test_rejects_none_score(self) -> None:
+        with pytest.raises(AssertionError):
+            EligibilityResult.accept_with_warnings(None, "warning")
+
+
+class TestHasErrorsHasWarnings:
+    def test_has_errors_true_on_rejection(self) -> None:
+        score = Score(name="", runtime_target=RuntimeTarget())
+        result = score.validate()
+
+        assert not result.eligible
+        assert result.has_errors()
+        assert not result.has_warnings()
+
+    def test_has_errors_false_on_accept(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = score.validate()
+
+        assert result.eligible
+        assert not result.has_errors()
+        assert not result.has_warnings()
+
+    def test_has_warnings_true_on_accept_with_warnings(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score, "low coverage")
+
+        assert result.eligible
+        assert result.has_warnings()
+        assert not result.has_errors()
+
+    def test_has_errors_false_on_empty_reason_details(self) -> None:
+        result = EligibilityResult(eligible=True)
+
+        assert not result.has_errors()
+        assert not result.has_warnings()
 
 
 if __name__ == "__main__":

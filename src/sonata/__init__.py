@@ -18,6 +18,7 @@ from .dependencies import (
     supports_dataflow_dependencies,
 )
 from .eligibility import check_static_eligibility
+from .fallback import FallbackCode, code_for_reason
 from .score import (
     DEFAULT_RUNTIME_TARGET,
     Dependency,
@@ -44,6 +45,7 @@ __all__ = [
     "Dependency",
     "EligibilityResult",
     "ELIGIBILITY_RESULT_SCHEMA_VERSION",
+    "FallbackCode",
     "FallbackReason",
     "RuntimeTarget",
     "SCORE_SCHEMA_VERSION",
@@ -54,6 +56,7 @@ __all__ = [
     "build_dependencies",
     "build_sequential_dependencies",
     "check_static_eligibility",
+    "code_for_reason",
     "eligibility_result_to_dict",
     "score_fingerprint",
     "score_to_dict",

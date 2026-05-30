@@ -70,7 +70,7 @@ def test_eligibility_result_to_dict_emits_structured_fallback_reasons() -> None:
     assert data["reasons"] == ["tensor.read calls are not supported by initial Sonata eligibility"]
     assert data["reason_details"] == [
         {
-            "code": "tensor_read_calls_are_not_supported_by_initial_sonata_eligibility",
+            "code": "tensor_read_not_supported",
             "message": "tensor.read calls are not supported by initial Sonata eligibility",
             "severity": "error",
         }

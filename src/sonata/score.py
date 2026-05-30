@@ -16,6 +16,8 @@ early analysis and tests can evolve without coupling to C++ bindings.
 from dataclasses import dataclass, field
 from typing import Any
 
+from .fallback import FallbackCode, code_for_reason
+
 
 @dataclass(frozen=True)
 class RuntimeTarget:
@@ -66,9 +68,10 @@ class Dependency:
 class FallbackReason:
     """Structured explanation for why a score or region is ineligible.
 
-    ``code`` is a best-effort slug derived from ``message`` and may change if
-    the message wording changes. Do not use it as a stable routing or filtering
-    key.
+    ``code`` is a stable :class:`FallbackCode` value when available, or a
+    best-effort slug derived from ``message`` for unmapped reasons.  Enum
+    codes are safe as routing keys; slug codes may change if message wording
+    changes.
     """
 
     code: str
@@ -96,8 +99,35 @@ class EligibilityResult:
         return cls(
             eligible=False,
             reasons=tuple(reasons),
-            reason_details=tuple(FallbackReason(code=_reason_code(reason), message=reason) for reason in reasons),
+            reason_details=tuple(_build_fallback_reason(reason) for reason in reasons),
         )
+
+    @classmethod
+    def accept_with_warnings(
+        cls, score: "Score", *warnings: str
+    ) -> "EligibilityResult":
+        """Build an eligible result with warning-level detail entries.
+
+        Use this when a score is valid but carries degraded-confidence
+        information (e.g. low storage coverage, dataflow fallback).
+        """
+        assert score is not None, "accept_with_warnings requires a non-None score"
+        return cls(
+            eligible=True,
+            score=score,
+            reason_details=tuple(
+                FallbackReason(code=_reason_code(w), message=w, severity="warning")
+                for w in warnings
+            ),
+        )
+
+    def has_errors(self) -> bool:
+        """Return whether any reason detail has severity ``error``."""
+        return any(r.severity == "error" for r in self.reason_details)
+
+    def has_warnings(self) -> bool:
+        """Return whether any reason detail has severity ``warning``."""
+        return any(r.severity == "warning" for r in self.reason_details)
 
 
 @dataclass(frozen=True)
@@ -235,6 +265,13 @@ def _shape_symbol_label(symbol: str) -> str:
 def _reason_code(reason: str) -> str:
     code = "".join(ch.lower() if ch.isalnum() else "_" for ch in reason).strip("_")
     return "_".join(part for part in code.split("_") if part) or "fallback"
+
+
+def _build_fallback_reason(message: str) -> FallbackReason:
+    """Build a FallbackReason, preferring a stable enum code when available."""
+    enum_code = code_for_reason(message)
+    code = enum_code.value if enum_code is not None else _reason_code(message)
+    return FallbackReason(code=code, message=message)
 
 
 def _visit_for_cycle(
