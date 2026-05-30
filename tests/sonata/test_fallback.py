@@ -8,6 +8,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 import pytest
+from sonata import check_static_eligibility
 from sonata.fallback import FallbackCode, code_for_reason
 
 
@@ -62,6 +63,19 @@ class TestRejectUsesEnumCode:
 
         assert result.reason_details[0].code == "control_flow_not_supported"
 
+    def test_reject_preserves_explicit_reason_code_when_message_changes(self) -> None:
+        from sonata.score import EligibilityResult, FallbackReason
+
+        result = EligibilityResult.reject(
+            FallbackReason(
+                code=FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION.value,
+                message="entry function main is not an orchestration function",
+            )
+        )
+
+        assert result.reasons == ("entry function main is not an orchestration function",)
+        assert result.reason_details[0].code == "entry_function_not_orchestration"
+
     def test_reject_falls_back_to_slug_for_unknown_message(self) -> None:
         from sonata.score import EligibilityResult
 
@@ -89,6 +103,48 @@ class TestRejectUsesEnumCode:
         assert result.eligible
         assert result.reason_details[0].code == "control_flow_not_supported"
         assert result.reason_details[0].severity == "warning"
+
+
+class TestEligibilityEmitsExplicitCodes:
+    def test_unsupported_root_uses_stable_code(self) -> None:
+        result = check_static_eligibility(object())
+
+        assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_ROOT_KIND.value
+
+    def test_runtime_scope_uses_runtime_scope_code(self) -> None:
+        from tests.sonata.test_eligibility import Call, EvalStmt, Function, RuntimeScopeStmt
+
+        result = check_static_eligibility(
+            Function(name="main", body=RuntimeScopeStmt(body=(EvalStmt(Call("kernel.add")),)))
+        )
+
+        assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_RUNTIME_SCOPE.value
+
+    def test_control_flow_uses_control_flow_code(self) -> None:
+        from tests.sonata.test_eligibility import Call, EvalStmt, ForStmt, Function
+
+        result = check_static_eligibility(
+            Function(name="main", body=(ForStmt(body=(EvalStmt(Call("kernel.add")),)),))
+        )
+
+        assert result.reason_details[0].code == FallbackCode.CONTROL_FLOW_NOT_SUPPORTED.value
+
+    def test_tensor_read_uses_tensor_read_code(self) -> None:
+        from tests.sonata.test_eligibility import Call, EvalStmt, Function
+
+        result = check_static_eligibility(Function(name="main", body=(EvalStmt(Call("tensor.read")),)))
+
+        assert result.reason_details[0].code == FallbackCode.TENSOR_READ_NOT_SUPPORTED.value
+
+    def test_entry_mismatch_uses_entry_code(self) -> None:
+        from tests.sonata.test_eligibility import FuncType, Function, Program
+
+        helper = Function(name="helper", body=())
+        helper.func_type = FuncType("AIC")
+
+        result = check_static_eligibility(Program(functions={"helper": helper}), entry_name="helper")
+
+        assert result.reason_details[0].code == FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION.value
 
 
 if __name__ == "__main__":

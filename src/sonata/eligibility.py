@@ -24,7 +24,16 @@ from .dependencies import (
     build_dependencies,
     dataflow_dependency_fallback_code,
 )
-from .score import EligibilityResult, RuntimeTarget, Score, ShapeAssumption, Task, is_static_shape_dim
+from .fallback import FallbackCode
+from .score import (
+    EligibilityResult,
+    FallbackReason,
+    RuntimeTarget,
+    Score,
+    ShapeAssumption,
+    Task,
+    is_static_shape_dim,
+)
 from .storage import (
     STORAGE_COVERAGE_WARN_THRESHOLD,
     arg_storage_keys,
@@ -46,24 +55,49 @@ def check_static_eligibility(
     dependency_policy: str = DEPENDENCY_POLICY_SEQUENTIAL_V0,
 ) -> EligibilityResult:
     """Return whether ``node`` is eligible for an initial Sonata static score."""
-    reasons: list[str] = []
+    reasons: list[FallbackReason] = []
     root_kind = _kind(node)
 
     if root_kind not in {"Function", "Program"}:
-        reasons.append(f"unsupported root for Sonata eligibility: {root_kind}")
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_ROOT_KIND,
+                f"unsupported root for Sonata eligibility: {root_kind}",
+            )
+        )
 
     for child in _walk(node):
         child_kind = _kind(child)
         if child_kind in _CONTROL_FLOW_KINDS:
-            reasons.append(f"{child_kind} is not supported by initial Sonata eligibility")
+            reasons.append(
+                _fallback_reason(
+                    FallbackCode.CONTROL_FLOW_NOT_SUPPORTED,
+                    f"{child_kind} is not supported by initial Sonata eligibility",
+                )
+            )
         elif child_kind in _UNSUPPORTED_KINDS:
-            reasons.append(f"{child_kind} is not supported by initial Sonata eligibility")
+            reasons.append(
+                _fallback_reason(
+                    FallbackCode.UNSUPPORTED_RUNTIME_SCOPE,
+                    f"{child_kind} is not supported by initial Sonata eligibility",
+                )
+            )
         elif child_kind == "Call" and _call_name(child) == "tensor.read":
-            reasons.append("tensor.read calls are not supported by initial Sonata eligibility")
+            reasons.append(
+                _fallback_reason(
+                    FallbackCode.TENSOR_READ_NOT_SUPPORTED,
+                    "tensor.read calls are not supported by initial Sonata eligibility",
+                )
+            )
 
     extraction_roots = _extraction_roots(node, entry_name)
     if entry_name is not None and not extraction_roots:
-        reasons.append(f"entry function is not an orchestration function: {entry_name}")
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION,
+                f"entry function is not an orchestration function: {entry_name}",
+            )
+        )
 
     if reasons:
         return EligibilityResult.reject(*_dedupe(reasons))
@@ -105,8 +139,12 @@ def _check_storage_coverage(result: EligibilityResult) -> EligibilityResult:
     if coverage["known"] / coverage["total"] < STORAGE_COVERAGE_WARN_THRESHOLD:
         return EligibilityResult.accept_with_warnings(
             result.score,
-            f"memory storage key coverage below threshold: "
-            f"{coverage['known']}/{coverage['total']} < {STORAGE_COVERAGE_WARN_THRESHOLD}",
+            _fallback_reason(
+                FallbackCode.STORAGE_COVERAGE_BELOW_THRESHOLD,
+                f"memory storage key coverage below threshold: "
+                f"{coverage['known']}/{coverage['total']} < {STORAGE_COVERAGE_WARN_THRESHOLD}",
+                severity="warning",
+            ),
         )
 
     return result
@@ -155,6 +193,15 @@ def _walk(node: Any) -> Iterable[Any]:
 
 def _kind(node: Any) -> str:
     return type(node).__name__
+
+
+def _fallback_reason(
+    code: FallbackCode,
+    message: str,
+    *,
+    severity: str = "error",
+) -> FallbackReason:
+    return FallbackReason(code=code.value, message=message, severity=severity)
 
 
 def _call_name(node: Any) -> str | None:
@@ -298,8 +345,6 @@ def _extraction_roots(node: Any, entry_name: str | None) -> tuple[Any, ...]:
 def _resolve_dependency_policy(
     tasks: tuple[Task, ...], requested_policy: str
 ) -> tuple[str, "FallbackCode | None"]:
-    from .fallback import FallbackCode
-
     if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0:
         code = dataflow_dependency_fallback_code(tasks)
         if code is not None:
@@ -363,11 +408,12 @@ def _direction_name(direction: Any) -> str:
     return str(direction)
 
 
-def _dedupe(reasons: list[str]) -> tuple[str, ...]:
-    result: list[str] = []
-    seen: set[str] = set()
+def _dedupe(reasons: list[FallbackReason]) -> tuple[FallbackReason, ...]:
+    result: list[FallbackReason] = []
+    seen: set[tuple[str, str, str]] = set()
     for reason in reasons:
-        if reason not in seen:
-            seen.add(reason)
+        key = (reason.code, reason.message, reason.severity)
+        if key not in seen:
+            seen.add(key)
             result.append(reason)
     return tuple(result)

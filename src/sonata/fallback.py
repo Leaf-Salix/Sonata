@@ -33,8 +33,6 @@ class FallbackCode(str, Enum):
     DATAFLOW_DIRECTIONS_INCOMPLETE = "dataflow_directions_incomplete"
 
 
-_CONTROL_FLOW_KINDS = {"ForStmt", "IfStmt", "WhileStmt"}
-
 # Mapping from eligibility rejection message patterns to FallbackCode.
 # Patterns are matched as substrings (``pattern in message``).
 # ORDER MATTERS: more specific patterns must come before shorter ones that
@@ -44,6 +42,7 @@ _ELIGIBILITY_CODE_MAP: list[tuple[str, FallbackCode]] = [
     ("entry function is not an orchestration function:", FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION),
     ("unsupported root for Sonata eligibility:", FallbackCode.UNSUPPORTED_ROOT_KIND),
     ("tensor.read calls are not supported by initial Sonata eligibility", FallbackCode.TENSOR_READ_NOT_SUPPORTED),
+    ("RuntimeScopeStmt is not supported by initial Sonata eligibility", FallbackCode.UNSUPPORTED_RUNTIME_SCOPE),
     ("is not supported by initial Sonata eligibility", FallbackCode.CONTROL_FLOW_NOT_SUPPORTED),
     # storage coverage warning messages
     ("memory storage key coverage below threshold:", FallbackCode.STORAGE_COVERAGE_BELOW_THRESHOLD),
@@ -73,20 +72,8 @@ def code_for_reason(message: str) -> FallbackCode | None:
     """
     for pattern, code in _ELIGIBILITY_CODE_MAP:
         if pattern in message:
-            if code == FallbackCode.CONTROL_FLOW_NOT_SUPPORTED:
-                return _disambiguate_unsupported_kind(message)
             return code
     return None
-
-
-def _disambiguate_unsupported_kind(message: str) -> FallbackCode:
-    """Distinguish control-flow kinds from RuntimeScopeStmt."""
-    kind = message.split(" is not supported")[0].strip()
-    if kind in _CONTROL_FLOW_KINDS:
-        return FallbackCode.CONTROL_FLOW_NOT_SUPPORTED
-    if kind == "RuntimeScopeStmt":
-        return FallbackCode.UNSUPPORTED_RUNTIME_SCOPE
-    return FallbackCode.CONTROL_FLOW_NOT_SUPPORTED
 
 
 __all__ = [
