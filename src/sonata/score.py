@@ -16,7 +16,7 @@ early analysis and tests can evolve without coupling to C++ bindings.
 from dataclasses import dataclass, field
 from typing import Any
 
-from .fallback import FallbackCode, code_for_reason
+from .fallback import FallbackCode
 
 
 @dataclass(frozen=True)
@@ -277,10 +277,8 @@ def _coerce_fallback_reason(reason: str | FallbackReason, *, severity: str) -> F
 
 
 def _build_fallback_reason(message: str, *, severity: str = "error") -> FallbackReason:
-    """Build a FallbackReason, preferring a stable enum code when available."""
-    enum_code = code_for_reason(message)
-    code = enum_code.value if enum_code is not None else _reason_code(message)
-    return FallbackReason(code=code, message=message, severity=severity)
+    """Build a best-effort FallbackReason for a raw string message."""
+    return FallbackReason(code=_reason_code(message), message=message, severity=severity)
 
 
 def _score_validation_reason(message: str) -> FallbackReason:

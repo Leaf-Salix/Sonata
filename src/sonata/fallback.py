@@ -33,46 +33,13 @@ class FallbackCode(str, Enum):
     DATAFLOW_DIRECTIONS_INCOMPLETE = "dataflow_directions_incomplete"
 
 
-# Mapping from eligibility rejection message patterns to FallbackCode.
-# Patterns are matched as substrings (``pattern in message``).
-# ORDER MATTERS: more specific patterns must come before shorter ones that
-# could be substrings of them.
-_ELIGIBILITY_CODE_MAP: list[tuple[str, FallbackCode]] = [
-    # eligibility.py rejection messages
-    ("entry function is not an orchestration function:", FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION),
-    ("unsupported root for Sonata eligibility:", FallbackCode.UNSUPPORTED_ROOT_KIND),
-    ("tensor.read calls are not supported by initial Sonata eligibility", FallbackCode.TENSOR_READ_NOT_SUPPORTED),
-    ("RuntimeScopeStmt is not supported by initial Sonata eligibility", FallbackCode.UNSUPPORTED_RUNTIME_SCOPE),
-    ("is not supported by initial Sonata eligibility", FallbackCode.CONTROL_FLOW_NOT_SUPPORTED),
-    # storage coverage warning messages
-    ("memory storage key coverage below threshold:", FallbackCode.STORAGE_COVERAGE_BELOW_THRESHOLD),
-    # score.py Score.validate() messages
-    ("score name must not be empty", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("task ids must be unique", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("task id must be non-negative:", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("func_id must be non-negative", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("has unsupported core_type:", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("arg_directions size", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("arg_storage_keys size", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("dependency producer is unknown:", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("dependency consumer is unknown:", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("dependency cannot be a self-edge:", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("dependency graph must be acyclic,", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("shape assumption symbol must not be empty", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("shape assumption symbol must be unique:", FallbackCode.SCORE_VALIDATION_FAILED),
-    ("shape assumption", FallbackCode.SCORE_VALIDATION_FAILED),
-]
-
-
 def code_for_reason(message: str) -> FallbackCode | None:
-    """Map an eligibility rejection message to a stable FallbackCode.
+    """Return a legacy best-effort code mapping for ``message``.
 
-    Returns ``None`` if the message has no known enum mapping. The caller
-    should fall back to ``_reason_code()`` in that case.
+    Stable fallback codes must be emitted at the reason producer by passing an
+    explicit ``FallbackReason``. Raw strings intentionally have no stable enum
+    mapping because message wording is not an API contract.
     """
-    for pattern, code in _ELIGIBILITY_CODE_MAP:
-        if pattern in message:
-            return code
     return None
 
 
