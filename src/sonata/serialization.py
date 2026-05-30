@@ -18,6 +18,7 @@ from .score import EligibilityResult, Score
 
 SCORE_SCHEMA_VERSION = 1
 ELIGIBILITY_RESULT_SCHEMA_VERSION = 1
+FINGERPRINT_VERSION = 1
 
 
 def score_to_dict(score: Score) -> dict[str, Any]:
@@ -78,13 +79,29 @@ def eligibility_result_to_dict(result: EligibilityResult) -> dict[str, Any]:
 
 
 def score_fingerprint(score: Score, *, include_metadata: bool = False) -> str:
-    """Return a stable SHA-256 fingerprint for cache/diff experiments."""
-    data = score_to_dict(score)
-    if not include_metadata:
-        data = dict(data)
-        data["metadata"] = {}
-    payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
+    """Return a stable SHA-256 fingerprint for the score computation identity."""
+    payload = json.dumps(
+        _fingerprint_payload(score, include_metadata=include_metadata),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_payload(score: Score, *, include_metadata: bool) -> dict[str, Any]:
+    data = score_to_dict(score)
+    identity = {
+        "name": data["name"],
+        "tasks": data["tasks"],
+        "dependencies": data["dependencies"],
+        "shape_assumptions": data["shape_assumptions"],
+    }
+    if include_metadata:
+        identity["metadata"] = data["metadata"]
+    return {
+        "fingerprint_version": FINGERPRINT_VERSION,
+        "identity": identity,
+    }
 
 
 def _json_like(value: Any) -> Any:
@@ -102,6 +119,7 @@ def _json_like(value: Any) -> Any:
 
 __all__ = [
     "ELIGIBILITY_RESULT_SCHEMA_VERSION",
+    "FINGERPRINT_VERSION",
     "SCORE_SCHEMA_VERSION",
     "eligibility_result_to_dict",
     "score_fingerprint",

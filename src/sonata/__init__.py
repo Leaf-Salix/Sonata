@@ -31,6 +31,7 @@ from .score import (
 )
 from .serialization import (
     ELIGIBILITY_RESULT_SCHEMA_VERSION,
+    FINGERPRINT_VERSION,
     SCORE_SCHEMA_VERSION,
     eligibility_result_to_dict,
     score_fingerprint,
@@ -46,6 +47,7 @@ __all__ = [
     "Dependency",
     "EligibilityResult",
     "ELIGIBILITY_RESULT_SCHEMA_VERSION",
+    "FINGERPRINT_VERSION",
     "FallbackCode",
     "FallbackReason",
     "RuntimeTarget",

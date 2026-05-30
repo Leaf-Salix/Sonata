@@ -1,9 +1,12 @@
 import json
 
+import sonata.serialization as serialization
 from sonata import (
     ELIGIBILITY_RESULT_SCHEMA_VERSION,
+    FINGERPRINT_VERSION,
     EligibilityResult,
     RuntimeTarget,
+    SCORE_SCHEMA_VERSION,
     Score,
     ShapeAssumption,
     Task,
@@ -40,7 +43,8 @@ def test_score_to_dict_emits_stable_json_like_structure() -> None:
 
     data = score_to_dict(score)
 
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == SCORE_SCHEMA_VERSION
+    assert "fingerprint_version" not in data
     assert data["runtime_target"]["aicpu_thread_num"] is None
     assert data["tasks"][0]["arg_storage_keys"] == ["param:x", "alloc:out", None]
     assert data["shape_assumptions"] == [{"symbol": "x", "dims": [64, 32]}]
@@ -57,6 +61,76 @@ def test_score_to_json_is_valid_sorted_json() -> None:
 
     assert json.loads(text)["name"] == "empty"
     assert text.splitlines()[1].strip() == '"dependencies": [],'
+
+
+def test_score_to_json_matches_v1_golden_schema() -> None:
+    score = Score(
+        name="golden",
+        runtime_target=RuntimeTarget(
+            runtime="host_build_graph",
+            function_name="build_golden_graph",
+            aicpu_thread_num=None,
+            config_comment=("# generated",),
+        ),
+        tasks=(
+            Task(
+                task_id=0,
+                func_id=1,
+                core_type="aiv",
+                args=("x", 4),
+                arg_directions=("Input", "Scalar"),
+                arg_storage_keys=("param:x", None),
+                name="kernel.add",
+            ),
+        ),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16,)),),
+        metadata={"dependency_policy": "sequential_v0"},
+    )
+
+    assert score_to_json(score) == """{
+  "dependencies": [],
+  "metadata": {
+    "dependency_policy": "sequential_v0"
+  },
+  "name": "golden",
+  "runtime_target": {
+    "aicpu_thread_num": null,
+    "config_comment": [
+      "# generated"
+    ],
+    "function_name": "build_golden_graph",
+    "runtime": "host_build_graph"
+  },
+  "schema_version": 1,
+  "shape_assumptions": [
+    {
+      "dims": [
+        16
+      ],
+      "symbol": "x"
+    }
+  ],
+  "tasks": [
+    {
+      "arg_directions": [
+        "Input",
+        "Scalar"
+      ],
+      "arg_storage_keys": [
+        "param:x",
+        null
+      ],
+      "args": [
+        "x",
+        4
+      ],
+      "core_type": "aiv",
+      "func_id": 1,
+      "name": "kernel.add",
+      "task_id": 0
+    }
+  ]
+}"""
 
 
 def test_eligibility_result_to_dict_emits_structured_fallback_reasons() -> None:
@@ -93,6 +167,44 @@ def test_score_fingerprint_ignores_metadata_by_default() -> None:
 
     assert score_fingerprint(base) == score_fingerprint(changed_metadata)
     assert score_fingerprint(base, include_metadata=True) != score_fingerprint(changed_metadata, include_metadata=True)
+
+
+def test_score_fingerprint_ignores_runtime_target_by_default() -> None:
+    base = Score(
+        name="same_plan",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_one"),
+        tasks=(Task(task_id=0, func_id=0, core_type="aiv", args=("x",), name="kernel"),),
+        metadata={"audit": "same"},
+    )
+    changed_runtime = Score(
+        name="same_plan",
+        runtime_target=RuntimeTarget(
+            runtime="tensormap_and_ringbuffer",
+            function_name="build_two",
+            aicpu_thread_num=4,
+            config_comment=("# different runtime contract",),
+        ),
+        tasks=base.tasks,
+        metadata=base.metadata,
+    )
+
+    assert score_fingerprint(base) == score_fingerprint(changed_runtime)
+    assert score_fingerprint(base, include_metadata=True) == score_fingerprint(
+        changed_runtime,
+        include_metadata=True,
+    )
+
+
+def test_score_fingerprint_version_changes_hash_payload(monkeypatch) -> None:
+    score = Score(
+        name="versioned_plan",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_versioned_graph"),
+    )
+
+    before = score_fingerprint(score)
+    monkeypatch.setattr(serialization, "FINGERPRINT_VERSION", FINGERPRINT_VERSION + 1)
+
+    assert score_fingerprint(score) != before
 
 
 def test_score_fingerprint_changes_for_plan_semantics() -> None:
