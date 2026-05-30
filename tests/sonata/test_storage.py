@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from sonata.score import Task
 from sonata.storage import (
     arg_storage_keys,
     call_write_storage_keys,
@@ -235,6 +236,83 @@ def _arg_name(node: Any) -> str:
 
 def _arg_directions(node: Any) -> tuple[str, ...]:
     return node.arg_directions if isinstance(node, Call) else ()
+
+
+class TestStorageCoverageThresholds:
+    """Tests for the storage coverage eligibility check."""
+
+    def _score_with_coverage(self, tasks, *, name="test"):
+        from sonata.score import Score, RuntimeTarget
+        from sonata.audit import build_score_metadata
+        metadata = build_score_metadata((), tasks, None, "sequential_v0", "sequential_v0")
+        return Score(name=name, runtime_target=RuntimeTarget(), tasks=tasks, metadata=metadata)
+
+    def test_full_coverage_eligible_no_warnings(self) -> None:
+        from sonata.eligibility import _check_storage_coverage
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv",
+                 args=("a",), arg_directions=("input",), arg_storage_keys=("param:0:a",)),
+        )
+        result = _check_storage_coverage(self._score_with_coverage(tasks).validate())
+
+        assert result.eligible
+        assert not result.has_warnings()
+
+    def test_partial_coverage_below_threshold_warns(self) -> None:
+        from sonata.eligibility import _check_storage_coverage
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv",
+                 args=("a", "b", "c"), arg_directions=("input", "output", "output"),
+                 arg_storage_keys=("param:0:a", None, None)),
+        )
+        result = _check_storage_coverage(self._score_with_coverage(tasks).validate())
+
+        assert result.eligible
+        assert result.has_warnings()
+        assert result.reason_details[0].code == "storage_coverage_below_threshold"
+        assert "below threshold" in result.reason_details[0].message
+
+    def test_zero_coverage_with_unknown_args_warns(self) -> None:
+        from sonata.eligibility import _check_storage_coverage
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv",
+                 args=("a",), arg_directions=("scalar",), arg_storage_keys=("param:0:a",)),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("b",), arg_directions=("input",), arg_storage_keys=(None,)),
+        )
+        result = _check_storage_coverage(self._score_with_coverage(tasks).validate())
+
+        assert result.eligible
+        assert result.has_warnings()
+        assert "below threshold" in result.reason_details[0].message
+
+    def test_no_memory_args_eligible(self) -> None:
+        from sonata.eligibility import _check_storage_coverage
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv",
+                 args=("s",), arg_directions=("scalar",), arg_storage_keys=(None,)),
+        )
+        result = _check_storage_coverage(self._score_with_coverage(tasks).validate())
+
+        assert result.eligible
+        assert not result.has_warnings()
+
+    def test_no_params_skips_coverage_check(self) -> None:
+        from sonata.eligibility import _check_storage_coverage
+        from sonata.score import Score, RuntimeTarget
+
+        # No metadata at all — simulates a function with no params
+        score = Score(name="no_params", runtime_target=RuntimeTarget(),
+                      tasks=(Task(task_id=0, func_id=0, core_type="aiv",
+                                  args=("x",), arg_directions=("input",), arg_storage_keys=(None,)),))
+        result = _check_storage_coverage(score.validate())
+
+        assert result.eligible
+        assert not result.has_warnings()
 
 
 if __name__ == "__main__":

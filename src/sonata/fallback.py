@@ -45,6 +45,8 @@ _ELIGIBILITY_CODE_MAP: list[tuple[str, FallbackCode]] = [
     ("unsupported root for Sonata eligibility:", FallbackCode.UNSUPPORTED_ROOT_KIND),
     ("tensor.read calls are not supported by initial Sonata eligibility", FallbackCode.TENSOR_READ_NOT_SUPPORTED),
     ("is not supported by initial Sonata eligibility", FallbackCode.CONTROL_FLOW_NOT_SUPPORTED),
+    # storage coverage warning messages
+    ("memory storage key coverage below threshold:", FallbackCode.STORAGE_COVERAGE_BELOW_THRESHOLD),
     # score.py Score.validate() messages
     ("score name must not be empty", FallbackCode.SCORE_VALIDATION_FAILED),
     ("task ids must be unique", FallbackCode.SCORE_VALIDATION_FAILED),

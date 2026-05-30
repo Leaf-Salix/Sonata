@@ -18,6 +18,9 @@ from typing import Any
 
 _WRITE_DIRECTIONS = {"output", "outputexisting", "inout"}
 
+STORAGE_COVERAGE_WARN_THRESHOLD = 0.5
+STORAGE_COVERAGE_REJECT_THRESHOLD = 0.0
+
 
 def collect_storage_keys(
     node: Any,

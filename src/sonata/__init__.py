@@ -37,6 +37,7 @@ from .serialization import (
     score_to_dict,
     score_to_json,
 )
+from .storage import STORAGE_COVERAGE_REJECT_THRESHOLD, STORAGE_COVERAGE_WARN_THRESHOLD
 
 __all__ = [
     "DEPENDENCY_POLICY_DATAFLOW_V0",
@@ -49,6 +50,8 @@ __all__ = [
     "FallbackReason",
     "RuntimeTarget",
     "SCORE_SCHEMA_VERSION",
+    "STORAGE_COVERAGE_REJECT_THRESHOLD",
+    "STORAGE_COVERAGE_WARN_THRESHOLD",
     "Score",
     "ShapeAssumption",
     "Task",
