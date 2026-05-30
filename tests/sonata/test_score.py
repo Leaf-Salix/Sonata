@@ -338,5 +338,38 @@ class TestHasErrorsHasWarnings:
         assert not result.has_warnings()
 
 
+class TestIsStaticShapeDim:
+    def test_positive_int_returns_true(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(1) is True
+        assert is_static_shape_dim(64) is True
+        assert is_static_shape_dim(100000) is True
+
+    def test_zero_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(0) is False
+
+    def test_negative_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(-1) is False
+        assert is_static_shape_dim(-100) is False
+
+    def test_bool_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(True) is False
+        assert is_static_shape_dim(False) is False
+
+    def test_non_int_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim("n") is False
+        assert is_static_shape_dim(3.14) is False
+        assert is_static_shape_dim(None) is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

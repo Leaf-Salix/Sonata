@@ -195,6 +195,32 @@ def test_static_eligibility_extracts_static_shape_assumptions() -> None:
     assert [(shape.symbol, shape.dims) for shape in result.score.shape_assumptions] == [("x", (64, 32))]
 
 
+def test_static_eligibility_skips_param_with_mixed_positive_and_negative_dims() -> None:
+    x = Var("x", TensorType((2, -1, 4)))
+    y = Var("y", TensorType((8,)))
+    func = Function(name="main", body=(EvalStmt(Call("kernel.add", args=(x, y))),))
+    func.params = (x, y)
+
+    result = check_static_eligibility(func)
+
+    assert result.eligible
+    assert result.score is not None
+    assert [(shape.symbol, shape.dims) for shape in result.score.shape_assumptions] == [("y", (8,))]
+
+
+def test_static_eligibility_skips_param_with_mixed_dims_via_const_int() -> None:
+    x = Var("x", TensorType((ConstInt(2), ConstInt(-1), ConstInt(4))))
+    y = Var("y", TensorType((ConstInt(8),)))
+    func = Function(name="main", body=(EvalStmt(Call("kernel.add", args=(x, y))),))
+    func.params = (x, y)
+
+    result = check_static_eligibility(func)
+
+    assert result.eligible
+    assert result.score is not None
+    assert [(shape.symbol, shape.dims) for shape in result.score.shape_assumptions] == [("y", (8,))]
+
+
 def test_static_eligibility_extracts_alternate_shape_field_names() -> None:
     shape_under = TypeUnderscoreVar("shape_under", ShapeUnderscoreType((8, ConstInt(16))))
     dims = TensorTypeAttrVar("dims", DimsType((32,)))
