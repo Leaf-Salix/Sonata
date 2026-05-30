@@ -84,10 +84,11 @@ def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> FallbackCode | No
     explaining why dataflow dependencies cannot be built."""
     if not tasks:
         return None
-    has_directions = [bool(task.arg_directions and len(task.arg_directions) == len(task.args)) for task in tasks]
-    if all(has_directions):
+    has_any = [bool(task.arg_directions) for task in tasks]
+    has_complete = [h and len(task.arg_directions) == len(task.args) for h, task in zip(has_any, tasks)]
+    if all(has_complete):
         return None
-    if not any(has_directions):
+    if not any(has_any):
         return FallbackCode.DATAFLOW_DIRECTIONS_UNAVAILABLE
     return FallbackCode.DATAFLOW_DIRECTIONS_INCOMPLETE
 

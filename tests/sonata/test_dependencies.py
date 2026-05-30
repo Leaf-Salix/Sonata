@@ -185,6 +185,14 @@ class TestDataflowFallbackCodes:
     def test_empty_tasks_returns_none(self) -> None:
         assert supports_dataflow_dependencies(()) is None
 
+    def test_mismatched_direction_lengths_returns_incomplete(self) -> None:
+        from sonata.fallback import FallbackCode
+
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aiv", args=("a", "b"), arg_directions=("input",)),
+        )
+        assert supports_dataflow_dependencies(tasks) == FallbackCode.DATAFLOW_DIRECTIONS_INCOMPLETE
+
 
 def test_build_dependencies_rejects_unknown_policy() -> None:
     with pytest.raises(ValueError, match="unsupported Sonata dependency policy"):
