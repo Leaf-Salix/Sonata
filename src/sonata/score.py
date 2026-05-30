@@ -111,7 +111,8 @@ class EligibilityResult:
         Use this when a score is valid but carries degraded-confidence
         information (e.g. low storage coverage, dataflow fallback).
         """
-        assert score is not None, "accept_with_warnings requires a non-None score"
+        if score is None:
+            raise ValueError("accept_with_warnings requires a non-None score")
         return cls(
             eligible=True,
             score=score,

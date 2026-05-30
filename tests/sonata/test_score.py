@@ -302,7 +302,7 @@ class TestAcceptWithWarnings:
         assert result.reason_details == ()
 
     def test_rejects_none_score(self) -> None:
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="non-None score"):
             EligibilityResult.accept_with_warnings(None, "warning")
 
 
