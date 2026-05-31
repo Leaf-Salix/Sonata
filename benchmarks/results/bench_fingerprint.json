@@ -1,0 +1,207 @@
+[
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0126,
+    "median_ms": 0.0119,
+    "min_ms": 0.0107,
+    "max_ms": 0.018,
+    "iterations": 10,
+    "throughput": 79234.24
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.041,
+    "median_ms": 0.041,
+    "min_ms": 0.0403,
+    "max_ms": 0.0421,
+    "iterations": 10,
+    "throughput": 24417.64
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1792,
+    "median_ms": 0.1717,
+    "min_ms": 0.1707,
+    "max_ms": 0.2465,
+    "iterations": 10,
+    "throughput": 5579.19
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.3617,
+    "median_ms": 0.3417,
+    "min_ms": 0.313,
+    "max_ms": 0.5288,
+    "iterations": 10,
+    "throughput": 2765.01
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 2.2677,
+    "median_ms": 1.6337,
+    "min_ms": 1.3971,
+    "max_ms": 5.5413,
+    "iterations": 10,
+    "throughput": 440.98
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0087,
+    "median_ms": 0.0087,
+    "min_ms": 0.0084,
+    "max_ms": 0.0089,
+    "iterations": 10,
+    "throughput": 115273.75
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0321,
+    "median_ms": 0.0321,
+    "min_ms": 0.0318,
+    "max_ms": 0.0326,
+    "iterations": 10,
+    "throughput": 31112.32
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1327,
+    "median_ms": 0.1322,
+    "min_ms": 0.1315,
+    "max_ms": 0.1378,
+    "iterations": 10,
+    "throughput": 7537.47
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.2839,
+    "median_ms": 0.2568,
+    "min_ms": 0.2513,
+    "max_ms": 0.3545,
+    "iterations": 10,
+    "throughput": 3522.78
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 1.3264,
+    "median_ms": 1.3245,
+    "min_ms": 1.2974,
+    "max_ms": 1.3852,
+    "iterations": 10,
+    "throughput": 753.91
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 1,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0003,
+    "median_ms": 0.0002,
+    "min_ms": 0.0001,
+    "max_ms": 0.0015,
+    "iterations": 10,
+    "throughput": 3115229.78,
+    "cache_miss_rebuild_ms": 0.0176,
+    "cached_score_hit_ms": 0.0051,
+    "speedup": 58.7
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 10,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0001,
+    "median_ms": 0.0001,
+    "min_ms": 0.0001,
+    "max_ms": 0.0002,
+    "iterations": 10,
+    "throughput": 6859326.51,
+    "cache_miss_rebuild_ms": 0.0673,
+    "cached_score_hit_ms": 0.021,
+    "speedup": 673.0
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 50,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0001,
+    "median_ms": 0.0002,
+    "min_ms": 0.0001,
+    "max_ms": 0.0002,
+    "iterations": 10,
+    "throughput": 6853853.5,
+    "cache_miss_rebuild_ms": 0.315,
+    "cached_score_hit_ms": 0.0938,
+    "speedup": 3150.0
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 100,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0001,
+    "median_ms": 0.0001,
+    "min_ms": 0.0001,
+    "max_ms": 0.0002,
+    "iterations": 10,
+    "throughput": 8019731.67,
+    "cache_miss_rebuild_ms": 0.799,
+    "cached_score_hit_ms": 0.2173,
+    "speedup": 7990.0
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 500,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0002,
+    "median_ms": 0.0002,
+    "min_ms": 0.0001,
+    "max_ms": 0.0003,
+    "iterations": 10,
+    "throughput": 5099397.21,
+    "cache_miss_rebuild_ms": 3.4007,
+    "cached_score_hit_ms": 1.0083,
+    "speedup": 17003.5
+  }
+]

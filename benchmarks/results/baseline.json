@@ -1,0 +1,1107 @@
+[
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 1,
+      "is_eligible": true,
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0628,
+    "median_ms": 0.0615,
+    "min_ms": 0.0555,
+    "max_ms": 0.077,
+    "iterations": 10,
+    "throughput": 15926.71
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 10,
+      "is_eligible": true,
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.2084,
+    "median_ms": 0.2084,
+    "min_ms": 0.2065,
+    "max_ms": 0.2103,
+    "iterations": 10,
+    "throughput": 4797.79
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 50,
+      "is_eligible": true,
+      "num_tasks": 50
+    },
+    "wall_time_ms": 1.3898,
+    "median_ms": 0.9261,
+    "min_ms": 0.8756,
+    "max_ms": 3.8045,
+    "iterations": 10,
+    "throughput": 719.54
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 100,
+      "is_eligible": true,
+      "num_tasks": 100
+    },
+    "wall_time_ms": 2.5375,
+    "median_ms": 2.6265,
+    "min_ms": 2.2941,
+    "max_ms": 2.6805,
+    "iterations": 10,
+    "throughput": 394.09
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 500,
+      "is_eligible": true,
+      "num_tasks": 500
+    },
+    "wall_time_ms": 12.8627,
+    "median_ms": 12.2267,
+    "min_ms": 9.0045,
+    "max_ms": 21.1185,
+    "iterations": 10,
+    "throughput": 77.74
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 1,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.0134,
+    "median_ms": 0.0131,
+    "min_ms": 0.0122,
+    "max_ms": 0.0156,
+    "iterations": 10,
+    "throughput": 74905.83
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 10,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.0391,
+    "median_ms": 0.0391,
+    "min_ms": 0.0388,
+    "max_ms": 0.0394,
+    "iterations": 10,
+    "throughput": 25588.99
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 50,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.1136,
+    "median_ms": 0.1128,
+    "min_ms": 0.1125,
+    "max_ms": 0.1186,
+    "iterations": 10,
+    "throughput": 8799.28
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 100,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.2156,
+    "median_ms": 0.2192,
+    "min_ms": 0.207,
+    "max_ms": 0.2213,
+    "iterations": 10,
+    "throughput": 4638.22
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 500,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 2.3055,
+    "median_ms": 1.938,
+    "min_ms": 1.304,
+    "max_ms": 6.0885,
+    "iterations": 10,
+    "throughput": 433.75
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 1,
+      "calls_per_function": 10,
+      "is_eligible": true,
+      "total_tasks": 10
+    },
+    "wall_time_ms": 0.3772,
+    "median_ms": 0.3254,
+    "min_ms": 0.3044,
+    "max_ms": 0.5461,
+    "iterations": 10,
+    "throughput": 2651.29
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 2,
+      "calls_per_function": 10,
+      "is_eligible": true,
+      "total_tasks": 20
+    },
+    "wall_time_ms": 0.6149,
+    "median_ms": 0.5797,
+    "min_ms": 0.544,
+    "max_ms": 0.78,
+    "iterations": 10,
+    "throughput": 1626.37
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 5,
+      "calls_per_function": 10,
+      "is_eligible": true,
+      "total_tasks": 50
+    },
+    "wall_time_ms": 1.8022,
+    "median_ms": 1.7935,
+    "min_ms": 1.4219,
+    "max_ms": 2.4841,
+    "iterations": 10,
+    "throughput": 554.87
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 1,
+      "calls_per_function": 50,
+      "is_eligible": true,
+      "total_tasks": 50
+    },
+    "wall_time_ms": 2.2013,
+    "median_ms": 1.9902,
+    "min_ms": 1.4403,
+    "max_ms": 4.8316,
+    "iterations": 10,
+    "throughput": 454.28
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 2,
+      "calls_per_function": 50,
+      "is_eligible": true,
+      "total_tasks": 100
+    },
+    "wall_time_ms": 3.5354,
+    "median_ms": 3.678,
+    "min_ms": 2.566,
+    "max_ms": 4.1791,
+    "iterations": 10,
+    "throughput": 282.85
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 5,
+      "calls_per_function": 50,
+      "is_eligible": true,
+      "total_tasks": 250
+    },
+    "wall_time_ms": 9.3536,
+    "median_ms": 7.5928,
+    "min_ms": 6.1192,
+    "max_ms": 20.7955,
+    "iterations": 10,
+    "throughput": 106.91
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 1,
+      "calls_per_function": 100,
+      "is_eligible": true,
+      "total_tasks": 100
+    },
+    "wall_time_ms": 3.2755,
+    "median_ms": 3.4666,
+    "min_ms": 2.2793,
+    "max_ms": 5.4142,
+    "iterations": 10,
+    "throughput": 305.29
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0126,
+    "median_ms": 0.0119,
+    "min_ms": 0.0107,
+    "max_ms": 0.018,
+    "iterations": 10,
+    "throughput": 79234.24
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.041,
+    "median_ms": 0.041,
+    "min_ms": 0.0403,
+    "max_ms": 0.0421,
+    "iterations": 10,
+    "throughput": 24417.64
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1792,
+    "median_ms": 0.1717,
+    "min_ms": 0.1707,
+    "max_ms": 0.2465,
+    "iterations": 10,
+    "throughput": 5579.19
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.3617,
+    "median_ms": 0.3417,
+    "min_ms": 0.313,
+    "max_ms": 0.5288,
+    "iterations": 10,
+    "throughput": 2765.01
+  },
+  {
+    "benchmark": "fingerprint_compute",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 2.2677,
+    "median_ms": 1.6337,
+    "min_ms": 1.3971,
+    "max_ms": 5.5413,
+    "iterations": 10,
+    "throughput": 440.98
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0087,
+    "median_ms": 0.0087,
+    "min_ms": 0.0084,
+    "max_ms": 0.0089,
+    "iterations": 10,
+    "throughput": 115273.75
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0321,
+    "median_ms": 0.0321,
+    "min_ms": 0.0318,
+    "max_ms": 0.0326,
+    "iterations": 10,
+    "throughput": 31112.32
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1327,
+    "median_ms": 0.1322,
+    "min_ms": 0.1315,
+    "max_ms": 0.1378,
+    "iterations": 10,
+    "throughput": 7537.47
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.2839,
+    "median_ms": 0.2568,
+    "min_ms": 0.2513,
+    "max_ms": 0.3545,
+    "iterations": 10,
+    "throughput": 3522.78
+  },
+  {
+    "benchmark": "fingerprint_with_metadata",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 1.3264,
+    "median_ms": 1.3245,
+    "min_ms": 1.2974,
+    "max_ms": 1.3852,
+    "iterations": 10,
+    "throughput": 753.91
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 1,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0003,
+    "median_ms": 0.0002,
+    "min_ms": 0.0001,
+    "max_ms": 0.0015,
+    "iterations": 10,
+    "throughput": 3115229.78,
+    "cache_miss_rebuild_ms": 0.0176,
+    "cached_score_hit_ms": 0.0051,
+    "speedup": 58.7
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 10,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0001,
+    "median_ms": 0.0001,
+    "min_ms": 0.0001,
+    "max_ms": 0.0002,
+    "iterations": 10,
+    "throughput": 6859326.51,
+    "cache_miss_rebuild_ms": 0.0673,
+    "cached_score_hit_ms": 0.021,
+    "speedup": 673.0
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 50,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0001,
+    "median_ms": 0.0002,
+    "min_ms": 0.0001,
+    "max_ms": 0.0002,
+    "iterations": 10,
+    "throughput": 6853853.5,
+    "cache_miss_rebuild_ms": 0.315,
+    "cached_score_hit_ms": 0.0938,
+    "speedup": 3150.0
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 100,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0001,
+    "median_ms": 0.0001,
+    "min_ms": 0.0001,
+    "max_ms": 0.0002,
+    "iterations": 10,
+    "throughput": 8019731.67,
+    "cache_miss_rebuild_ms": 0.799,
+    "cached_score_hit_ms": 0.2173,
+    "speedup": 7990.0
+  },
+  {
+    "benchmark": "cache_hit",
+    "parameters": {
+      "num_tasks": 500,
+      "path": "hit",
+      "cache_hit_rate_pct": 80.0
+    },
+    "wall_time_ms": 0.0002,
+    "median_ms": 0.0002,
+    "min_ms": 0.0001,
+    "max_ms": 0.0003,
+    "iterations": 10,
+    "throughput": 5099397.21,
+    "cache_miss_rebuild_ms": 3.4007,
+    "cached_score_hit_ms": 1.0083,
+    "speedup": 17003.5
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 1,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0049,
+    "median_ms": 0.0044,
+    "min_ms": 0.0043,
+    "max_ms": 0.008,
+    "iterations": 10,
+    "throughput": 204423.69
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 10,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0202,
+    "median_ms": 0.0201,
+    "min_ms": 0.0197,
+    "max_ms": 0.0217,
+    "iterations": 10,
+    "throughput": 49616.69
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 50,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0914,
+    "median_ms": 0.091,
+    "min_ms": 0.0893,
+    "max_ms": 0.0962,
+    "iterations": 10,
+    "throughput": 10942.92
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 100,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.2101,
+    "median_ms": 0.2361,
+    "min_ms": 0.1746,
+    "max_ms": 0.2372,
+    "iterations": 10,
+    "throughput": 4759.93
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 500,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 1.1854,
+    "median_ms": 1.2197,
+    "min_ms": 1.0082,
+    "max_ms": 1.2351,
+    "iterations": 10,
+    "throughput": 843.6
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 1,
+      "style": "chain",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0045,
+    "median_ms": 0.0045,
+    "min_ms": 0.0043,
+    "max_ms": 0.0051,
+    "iterations": 10,
+    "throughput": 220589.86
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 10,
+      "style": "chain",
+      "num_dependencies": 9
+    },
+    "wall_time_ms": 0.0245,
+    "median_ms": 0.0245,
+    "min_ms": 0.0243,
+    "max_ms": 0.0246,
+    "iterations": 10,
+    "throughput": 40816.5
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 50,
+      "style": "chain",
+      "num_dependencies": 49
+    },
+    "wall_time_ms": 0.1428,
+    "median_ms": 0.1429,
+    "min_ms": 0.1417,
+    "max_ms": 0.1437,
+    "iterations": 10,
+    "throughput": 7001.78
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 100,
+      "style": "chain",
+      "num_dependencies": 99
+    },
+    "wall_time_ms": 0.2856,
+    "median_ms": 0.2854,
+    "min_ms": 0.284,
+    "max_ms": 0.2884,
+    "iterations": 10,
+    "throughput": 3501.1
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 500,
+      "style": "chain",
+      "num_dependencies": 499
+    },
+    "wall_time_ms": 1.9398,
+    "median_ms": 2.0478,
+    "min_ms": 1.2925,
+    "max_ms": 3.0238,
+    "iterations": 10,
+    "throughput": 515.51
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 1,
+      "style": "dense",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0045,
+    "median_ms": 0.0044,
+    "min_ms": 0.0042,
+    "max_ms": 0.0054,
+    "iterations": 10,
+    "throughput": 222647.62
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 10,
+      "style": "dense",
+      "num_dependencies": 8
+    },
+    "wall_time_ms": 0.0327,
+    "median_ms": 0.0303,
+    "min_ms": 0.0301,
+    "max_ms": 0.0547,
+    "iterations": 10,
+    "throughput": 30561.52
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 50,
+      "style": "dense",
+      "num_dependencies": 58
+    },
+    "wall_time_ms": 0.2539,
+    "median_ms": 0.2515,
+    "min_ms": 0.2486,
+    "max_ms": 0.2796,
+    "iterations": 10,
+    "throughput": 3939.21
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 100,
+      "style": "dense",
+      "num_dependencies": 250
+    },
+    "wall_time_ms": 0.9669,
+    "median_ms": 0.9994,
+    "min_ms": 0.795,
+    "max_ms": 1.0117,
+    "iterations": 10,
+    "throughput": 1034.2
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 500,
+      "style": "dense",
+      "num_dependencies": 6234
+    },
+    "wall_time_ms": 20.7181,
+    "median_ms": 20.8668,
+    "min_ms": 18.8902,
+    "max_ms": 24.1594,
+    "iterations": 10,
+    "throughput": 48.27
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0049,
+    "median_ms": 0.0045,
+    "min_ms": 0.0037,
+    "max_ms": 0.0083,
+    "iterations": 10,
+    "throughput": 205659.25
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0107,
+    "median_ms": 0.0107,
+    "min_ms": 0.0105,
+    "max_ms": 0.0108,
+    "iterations": 10,
+    "throughput": 93641.59
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.041,
+    "median_ms": 0.041,
+    "min_ms": 0.0408,
+    "max_ms": 0.0414,
+    "iterations": 10,
+    "throughput": 24390.12
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.0848,
+    "median_ms": 0.0848,
+    "min_ms": 0.0842,
+    "max_ms": 0.0856,
+    "iterations": 10,
+    "throughput": 11791.28
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 0.4679,
+    "median_ms": 0.4511,
+    "min_ms": 0.4432,
+    "max_ms": 0.5478,
+    "iterations": 10,
+    "throughput": 2137.4
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0036,
+    "median_ms": 0.0034,
+    "min_ms": 0.0031,
+    "max_ms": 0.0044,
+    "iterations": 10,
+    "throughput": 275551.13
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0098,
+    "median_ms": 0.0098,
+    "min_ms": 0.0096,
+    "max_ms": 0.01,
+    "iterations": 10,
+    "throughput": 102038.83
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.039,
+    "median_ms": 0.0389,
+    "min_ms": 0.0388,
+    "max_ms": 0.0394,
+    "iterations": 10,
+    "throughput": 25673.81
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.08,
+    "median_ms": 0.0799,
+    "min_ms": 0.0776,
+    "max_ms": 0.0846,
+    "iterations": 10,
+    "throughput": 12500.61
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 0.4215,
+    "median_ms": 0.4133,
+    "min_ms": 0.4115,
+    "max_ms": 0.4466,
+    "iterations": 10,
+    "throughput": 2372.24
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0092,
+    "median_ms": 0.0092,
+    "min_ms": 0.0085,
+    "max_ms": 0.012,
+    "iterations": 10,
+    "throughput": 108255.59
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.03,
+    "median_ms": 0.0299,
+    "min_ms": 0.0295,
+    "max_ms": 0.0307,
+    "iterations": 10,
+    "throughput": 33337.78
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1223,
+    "median_ms": 0.1222,
+    "min_ms": 0.1217,
+    "max_ms": 0.1236,
+    "iterations": 10,
+    "throughput": 8173.54
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.2438,
+    "median_ms": 0.2393,
+    "min_ms": 0.2367,
+    "max_ms": 0.2608,
+    "iterations": 10,
+    "throughput": 4102.07
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 2.1715,
+    "median_ms": 1.83,
+    "min_ms": 1.499,
+    "max_ms": 4.5273,
+    "iterations": 10,
+    "throughput": 460.51
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0074,
+    "median_ms": 0.0072,
+    "min_ms": 0.0059,
+    "max_ms": 0.0108,
+    "iterations": 10,
+    "throughput": 135137.08
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0348,
+    "median_ms": 0.0348,
+    "min_ms": 0.0346,
+    "max_ms": 0.0352,
+    "iterations": 10,
+    "throughput": 28701.32
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1285,
+    "median_ms": 0.138,
+    "min_ms": 0.1001,
+    "max_ms": 0.1668,
+    "iterations": 10,
+    "throughput": 7779.33
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.3115,
+    "median_ms": 0.3118,
+    "min_ms": 0.3101,
+    "max_ms": 0.3131,
+    "iterations": 10,
+    "throughput": 3210.49
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 1.3103,
+    "median_ms": 1.1068,
+    "min_ms": 1.0678,
+    "max_ms": 3.2146,
+    "iterations": 10,
+    "throughput": 763.18
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.008,
+    "median_ms": 0.0075,
+    "min_ms": 0.0072,
+    "max_ms": 0.0122,
+    "iterations": 10,
+    "throughput": 125126.51
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0339,
+    "median_ms": 0.0339,
+    "min_ms": 0.0338,
+    "max_ms": 0.034,
+    "iterations": 10,
+    "throughput": 29509.5
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1488,
+    "median_ms": 0.147,
+    "min_ms": 0.1461,
+    "max_ms": 0.155,
+    "iterations": 10,
+    "throughput": 6719.49
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.2887,
+    "median_ms": 0.2914,
+    "min_ms": 0.2825,
+    "max_ms": 0.2924,
+    "iterations": 10,
+    "throughput": 3463.31
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 1.5403,
+    "median_ms": 1.5456,
+    "min_ms": 1.4666,
+    "max_ms": 1.6779,
+    "iterations": 10,
+    "throughput": 649.23
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 1,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.0072,
+    "median_ms": 0.0072,
+    "min_ms": 0.007,
+    "max_ms": 0.0076,
+    "iterations": 10,
+    "throughput": 138811.75,
+    "json_round_trip_ms": 0.016
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 10,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.031,
+    "median_ms": 0.0311,
+    "min_ms": 0.0307,
+    "max_ms": 0.0315,
+    "iterations": 10,
+    "throughput": 32245.16,
+    "json_round_trip_ms": 0.1796
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 50,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.1821,
+    "median_ms": 0.2145,
+    "min_ms": 0.1358,
+    "max_ms": 0.2303,
+    "iterations": 10,
+    "throughput": 5490.99,
+    "json_round_trip_ms": 0.4026
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 100,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.5032,
+    "median_ms": 0.5945,
+    "min_ms": 0.2699,
+    "max_ms": 0.7028,
+    "iterations": 10,
+    "throughput": 1987.45,
+    "json_round_trip_ms": 0.5429
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 500,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 1.9897,
+    "median_ms": 1.6439,
+    "min_ms": 1.4133,
+    "max_ms": 5.0437,
+    "iterations": 10,
+    "throughput": 502.59,
+    "json_round_trip_ms": 4.4662
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 1,
+      "num_dependencies": 0,
+      "dict_bytes": 691,
+      "json_bytes": 691
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 10,
+      "num_dependencies": 9,
+      "dict_bytes": 2789,
+      "json_bytes": 2789
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 50,
+      "num_dependencies": 49,
+      "dict_bytes": 12388,
+      "json_bytes": 12388
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 100,
+      "num_dependencies": 99,
+      "dict_bytes": 24391,
+      "json_bytes": 24391
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 500,
+      "num_dependencies": 499,
+      "dict_bytes": 123190,
+      "json_bytes": 123190
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  }
+]

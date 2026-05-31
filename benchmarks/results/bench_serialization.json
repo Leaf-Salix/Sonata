@@ -1,0 +1,387 @@
+[
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0036,
+    "median_ms": 0.0034,
+    "min_ms": 0.0031,
+    "max_ms": 0.0044,
+    "iterations": 10,
+    "throughput": 275551.13
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0098,
+    "median_ms": 0.0098,
+    "min_ms": 0.0096,
+    "max_ms": 0.01,
+    "iterations": 10,
+    "throughput": 102038.83
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.039,
+    "median_ms": 0.0389,
+    "min_ms": 0.0388,
+    "max_ms": 0.0394,
+    "iterations": 10,
+    "throughput": 25673.81
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.08,
+    "median_ms": 0.0799,
+    "min_ms": 0.0776,
+    "max_ms": 0.0846,
+    "iterations": 10,
+    "throughput": 12500.61
+  },
+  {
+    "benchmark": "score_to_dict",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 0.4215,
+    "median_ms": 0.4133,
+    "min_ms": 0.4115,
+    "max_ms": 0.4466,
+    "iterations": 10,
+    "throughput": 2372.24
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0092,
+    "median_ms": 0.0092,
+    "min_ms": 0.0085,
+    "max_ms": 0.012,
+    "iterations": 10,
+    "throughput": 108255.59
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.03,
+    "median_ms": 0.0299,
+    "min_ms": 0.0295,
+    "max_ms": 0.0307,
+    "iterations": 10,
+    "throughput": 33337.78
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1223,
+    "median_ms": 0.1222,
+    "min_ms": 0.1217,
+    "max_ms": 0.1236,
+    "iterations": 10,
+    "throughput": 8173.54
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.2438,
+    "median_ms": 0.2393,
+    "min_ms": 0.2367,
+    "max_ms": 0.2608,
+    "iterations": 10,
+    "throughput": 4102.07
+  },
+  {
+    "benchmark": "score_to_json",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 2.1715,
+    "median_ms": 1.83,
+    "min_ms": 1.499,
+    "max_ms": 4.5273,
+    "iterations": 10,
+    "throughput": 460.51
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0074,
+    "median_ms": 0.0072,
+    "min_ms": 0.0059,
+    "max_ms": 0.0108,
+    "iterations": 10,
+    "throughput": 135137.08
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0348,
+    "median_ms": 0.0348,
+    "min_ms": 0.0346,
+    "max_ms": 0.0352,
+    "iterations": 10,
+    "throughput": 28701.32
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1285,
+    "median_ms": 0.138,
+    "min_ms": 0.1001,
+    "max_ms": 0.1668,
+    "iterations": 10,
+    "throughput": 7779.33
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.3115,
+    "median_ms": 0.3118,
+    "min_ms": 0.3101,
+    "max_ms": 0.3131,
+    "iterations": 10,
+    "throughput": 3210.49
+  },
+  {
+    "benchmark": "score_from_dict",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 1.3103,
+    "median_ms": 1.1068,
+    "min_ms": 1.0678,
+    "max_ms": 3.2146,
+    "iterations": 10,
+    "throughput": 763.18
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.008,
+    "median_ms": 0.0075,
+    "min_ms": 0.0072,
+    "max_ms": 0.0122,
+    "iterations": 10,
+    "throughput": 125126.51
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0339,
+    "median_ms": 0.0339,
+    "min_ms": 0.0338,
+    "max_ms": 0.034,
+    "iterations": 10,
+    "throughput": 29509.5
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.1488,
+    "median_ms": 0.147,
+    "min_ms": 0.1461,
+    "max_ms": 0.155,
+    "iterations": 10,
+    "throughput": 6719.49
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.2887,
+    "median_ms": 0.2914,
+    "min_ms": 0.2825,
+    "max_ms": 0.2924,
+    "iterations": 10,
+    "throughput": 3463.31
+  },
+  {
+    "benchmark": "score_from_json",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 1.5403,
+    "median_ms": 1.5456,
+    "min_ms": 1.4666,
+    "max_ms": 1.6779,
+    "iterations": 10,
+    "throughput": 649.23
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 1,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.0072,
+    "median_ms": 0.0072,
+    "min_ms": 0.007,
+    "max_ms": 0.0076,
+    "iterations": 10,
+    "throughput": 138811.75,
+    "json_round_trip_ms": 0.016
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 10,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.031,
+    "median_ms": 0.0311,
+    "min_ms": 0.0307,
+    "max_ms": 0.0315,
+    "iterations": 10,
+    "throughput": 32245.16,
+    "json_round_trip_ms": 0.1796
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 50,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.1821,
+    "median_ms": 0.2145,
+    "min_ms": 0.1358,
+    "max_ms": 0.2303,
+    "iterations": 10,
+    "throughput": 5490.99,
+    "json_round_trip_ms": 0.4026
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 100,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 0.5032,
+    "median_ms": 0.5945,
+    "min_ms": 0.2699,
+    "max_ms": 0.7028,
+    "iterations": 10,
+    "throughput": 1987.45,
+    "json_round_trip_ms": 0.5429
+  },
+  {
+    "benchmark": "round_trip_dict",
+    "parameters": {
+      "num_tasks": 500,
+      "fingerprint_match": true
+    },
+    "wall_time_ms": 1.9897,
+    "median_ms": 1.6439,
+    "min_ms": 1.4133,
+    "max_ms": 5.0437,
+    "iterations": 10,
+    "throughput": 502.59,
+    "json_round_trip_ms": 4.4662
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 1,
+      "num_dependencies": 0,
+      "dict_bytes": 691,
+      "json_bytes": 691
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 10,
+      "num_dependencies": 9,
+      "dict_bytes": 2789,
+      "json_bytes": 2789
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 50,
+      "num_dependencies": 49,
+      "dict_bytes": 12388,
+      "json_bytes": 12388
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 100,
+      "num_dependencies": 99,
+      "dict_bytes": 24391,
+      "json_bytes": 24391
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  },
+  {
+    "benchmark": "payload_size",
+    "parameters": {
+      "num_tasks": 500,
+      "num_dependencies": 499,
+      "dict_bytes": 123190,
+      "json_bytes": 123190
+    },
+    "wall_time_ms": 0.0,
+    "median_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0,
+    "iterations": 0,
+    "throughput": 0.0
+  }
+]

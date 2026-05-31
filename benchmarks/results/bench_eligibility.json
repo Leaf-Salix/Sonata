@@ -1,0 +1,247 @@
+[
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 1,
+      "is_eligible": true,
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0628,
+    "median_ms": 0.0615,
+    "min_ms": 0.0555,
+    "max_ms": 0.077,
+    "iterations": 10,
+    "throughput": 15926.71
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 10,
+      "is_eligible": true,
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.2084,
+    "median_ms": 0.2084,
+    "min_ms": 0.2065,
+    "max_ms": 0.2103,
+    "iterations": 10,
+    "throughput": 4797.79
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 50,
+      "is_eligible": true,
+      "num_tasks": 50
+    },
+    "wall_time_ms": 1.3898,
+    "median_ms": 0.9261,
+    "min_ms": 0.8756,
+    "max_ms": 3.8045,
+    "iterations": 10,
+    "throughput": 719.54
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 100,
+      "is_eligible": true,
+      "num_tasks": 100
+    },
+    "wall_time_ms": 2.5375,
+    "median_ms": 2.6265,
+    "min_ms": 2.2941,
+    "max_ms": 2.6805,
+    "iterations": 10,
+    "throughput": 394.09
+  },
+  {
+    "benchmark": "eligibility_eligible",
+    "parameters": {
+      "num_calls": 500,
+      "is_eligible": true,
+      "num_tasks": 500
+    },
+    "wall_time_ms": 12.8627,
+    "median_ms": 12.2267,
+    "min_ms": 9.0045,
+    "max_ms": 21.1185,
+    "iterations": 10,
+    "throughput": 77.74
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 1,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.0134,
+    "median_ms": 0.0131,
+    "min_ms": 0.0122,
+    "max_ms": 0.0156,
+    "iterations": 10,
+    "throughput": 74905.83
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 10,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.0391,
+    "median_ms": 0.0391,
+    "min_ms": 0.0388,
+    "max_ms": 0.0394,
+    "iterations": 10,
+    "throughput": 25588.99
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 50,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.1136,
+    "median_ms": 0.1128,
+    "min_ms": 0.1125,
+    "max_ms": 0.1186,
+    "iterations": 10,
+    "throughput": 8799.28
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 100,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 0.2156,
+    "median_ms": 0.2192,
+    "min_ms": 0.207,
+    "max_ms": 0.2213,
+    "iterations": 10,
+    "throughput": 4638.22
+  },
+  {
+    "benchmark": "eligibility_ineligible",
+    "parameters": {
+      "num_calls": 500,
+      "is_eligible": false,
+      "num_reasons": 1
+    },
+    "wall_time_ms": 2.3055,
+    "median_ms": 1.938,
+    "min_ms": 1.304,
+    "max_ms": 6.0885,
+    "iterations": 10,
+    "throughput": 433.75
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 1,
+      "calls_per_function": 10,
+      "is_eligible": true,
+      "total_tasks": 10
+    },
+    "wall_time_ms": 0.3772,
+    "median_ms": 0.3254,
+    "min_ms": 0.3044,
+    "max_ms": 0.5461,
+    "iterations": 10,
+    "throughput": 2651.29
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 2,
+      "calls_per_function": 10,
+      "is_eligible": true,
+      "total_tasks": 20
+    },
+    "wall_time_ms": 0.6149,
+    "median_ms": 0.5797,
+    "min_ms": 0.544,
+    "max_ms": 0.78,
+    "iterations": 10,
+    "throughput": 1626.37
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 5,
+      "calls_per_function": 10,
+      "is_eligible": true,
+      "total_tasks": 50
+    },
+    "wall_time_ms": 1.8022,
+    "median_ms": 1.7935,
+    "min_ms": 1.4219,
+    "max_ms": 2.4841,
+    "iterations": 10,
+    "throughput": 554.87
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 1,
+      "calls_per_function": 50,
+      "is_eligible": true,
+      "total_tasks": 50
+    },
+    "wall_time_ms": 2.2013,
+    "median_ms": 1.9902,
+    "min_ms": 1.4403,
+    "max_ms": 4.8316,
+    "iterations": 10,
+    "throughput": 454.28
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 2,
+      "calls_per_function": 50,
+      "is_eligible": true,
+      "total_tasks": 100
+    },
+    "wall_time_ms": 3.5354,
+    "median_ms": 3.678,
+    "min_ms": 2.566,
+    "max_ms": 4.1791,
+    "iterations": 10,
+    "throughput": 282.85
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 5,
+      "calls_per_function": 50,
+      "is_eligible": true,
+      "total_tasks": 250
+    },
+    "wall_time_ms": 9.3536,
+    "median_ms": 7.5928,
+    "min_ms": 6.1192,
+    "max_ms": 20.7955,
+    "iterations": 10,
+    "throughput": 106.91
+  },
+  {
+    "benchmark": "eligibility_program",
+    "parameters": {
+      "num_functions": 1,
+      "calls_per_function": 100,
+      "is_eligible": true,
+      "total_tasks": 100
+    },
+    "wall_time_ms": 3.2755,
+    "median_ms": 3.4666,
+    "min_ms": 2.2793,
+    "max_ms": 5.4142,
+    "iterations": 10,
+    "throughput": 305.29
+  }
+]

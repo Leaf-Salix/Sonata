@@ -1,0 +1,272 @@
+[
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 1,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0049,
+    "median_ms": 0.0044,
+    "min_ms": 0.0043,
+    "max_ms": 0.008,
+    "iterations": 10,
+    "throughput": 204423.69
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 10,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0202,
+    "median_ms": 0.0201,
+    "min_ms": 0.0197,
+    "max_ms": 0.0217,
+    "iterations": 10,
+    "throughput": 49616.69
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 50,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0914,
+    "median_ms": 0.091,
+    "min_ms": 0.0893,
+    "max_ms": 0.0962,
+    "iterations": 10,
+    "throughput": 10942.92
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 100,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.2101,
+    "median_ms": 0.2361,
+    "min_ms": 0.1746,
+    "max_ms": 0.2372,
+    "iterations": 10,
+    "throughput": 4759.93
+  },
+  {
+    "benchmark": "score_build_none",
+    "parameters": {
+      "num_tasks": 500,
+      "style": "none",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 1.1854,
+    "median_ms": 1.2197,
+    "min_ms": 1.0082,
+    "max_ms": 1.2351,
+    "iterations": 10,
+    "throughput": 843.6
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 1,
+      "style": "chain",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0045,
+    "median_ms": 0.0045,
+    "min_ms": 0.0043,
+    "max_ms": 0.0051,
+    "iterations": 10,
+    "throughput": 220589.86
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 10,
+      "style": "chain",
+      "num_dependencies": 9
+    },
+    "wall_time_ms": 0.0245,
+    "median_ms": 0.0245,
+    "min_ms": 0.0243,
+    "max_ms": 0.0246,
+    "iterations": 10,
+    "throughput": 40816.5
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 50,
+      "style": "chain",
+      "num_dependencies": 49
+    },
+    "wall_time_ms": 0.1428,
+    "median_ms": 0.1429,
+    "min_ms": 0.1417,
+    "max_ms": 0.1437,
+    "iterations": 10,
+    "throughput": 7001.78
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 100,
+      "style": "chain",
+      "num_dependencies": 99
+    },
+    "wall_time_ms": 0.2856,
+    "median_ms": 0.2854,
+    "min_ms": 0.284,
+    "max_ms": 0.2884,
+    "iterations": 10,
+    "throughput": 3501.1
+  },
+  {
+    "benchmark": "score_build_chain",
+    "parameters": {
+      "num_tasks": 500,
+      "style": "chain",
+      "num_dependencies": 499
+    },
+    "wall_time_ms": 1.9398,
+    "median_ms": 2.0478,
+    "min_ms": 1.2925,
+    "max_ms": 3.0238,
+    "iterations": 10,
+    "throughput": 515.51
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 1,
+      "style": "dense",
+      "num_dependencies": 0
+    },
+    "wall_time_ms": 0.0045,
+    "median_ms": 0.0044,
+    "min_ms": 0.0042,
+    "max_ms": 0.0054,
+    "iterations": 10,
+    "throughput": 222647.62
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 10,
+      "style": "dense",
+      "num_dependencies": 8
+    },
+    "wall_time_ms": 0.0327,
+    "median_ms": 0.0303,
+    "min_ms": 0.0301,
+    "max_ms": 0.0547,
+    "iterations": 10,
+    "throughput": 30561.52
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 50,
+      "style": "dense",
+      "num_dependencies": 58
+    },
+    "wall_time_ms": 0.2539,
+    "median_ms": 0.2515,
+    "min_ms": 0.2486,
+    "max_ms": 0.2796,
+    "iterations": 10,
+    "throughput": 3939.21
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 100,
+      "style": "dense",
+      "num_dependencies": 250
+    },
+    "wall_time_ms": 0.9669,
+    "median_ms": 0.9994,
+    "min_ms": 0.795,
+    "max_ms": 1.0117,
+    "iterations": 10,
+    "throughput": 1034.2
+  },
+  {
+    "benchmark": "score_build_dense",
+    "parameters": {
+      "num_tasks": 500,
+      "style": "dense",
+      "num_dependencies": 6234
+    },
+    "wall_time_ms": 20.7181,
+    "median_ms": 20.8668,
+    "min_ms": 18.8902,
+    "max_ms": 24.1594,
+    "iterations": 10,
+    "throughput": 48.27
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 1
+    },
+    "wall_time_ms": 0.0049,
+    "median_ms": 0.0045,
+    "min_ms": 0.0037,
+    "max_ms": 0.0083,
+    "iterations": 10,
+    "throughput": 205659.25
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 10
+    },
+    "wall_time_ms": 0.0107,
+    "median_ms": 0.0107,
+    "min_ms": 0.0105,
+    "max_ms": 0.0108,
+    "iterations": 10,
+    "throughput": 93641.59
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 50
+    },
+    "wall_time_ms": 0.041,
+    "median_ms": 0.041,
+    "min_ms": 0.0408,
+    "max_ms": 0.0414,
+    "iterations": 10,
+    "throughput": 24390.12
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 100
+    },
+    "wall_time_ms": 0.0848,
+    "median_ms": 0.0848,
+    "min_ms": 0.0842,
+    "max_ms": 0.0856,
+    "iterations": 10,
+    "throughput": 11791.28
+  },
+  {
+    "benchmark": "score_validate",
+    "parameters": {
+      "num_tasks": 500
+    },
+    "wall_time_ms": 0.4679,
+    "median_ms": 0.4511,
+    "min_ms": 0.4432,
+    "max_ms": 0.5478,
+    "iterations": 10,
+    "throughput": 2137.4
+  }
+]
