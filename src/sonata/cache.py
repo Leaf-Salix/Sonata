@@ -20,6 +20,7 @@ from pathlib import Path
 from time import time
 from typing import Any, Callable, TYPE_CHECKING
 
+from .deserialization import score_from_dict as _score_from_dict
 from .score import Score
 from .serialization import (
     FINGERPRINT_VERSION,
@@ -212,51 +213,6 @@ def cached_score(
     score = score_builder()
     fp = cache.store(score)
     return score, fp, False
-
-
-def _score_from_dict(data: dict[str, Any]) -> Score:
-    """Reconstruct a Score from its serialized dictionary form."""
-    from .score import Dependency, RuntimeTarget, ShapeAssumption, Task
-
-    rt = data.get("runtime_target", {})
-    runtime_target = RuntimeTarget(
-        runtime=rt.get("runtime", "tensormap_and_ringbuffer"),
-        function_name=rt.get("function_name", "aicpu_orchestration_entry"),
-        aicpu_thread_num=rt.get("aicpu_thread_num"),
-        config_comment=tuple(rt.get("config_comment", ())),
-    )
-    tasks = tuple(
-        Task(
-            task_id=t["task_id"],
-            func_id=t["func_id"],
-            core_type=t["core_type"],
-            args=tuple(t.get("args", ())),
-            arg_directions=tuple(t.get("arg_directions", ())),
-            arg_storage_keys=tuple(t.get("arg_storage_keys", ())),
-            name=t.get("name"),
-        )
-        for t in data.get("tasks", [])
-    )
-    deps = tuple(
-        Dependency(
-            producer=d["producer"],
-            consumer=d["consumer"],
-            kind=d.get("kind", "data"),
-        )
-        for d in data.get("dependencies", [])
-    )
-    shapes = tuple(
-        ShapeAssumption(symbol=s["symbol"], dims=tuple(s["dims"]))
-        for s in data.get("shape_assumptions", [])
-    )
-    return Score(
-        name=data["name"],
-        runtime_target=runtime_target,
-        tasks=tasks,
-        dependencies=deps,
-        shape_assumptions=shapes,
-        metadata=data.get("metadata", {}),
-    )
 
 
 def _entry_to_dict(entry: CacheEntry) -> dict[str, Any]:

@@ -29,6 +29,15 @@ from .dependencies import (
     dataflow_dependency_fallback_code,
     supports_dataflow_dependencies,
 )
+from .deserialization import (
+    DeserializationError,
+    eligibility_result_from_dict,
+    eligibility_result_from_json,
+    plan_handle_from_dict,
+    plan_handle_from_json,
+    score_from_dict,
+    score_from_json,
+)
 from .eligibility import check_static_eligibility
 from .fallback import FallbackCode, code_for_reason
 from .liveness import BufferLifetime, StorageConflict, compute_lifetimes, find_conflicts
@@ -93,6 +102,7 @@ __all__ = [
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
     "DEFAULT_RUNTIME_TARGET",
     "Dependency",
+    "DeserializationError",
     "EligibilityResult",
     "ELIGIBILITY_RESULT_SCHEMA_VERSION",
     "FINGERPRINT_VERSION",
@@ -135,13 +145,19 @@ __all__ = [
     "code_for_reason",
     "compute_lifetimes",
     "dataflow_dependency_fallback_code",
+    "eligibility_result_from_dict",
+    "eligibility_result_from_json",
     "eligibility_result_to_dict",
     "extract_regions",
     "find_conflicts",
+    "plan_handle_from_dict",
+    "plan_handle_from_json",
     "plan_handle_to_dict",
     "plan_handle_to_json",
     "plan_memory",
     "score_fingerprint",
+    "score_from_dict",
+    "score_from_json",
     "score_to_dict",
     "score_to_json",
     "supports_dataflow_dependencies",
