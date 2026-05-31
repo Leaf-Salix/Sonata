@@ -15,6 +15,7 @@ from sonata import (
     ShapeAssumption,
     Task,
 )
+from sonata.score import EligibilityResult, FallbackReason
 
 
 def test_runtime_target_defaults_to_current_tensormap_contract() -> None:
@@ -74,6 +75,9 @@ def test_score_validate_rejects_unknown_dependency_target() -> None:
     assert not result.eligible
     assert result.score is None
     assert result.reasons == ("dependency consumer is unknown: 2",)
+    assert [(reason.code, reason.message, reason.severity) for reason in result.reason_details] == [
+        ("score_validation_failed", "dependency consumer is unknown: 2", "error")
+    ]
 
 
 def test_score_validate_rejects_dependency_cycle() -> None:
@@ -120,7 +124,6 @@ def test_score_validate_accumulates_rejection_reasons() -> None:
         "task 0 has unsupported core_type: gpu",
         "dependency cannot be a self-edge: 0",
         "shape assumption symbol must not be empty",
-        "shape assumption  has negative dimension",
     )
 
 
@@ -148,6 +151,224 @@ def test_score_validate_rejects_task_arg_storage_key_arity_mismatch() -> None:
 
     assert not result.eligible
     assert result.reasons == ("task 0 arg_storage_keys size 1 does not match args size 2",)
+
+
+def test_score_validate_rejects_duplicate_shape_assumption_symbols() -> None:
+    score = Score(
+        name="duplicate_shapes",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(
+            ShapeAssumption(symbol="x", dims=(16,)),
+            ShapeAssumption(symbol="x", dims=(32,)),
+        ),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption symbol must be unique: x",)
+
+
+def test_score_validate_does_not_repeat_dim_errors_for_duplicate_shape_symbols() -> None:
+    score = Score(
+        name="duplicate_bad_shapes",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(
+            ShapeAssumption(symbol="x", dims=(-1,)),
+            ShapeAssumption(symbol="x", dims=(-1,)),
+        ),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == (
+        "shape assumption x has negative dimension",
+        "shape assumption symbol must be unique: x",
+    )
+
+
+def test_score_validate_rejects_duplicate_empty_shape_assumption_symbols() -> None:
+    score = Score(
+        name="duplicate_empty_shapes",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(
+            ShapeAssumption(symbol="", dims=(16,)),
+            ShapeAssumption(symbol="", dims=(32,)),
+        ),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == (
+        "shape assumption symbol must not be empty",
+        "shape assumption symbol must be unique: <empty>",
+    )
+
+
+def test_score_validate_skips_dim_validation_for_empty_shape_symbol() -> None:
+    score = Score(
+        name="empty_shape_symbol",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="", dims=("n",)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption symbol must not be empty",)
+
+
+def test_score_validate_rejects_zero_shape_assumption_dimension() -> None:
+    score = Score(
+        name="zero_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, 16)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption x has zero dimension",)
+
+
+def test_score_validate_rejects_non_integer_shape_assumption_dimension() -> None:
+    score = Score(
+        name="symbolic_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=("n", 16)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption x has non-integer dimension",)
+
+
+def test_score_validate_rejects_bool_shape_assumption_dimension() -> None:
+    score = Score(
+        name="bool_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(True, 16)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == ("shape assumption x has non-integer dimension",)
+
+
+def test_score_validate_reports_each_shape_dim_error_category() -> None:
+    score = Score(
+        name="multi_bad_shape_dim",
+        runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, -1, "n", True)),),
+    )
+
+    result = score.validate()
+
+    assert not result.eligible
+    assert result.reasons == (
+        "shape assumption x has zero dimension",
+        "shape assumption x has negative dimension",
+        "shape assumption x has non-integer dimension",
+    )
+
+
+class TestAcceptWithWarnings:
+    def test_returns_eligible_with_warning_details(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score, "dim x assumed static")
+
+        assert result.eligible
+        assert result.score is score
+        assert len(result.reason_details) == 1
+        assert result.reason_details[0].severity == "warning"
+        assert result.reason_details[0].message == "dim x assumed static"
+
+    def test_preserves_score_reference(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score, "w1", "w2")
+
+        assert result.score is score
+        assert len(result.reason_details) == 2
+
+    def test_with_empty_warnings(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score)
+
+        assert result.eligible
+        assert result.reason_details == ()
+
+    def test_rejects_none_score(self) -> None:
+        with pytest.raises(ValueError, match="non-None score"):
+            EligibilityResult.accept_with_warnings(None, "warning")
+
+
+class TestHasErrorsHasWarnings:
+    def test_has_errors_true_on_rejection(self) -> None:
+        score = Score(name="", runtime_target=RuntimeTarget())
+        result = score.validate()
+
+        assert not result.eligible
+        assert result.has_errors()
+        assert not result.has_warnings()
+
+    def test_has_errors_false_on_accept(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = score.validate()
+
+        assert result.eligible
+        assert not result.has_errors()
+        assert not result.has_warnings()
+
+    def test_has_warnings_true_on_accept_with_warnings(self) -> None:
+        score = Score(name="valid", runtime_target=RuntimeTarget())
+        result = EligibilityResult.accept_with_warnings(score, "low coverage")
+
+        assert result.eligible
+        assert result.has_warnings()
+        assert not result.has_errors()
+
+    def test_has_errors_false_on_empty_reason_details(self) -> None:
+        result = EligibilityResult(eligible=True)
+
+        assert not result.has_errors()
+        assert not result.has_warnings()
+
+
+class TestIsStaticShapeDim:
+    def test_positive_int_returns_true(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(1) is True
+        assert is_static_shape_dim(64) is True
+        assert is_static_shape_dim(100000) is True
+
+    def test_zero_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(0) is False
+
+    def test_negative_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(-1) is False
+        assert is_static_shape_dim(-100) is False
+
+    def test_bool_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim(True) is False
+        assert is_static_shape_dim(False) is False
+
+    def test_non_int_returns_false(self) -> None:
+        from sonata.score import is_static_shape_dim
+
+        assert is_static_shape_dim("n") is False
+        assert is_static_shape_dim(3.14) is False
+        assert is_static_shape_dim(None) is False
 
 
 if __name__ == "__main__":

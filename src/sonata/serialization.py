@@ -9,13 +9,59 @@
 
 """Stable JSON-like serialization helpers for Sonata scores."""
 
+from dataclasses import asdict
 import json
 from hashlib import sha256
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from .score import Score
+if TYPE_CHECKING:
+    from .plan_handle import PlanHandle
+
+from .score import EligibilityResult, Score
 
 SCORE_SCHEMA_VERSION = 1
+ELIGIBILITY_RESULT_SCHEMA_VERSION = 1
+FINGERPRINT_VERSION = 1
+
+
+def plan_handle_to_dict(plan_handle: "PlanHandle") -> dict[str, Any]:
+    """Return a deterministic JSON-like dictionary for ``plan_handle``."""
+    return {
+        "schema_version": plan_handle.schema_version,
+        "score_fingerprint": plan_handle.score_fingerprint,
+        "runtime_target": {
+            "runtime": plan_handle.runtime_target.runtime,
+            "function_name": plan_handle.runtime_target.function_name,
+            "aicpu_thread_num": plan_handle.runtime_target.aicpu_thread_num,
+            "config_comment": list(plan_handle.runtime_target.config_comment),
+        },
+        "source_adapter": plan_handle.source_adapter,
+        "runtime_contract_version": plan_handle.runtime_contract_version,
+        "func_registry": [
+            {
+                "name": entry.name,
+                "sonata_func_id": entry.sonata_func_id,
+                "runtime_func_id": entry.runtime_func_id,
+            }
+            for entry in plan_handle.func_registry.entries
+        ],
+        "arg_bindings": [
+            {
+                "task_id": b.task_id,
+                "arg_index": b.arg_index,
+                "storage_key": b.storage_key,
+                "direction": b.direction,
+                "runtime_handle": _json_like(b.runtime_handle),
+            }
+            for b in plan_handle.arg_bindings
+        ],
+        "metadata": _json_like(plan_handle.metadata),
+    }
+
+
+def plan_handle_to_json(plan_handle: "PlanHandle", *, indent: int | None = 2) -> str:
+    """Return a stable JSON string for ``plan_handle``."""
+    return json.dumps(plan_handle_to_dict(plan_handle), indent=indent, sort_keys=True)
 
 
 def score_to_dict(score: Score) -> dict[str, Any]:
@@ -45,6 +91,7 @@ def score_to_dict(score: Score) -> dict[str, Any]:
             {
                 "producer": dependency.producer,
                 "consumer": dependency.consumer,
+                "kind": dependency.kind,
             }
             for dependency in score.dependencies
         ],
@@ -64,14 +111,45 @@ def score_to_json(score: Score, *, indent: int | None = 2) -> str:
     return json.dumps(score_to_dict(score), indent=indent, sort_keys=True)
 
 
+def eligibility_result_to_dict(result: EligibilityResult) -> dict[str, Any]:
+    """Return a deterministic JSON-like dictionary for an eligibility result."""
+    return {
+        "schema_version": ELIGIBILITY_RESULT_SCHEMA_VERSION,
+        "eligible": result.eligible,
+        "reasons": list(result.reasons),
+        "reason_details": [_json_like(asdict(reason)) for reason in result.reason_details],
+        "score": score_to_dict(result.score) if result.score is not None else None,
+    }
+
+
 def score_fingerprint(score: Score, *, include_metadata: bool = False) -> str:
-    """Return a stable SHA-256 fingerprint for cache/diff experiments."""
-    data = score_to_dict(score)
-    if not include_metadata:
-        data = dict(data)
-        data["metadata"] = {}
-    payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
+    """Return a stable SHA-256 fingerprint for the score computation identity.
+
+    ``include_metadata`` includes only ``Score.metadata`` audit/debug data. It
+    does not include artifact identity fields such as ``runtime_target``.
+    """
+    payload = json.dumps(
+        _fingerprint_payload(score, include_metadata=include_metadata),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_payload(score: Score, *, include_metadata: bool) -> dict[str, Any]:
+    data = score_to_dict(score)
+    identity = {
+        "name": data["name"],
+        "tasks": data["tasks"],
+        "dependencies": data["dependencies"],
+        "shape_assumptions": data["shape_assumptions"],
+    }
+    if include_metadata:
+        identity["metadata"] = data["metadata"]
+    return {
+        "fingerprint_version": FINGERPRINT_VERSION,
+        "identity": identity,
+    }
 
 
 def _json_like(value: Any) -> Any:
@@ -88,7 +166,12 @@ def _json_like(value: Any) -> Any:
 
 
 __all__ = [
+    "ELIGIBILITY_RESULT_SCHEMA_VERSION",
+    "FINGERPRINT_VERSION",
     "SCORE_SCHEMA_VERSION",
+    "eligibility_result_to_dict",
+    "plan_handle_to_dict",
+    "plan_handle_to_json",
     "score_fingerprint",
     "score_to_dict",
     "score_to_json",

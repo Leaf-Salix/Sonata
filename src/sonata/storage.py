@@ -16,7 +16,10 @@ PyPTO IR classes so the experimental Sonata score layer stays easy to rebase.
 from collections.abc import Callable, Iterable
 from typing import Any
 
-_WRITE_DIRECTIONS = {"output", "outputexisting", "inout"}
+from .directions import WRITE_DIRECTIONS, normalize_direction
+
+STORAGE_COVERAGE_WARN_THRESHOLD = 0.5
+STORAGE_COVERAGE_REJECT_THRESHOLD = 0.0
 
 
 def collect_storage_keys(
@@ -32,10 +35,11 @@ def collect_storage_keys(
     """Return structural storage keys keyed by stable Var identity."""
     storage_keys: dict[int, str] = {}
     tuple_element_keys: dict[int, tuple[str | None, ...]] = {}
+    used_key_counts: dict[str, int] = {}
     for param in getattr(node, "params", ()):
         key = _var_storage_key(param, "param", kind=kind, arg_name=arg_name)
         if key is not None:
-            storage_keys[_var_identity(param)] = key
+            storage_keys[_var_identity(param)] = _dedupe_storage_key(key, used_key_counts)
 
     for child in walk(node):
         if kind(child) != "AssignStmt":
@@ -51,6 +55,7 @@ def collect_storage_keys(
             value,
             storage_keys,
             tuple_element_keys,
+            used_key_counts,
             kind=kind,
             call_name=call_name,
             is_builtin_call=is_builtin_call,
@@ -91,7 +96,7 @@ def propagate_call_output_storage(
 ) -> None:
     """Propagate the first known write-arg storage key to an assigned call output."""
     for arg, direction in zip(getattr(call, "args", ()), arg_directions(call), strict=False):
-        if _normalize_direction(direction) not in _WRITE_DIRECTIONS:
+        if normalize_direction(direction) not in WRITE_DIRECTIONS:
             continue
         key = storage_key(arg, storage_keys)
         if key is not None:
@@ -108,7 +113,7 @@ def call_write_storage_keys(
     """Return storage keys for write-like call args in positional order."""
     keys: list[str | None] = []
     for arg, direction in zip(getattr(call, "args", ()), arg_directions(call), strict=False):
-        if _normalize_direction(direction) in _WRITE_DIRECTIONS:
+        if normalize_direction(direction) in WRITE_DIRECTIONS:
             keys.append(storage_key(arg, storage_keys))
     return tuple(keys)
 
@@ -128,9 +133,6 @@ def _var_storage_key(
     name = arg_name(var)
     if name == kind(var):
         return None
-    unique_id = getattr(var, "unique_id", None)
-    if isinstance(unique_id, int):
-        return f"{prefix}:{unique_id}:{name}"
     return f"{prefix}:{name}"
 
 
@@ -139,6 +141,7 @@ def _collect_call_assignment_storage(
     call: Any,
     storage_keys: dict[int, str],
     tuple_element_keys: dict[int, tuple[str | None, ...]],
+    used_key_counts: dict[str, int],
     *,
     kind: Callable[[Any], str],
     call_name: Callable[[Any], str | None],
@@ -150,7 +153,7 @@ def _collect_call_assignment_storage(
     if name == "tensor.create":
         key = _var_storage_key(output_var, "alloc", kind=kind, arg_name=arg_name)
         if key is not None:
-            storage_keys[_var_identity(output_var)] = key
+            storage_keys[_var_identity(output_var)] = _dedupe_storage_key(key, used_key_counts)
     elif name is not None and not is_builtin_call(name):
         keys = call_write_storage_keys(call, storage_keys, arg_directions=arg_directions)
         tuple_element_keys[_var_identity(output_var)] = keys
@@ -182,9 +185,12 @@ def _var_identity(var: Any) -> int:
     return id(var)
 
 
-def _normalize_direction(direction: str) -> str:
-    return "".join(ch for ch in str(direction).lower() if ch.isalnum())
-
+def _dedupe_storage_key(key: str, used_key_counts: dict[str, int]) -> str:
+    count = used_key_counts.get(key, 0) + 1
+    used_key_counts[key] = count
+    if count == 1:
+        return key
+    return f"{key}@{count}"
 
 __all__ = [
     "arg_storage_keys",

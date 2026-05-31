@@ -1,0 +1,126 @@
+"""Tests for v0.3 liveness analysis."""
+
+from sonata.liveness import BufferLifetime, StorageConflict, compute_lifetimes, find_conflicts
+from sonata.score import Task
+
+
+class TestComputeLifetimes:
+    def test_single_buffer(self):
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "y"), arg_directions=("input", "output"),
+                 arg_storage_keys=("param:x", "alloc:y")),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        assert len(lifetimes) == 2
+        x_lt = next(lt for lt in lifetimes if lt.storage_key == "param:x")
+        assert x_lt.birth == 0 and x_lt.death == 0
+        y_lt = next(lt for lt in lifetimes if lt.storage_key == "alloc:y")
+        assert y_lt.birth == 0 and y_lt.death == 0
+
+    def test_buffer_written_then_read(self):
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "y"), arg_directions=("input", "output"),
+                 arg_storage_keys=("param:x", "alloc:y")),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("y", "z"), arg_directions=("input", "output"),
+                 arg_storage_keys=("alloc:y", "alloc:z")),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        y_lt = next(lt for lt in lifetimes if lt.storage_key == "alloc:y")
+        assert y_lt.birth == 0
+        assert y_lt.death == 1
+
+    def test_multiple_reads_extend_death(self):
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "y"), arg_directions=("input", "output"),
+                 arg_storage_keys=("param:x", "alloc:y")),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("y",), arg_directions=("input",),
+                 arg_storage_keys=("alloc:y",)),
+            Task(task_id=2, func_id=1, core_type="aiv",
+                 args=("y",), arg_directions=("input",),
+                 arg_storage_keys=("alloc:y",)),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        y_lt = next(lt for lt in lifetimes if lt.storage_key == "alloc:y")
+        assert y_lt.birth == 0
+        assert y_lt.death == 2
+
+    def test_skips_unknown_storage_keys(self):
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "y"), arg_directions=("input", "output"),
+                 arg_storage_keys=(None, "alloc:y")),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        assert len(lifetimes) == 1
+        assert lifetimes[0].storage_key == "alloc:y"
+
+    def test_skips_scalar_args(self):
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "42"), arg_directions=("input", "scalar"),
+                 arg_storage_keys=("param:x", None)),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        assert len(lifetimes) == 1
+
+    def test_empty_tasks(self):
+        assert compute_lifetimes(()) == ()
+
+
+class TestBufferLifetime:
+    def test_overlaps_true(self):
+        a = BufferLifetime("a", birth=0, death=3)
+        b = BufferLifetime("b", birth=2, death=5)
+        assert a.overlaps(b)
+        assert b.overlaps(a)
+
+    def test_overlaps_false(self):
+        a = BufferLifetime("a", birth=0, death=2)
+        b = BufferLifetime("b", birth=3, death=5)
+        assert not a.overlaps(b)
+
+    def test_overlaps_adjacent(self):
+        a = BufferLifetime("a", birth=0, death=2)
+        b = BufferLifetime("b", birth=2, death=4)
+        assert a.overlaps(b)
+
+    def test_overlaps_contained(self):
+        a = BufferLifetime("a", birth=0, death=10)
+        b = BufferLifetime("b", birth=3, death=5)
+        assert a.overlaps(b)
+
+
+class TestFindConflicts:
+    def test_no_conflicts(self):
+        lifetimes = (
+            BufferLifetime("a", birth=0, death=1),
+            BufferLifetime("b", birth=2, death=3),
+        )
+        assert find_conflicts(lifetimes) == ()
+
+    def test_one_conflict(self):
+        lifetimes = (
+            BufferLifetime("a", birth=0, death=3),
+            BufferLifetime("b", birth=2, death=5),
+        )
+        conflicts = find_conflicts(lifetimes)
+        assert len(conflicts) == 1
+        assert conflicts[0].key_a == "a"
+        assert conflicts[0].key_b == "b"
+
+    def test_multiple_conflicts(self):
+        lifetimes = (
+            BufferLifetime("a", birth=0, death=5),
+            BufferLifetime("b", birth=1, death=3),
+            BufferLifetime("c", birth=2, death=4),
+        )
+        conflicts = find_conflicts(lifetimes)
+        assert len(conflicts) == 3
+
+    def test_empty(self):
+        assert find_conflicts(()) == ()

@@ -13,15 +13,12 @@ The policies operate only on the pure-Python :class:`Task` model. This keeps
 Sonata's first dependency experiments decoupled from PyPTO's C++ IR bindings.
 """
 
+from .directions import IGNORED_DIRECTIONS, READ_DIRECTIONS, WRITE_DIRECTIONS, normalize_direction
+from .fallback import FallbackCode
 from .score import Dependency, Task
 
 DEPENDENCY_POLICY_SEQUENTIAL_V0 = "sequential_v0"
 DEPENDENCY_POLICY_DATAFLOW_V0 = "dataflow_v0"
-
-_READ_DIRECTIONS = {"input", "inout"}
-_WRITE_DIRECTIONS = {"output", "outputexisting", "inout"}
-_IGNORED_DIRECTIONS = {"scalar", "nodep"}
-
 
 def build_dependencies(
     tasks: tuple[Task, ...],
@@ -44,15 +41,69 @@ def build_sequential_dependencies(tasks: tuple[Task, ...]) -> tuple[Dependency, 
     )
 
 
+def build_ordering_dependencies(
+    tasks: tuple[Task, ...],
+    *,
+    side_effect_tasks: frozenset[int] | None = None,
+) -> tuple[Dependency, ...]:
+    """Build pure ordering constraints between tasks.
+
+    If ``side_effect_tasks`` is provided, only tasks in that set get
+    ordering edges between them. Otherwise all tasks are chained.
+    """
+    if side_effect_tasks is not None:
+        ordered = [t for t in tasks if t.task_id in side_effect_tasks]
+    else:
+        ordered = list(tasks)
+
+    return tuple(
+        Dependency(
+            producer=ordered[index].task_id,
+            consumer=ordered[index + 1].task_id,
+            kind="ordering",
+        )
+        for index in range(len(ordered) - 1)
+    )
+
+
+def build_mixed_dependencies(
+    tasks: tuple[Task, ...],
+    *,
+    side_effect_tasks: frozenset[int] | None = None,
+) -> tuple[Dependency, ...]:
+    """Build dataflow dependencies plus ordering edges for side-effect tasks.
+
+    Dataflow edges carry their natural kind (data/storage/war).
+    Ordering edges are added between side-effect tasks that have no
+    dataflow edge between them.
+    """
+    dataflow = build_dataflow_dependencies(tasks)
+    dataflow_pairs = {(d.producer, d.consumer) for d in dataflow}
+
+    ordering_candidates = build_ordering_dependencies(
+        tasks, side_effect_tasks=side_effect_tasks,
+    )
+    extra_ordering = tuple(
+        dep for dep in ordering_candidates
+        if (dep.producer, dep.consumer) not in dataflow_pairs
+    )
+    return dataflow + extra_ordering
+
+
 def build_dataflow_dependencies(tasks: tuple[Task, ...]) -> tuple[Dependency, ...]:
     """Build conservative RAW/WAW/WAR edges from task args and directions.
 
     Every task must carry ``arg_directions``. If directions are unavailable,
     callers should keep using ``sequential_v0`` instead of this policy.
+
+    Edges are classified by kind:
+    - ``"data"``: RAW (read-after-write) — reader depends on prior writer
+    - ``"storage"``: WAW (write-after-write) — writer depends on prior writer
+    - ``"war"``: WAR (write-after-read) — writer depends on prior reader
     """
     _require_complete_directions(tasks)
 
-    edges: set[tuple[int, int]] = set()
+    edges: dict[tuple[int, int], str] = {}
     last_writer: dict[object, int] = {}
     readers_since_write: dict[object, set[int]] = {}
 
@@ -62,29 +113,67 @@ def build_dataflow_dependencies(tasks: tuple[Task, ...]) -> tuple[Dependency, ..
         for access_key in reads:
             writer = last_writer.get(access_key)
             if writer is not None and writer != task.task_id:
-                edges.add((writer, task.task_id))
+                _add_edge(edges, writer, task.task_id, "data")
             readers_since_write.setdefault(access_key, set()).add(task.task_id)
 
         for access_key in writes:
             writer = last_writer.get(access_key)
             if writer is not None and writer != task.task_id:
-                edges.add((writer, task.task_id))
+                _add_edge(edges, writer, task.task_id, "storage")
             for reader in readers_since_write.get(access_key, set()):
                 if reader != task.task_id:
-                    edges.add((reader, task.task_id))
+                    _add_edge(edges, reader, task.task_id, "war")
             last_writer[access_key] = task.task_id
             readers_since_write[access_key] = set()
 
-    return tuple(Dependency(producer=producer, consumer=consumer) for producer, consumer in sorted(edges))
+    return tuple(
+        Dependency(producer=producer, consumer=consumer, kind=kind)
+        for (producer, consumer), kind in sorted(edges.items())
+    )
+
+
+def _add_edge(
+    edges: dict[tuple[int, int], str],
+    producer: int,
+    consumer: int,
+    kind: str,
+) -> None:
+    """Add a dependency edge, preferring more specific kinds on conflict."""
+    key = (producer, consumer)
+    existing = edges.get(key)
+    if existing is None or _kind_priority(kind) > _kind_priority(existing):
+        edges[key] = kind
+
+
+_KIND_PRIORITY = {"ordering": 0, "war": 1, "storage": 2, "data": 3}
+
+
+def _kind_priority(kind: str) -> int:
+    return _KIND_PRIORITY.get(kind, 0)
 
 
 def supports_dataflow_dependencies(tasks: tuple[Task, ...]) -> bool:
-    """Return whether all tasks carry enough direction data for ``dataflow_v0``."""
-    return all(task.arg_directions and len(task.arg_directions) == len(task.args) for task in tasks)
+    """Return whether all tasks carry enough direction data for dataflow_v0."""
+    return dataflow_dependency_fallback_code(tasks) is None
+
+
+def dataflow_dependency_fallback_code(tasks: tuple[Task, ...]) -> FallbackCode | None:
+    """Return None when all tasks carry enough direction data, or a FallbackCode
+    explaining why dataflow dependencies cannot be built."""
+    if not tasks:
+        return None
+    has_any = [bool(task.arg_directions) for task in tasks]
+    has_complete = [h and len(task.arg_directions) == len(task.args) for h, task in zip(has_any, tasks)]
+    if all(has_complete):
+        return None
+    if not any(has_any):
+        return FallbackCode.DATAFLOW_DIRECTIONS_UNAVAILABLE
+    return FallbackCode.DATAFLOW_DIRECTIONS_INCOMPLETE
 
 
 def _require_complete_directions(tasks: tuple[Task, ...]) -> None:
-    if supports_dataflow_dependencies(tasks):
+    code = dataflow_dependency_fallback_code(tasks)
+    if code is None:
         return
     missing = [str(task.task_id) for task in tasks if not task.arg_directions]
     mismatched = [
@@ -109,13 +198,13 @@ def _read_write_args(task: Task) -> tuple[set[object], set[object]]:
         _storage_keys(task),
         strict=True,
     ):
-        normalized = _normalize_direction(direction)
-        if normalized in _IGNORED_DIRECTIONS:
+        normalized = normalize_direction(direction)
+        if normalized in IGNORED_DIRECTIONS:
             continue
         access_key = storage_key if storage_key is not None else arg
-        if normalized in _READ_DIRECTIONS:
+        if normalized in READ_DIRECTIONS:
             reads.add(access_key)
-        if normalized in _WRITE_DIRECTIONS:
+        if normalized in WRITE_DIRECTIONS:
             writes.add(access_key)
     return reads, writes
 
@@ -125,16 +214,14 @@ def _storage_keys(task: Task) -> tuple[object | None, ...]:
         return task.arg_storage_keys
     return (None,) * len(task.args)
 
-
-def _normalize_direction(direction: str) -> str:
-    return "".join(ch for ch in str(direction).lower() if ch.isalnum())
-
-
 __all__ = [
     "DEPENDENCY_POLICY_DATAFLOW_V0",
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
     "build_dataflow_dependencies",
     "build_dependencies",
+    "build_mixed_dependencies",
+    "build_ordering_dependencies",
     "build_sequential_dependencies",
+    "dataflow_dependency_fallback_code",
     "supports_dataflow_dependencies",
 ]

@@ -11,6 +11,7 @@ reconstructing them from dynamic hints.
 src/sonata/          # Sonata package: DAG model, analysis, serialization
 tests/sonata/        # PyPTO-free Sonata tests
 tests/pypto_cases/   # PyPTO compatibility and extraction cases
+scripts/             # local inspection and verification helpers
 patches/pypto/       # minimal PyPTO seam patches kept outside upstream
 docs/                # Sonata project documentation
 upstream/pypto/      # future PyPTO git submodule location

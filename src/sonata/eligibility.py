@@ -22,10 +22,21 @@ from .dependencies import (
     DEPENDENCY_POLICY_DATAFLOW_V0,
     DEPENDENCY_POLICY_SEQUENTIAL_V0,
     build_dependencies,
-    supports_dataflow_dependencies,
+    dataflow_dependency_fallback_code,
 )
-from .score import EligibilityResult, RuntimeTarget, Score, Task
+from .fallback import FallbackCode
+from .pypto_adapter import PostSimplifyPyPTOInputAdapter, PyPTOAdapterContractError
+from .score import (
+    EligibilityResult,
+    FallbackReason,
+    RuntimeTarget,
+    Score,
+    ShapeAssumption,
+    Task,
+    is_static_shape_dim,
+)
 from .storage import (
+    STORAGE_COVERAGE_WARN_THRESHOLD,
     arg_storage_keys,
     collect_call_output_vars,
     collect_storage_keys,
@@ -33,8 +44,6 @@ from .storage import (
 )
 
 _CONTROL_FLOW_KINDS = {"ForStmt", "IfStmt", "WhileStmt"}
-_UNSUPPORTED_KINDS = {"RuntimeScopeStmt"}
-_BUILTIN_OP_PREFIXES = ("tile.", "tensor.", "system.", "array.")
 
 
 def check_static_eligibility(
@@ -43,93 +52,165 @@ def check_static_eligibility(
     runtime_target: RuntimeTarget | None = None,
     entry_name: str | None = None,
     dependency_policy: str = DEPENDENCY_POLICY_SEQUENTIAL_V0,
+    require_certified: bool = False,
 ) -> EligibilityResult:
     """Return whether ``node`` is eligible for an initial Sonata static score."""
-    reasons: list[str] = []
+    reasons: list[FallbackReason] = []
+    adapter = PostSimplifyPyPTOInputAdapter(node, entry_name=entry_name)
     root_kind = _kind(node)
 
     if root_kind not in {"Function", "Program"}:
-        reasons.append(f"unsupported root for Sonata eligibility: {root_kind}")
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_ROOT_KIND,
+                f"unsupported root for Sonata eligibility: {root_kind}",
+            )
+        )
 
-    for child in _walk(node):
-        child_kind = _kind(child)
-        if child_kind in _CONTROL_FLOW_KINDS:
-            reasons.append(f"{child_kind} is not supported by initial Sonata eligibility")
-        elif child_kind in _UNSUPPORTED_KINDS:
-            reasons.append(f"{child_kind} is not supported by initial Sonata eligibility")
-        elif child_kind == "Call" and _call_name(child) == "tensor.read":
-            reasons.append("tensor.read calls are not supported by initial Sonata eligibility")
+    extraction_roots = adapter.extraction_roots()
+    for root in extraction_roots:
+        for child in adapter.walk(root):
+            child_kind = _kind(child)
+            if child_kind in _CONTROL_FLOW_KINDS:
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.CONTROL_FLOW_NOT_SUPPORTED,
+                        f"{child_kind} is not supported by initial Sonata eligibility",
+                    )
+                )
+            elif child_kind == "RuntimeScopeStmt":
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.UNSUPPORTED_RUNTIME_SCOPE,
+                        f"{child_kind} is not supported by initial Sonata eligibility",
+                    )
+                )
+            elif child_kind in adapter.unsupported_kinds:
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                        f"{child_kind} is out of scope for Sonata v0.1 PyPTO adapter",
+                    )
+                )
+            elif child_kind == "Call" and _call_name(child) == "tensor.read":
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.TENSOR_READ_NOT_SUPPORTED,
+                        "tensor.read calls are not supported by initial Sonata eligibility",
+                    )
+                )
 
-    extraction_roots = _extraction_roots(node, entry_name)
     if entry_name is not None and not extraction_roots:
-        reasons.append(f"entry function is not an orchestration function: {entry_name}")
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION,
+                f"entry function is not an orchestration function: {entry_name}",
+            )
+        )
+    elif root_kind == "Program" and not extraction_roots:
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION,
+                "program has no Orchestration functions for Sonata eligibility",
+            )
+        )
+    root_error = adapter.root_out_of_scope_error()
+    if root_error is not None:
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                root_error,
+            )
+        )
+    unsupported_call = adapter.has_unsupported_function_call()
+    if unsupported_call is not None:
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                f"Group/Spmd callee is out of scope for Sonata v0.1: {unsupported_call}",
+            )
+        )
 
     if reasons:
         return EligibilityResult.reject(*_dedupe(reasons))
 
+    try:
+        facts = adapter.normalize(require_certified=require_certified)
+    except PyPTOAdapterContractError as exc:
+        return EligibilityResult.reject(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                str(exc),
+            )
+        )
+
     name = str(getattr(node, "name", "sonata_score"))
-    tasks = _extract_tasks(extraction_roots, _function_core_types(node))
-    resolved_policy = _resolve_dependency_policy(tasks, dependency_policy)
+    tasks = _tasks_from_facts(facts.functions)
+    resolved_policy, fallback_code = _resolve_dependency_policy(tasks, dependency_policy)
     score = Score(
         name=name,
         runtime_target=runtime_target
         or RuntimeTarget(runtime="host_build_graph", function_name=f"build_{name}_graph"),
         tasks=tasks,
         dependencies=build_dependencies(tasks, policy=resolved_policy),
+        shape_assumptions=_extract_shape_assumptions(extraction_roots),
         metadata=build_score_metadata(
             extraction_roots,
             tasks,
             entry_name,
             resolved_policy,
             dependency_policy,
+            fallback_code=fallback_code,
         ),
     )
-    return score.validate()
+    return _check_storage_coverage(score.validate())
+
+
+def _check_storage_coverage(result: EligibilityResult) -> EligibilityResult:
+    """Apply storage coverage checks after score validation passes."""
+    if not result.eligible or result.score is None:
+        return result
+
+    coverage = result.score.metadata.get("memory_storage_key_coverage")
+    if not coverage or coverage["total"] == 0:
+        return result
+
+    if coverage["unknown"] == 0:
+        return result
+
+    if coverage["known"] / coverage["total"] < STORAGE_COVERAGE_WARN_THRESHOLD:
+        return EligibilityResult.accept_with_warnings(
+            result.score,
+            _fallback_reason(
+                FallbackCode.STORAGE_COVERAGE_BELOW_THRESHOLD,
+                f"memory storage key coverage below threshold: "
+                f"{coverage['known']}/{coverage['total']} < {STORAGE_COVERAGE_WARN_THRESHOLD}",
+                severity="warning",
+            ),
+        )
+
+    return result
 
 
 def _walk(node: Any) -> Iterable[Any]:
     """Yield ``node`` and recursively walk common IR-like child fields."""
-    seen: dict[int, Any] = {}
-    stack = [node]
-    child_fields = (
-        "functions",
-        "body",
-        "then_body",
-        "else_body",
-        "branches",
-        "stmts",
-        "statements",
-        "seq",
-        "args",
-        "value",
-        "expr",
-        "condition",
-    )
-
-    while stack:
-        current = stack.pop()
-        if current is None or isinstance(current, (str, bytes, int, float, bool)):
-            continue
-        ident = id(current)
-        if ident in seen:
-            continue
-        seen[ident] = current
-        yield current
-
-        if isinstance(current, dict):
-            stack.extend(current.values())
-            continue
-        if isinstance(current, (list, tuple)):
-            stack.extend(reversed(current))
-            continue
-
-        for field in child_fields:
-            if hasattr(current, field):
-                stack.append(getattr(current, field))
+    # NOTE: kept as a local wrapper rather than calling adapter.walk() inline.
+    # If the adapter interface changes (different stage boundary, different
+    # normalization strategy), eligibility may need its own traversal again.
+    yield from PostSimplifyPyPTOInputAdapter.walk(node)
 
 
 def _kind(node: Any) -> str:
     return type(node).__name__
+
+
+def _fallback_reason(
+    code: FallbackCode,
+    message: str,
+    *,
+    severity: str = "error",
+) -> FallbackReason:
+    return FallbackReason(code=code.value, message=message, severity=severity)
 
 
 def _call_name(node: Any) -> str | None:
@@ -146,15 +227,16 @@ def _call_name(node: Any) -> str | None:
 
 
 def _is_builtin_call(call_name: str) -> bool:
-    return call_name.startswith(_BUILTIN_OP_PREFIXES)
+    return PostSimplifyPyPTOInputAdapter.is_builtin_call(call_name)
 
 
-def _extract_tasks(nodes: tuple[Any, ...], core_types: dict[str, str]) -> tuple[Task, ...]:
+def _tasks_from_facts(functions: tuple[Any, ...]) -> tuple[Task, ...]:
     tasks: list[Task] = []
     func_ids: dict[str, int] = {}
-    for node in nodes:
+    multiple_roots = len(functions) > 1
+    for root_index, function in enumerate(functions):
         storage_keys = collect_storage_keys(
-            node,
+            function.node,
             walk=_walk,
             kind=_kind,
             call_name=_call_name,
@@ -162,76 +244,113 @@ def _extract_tasks(nodes: tuple[Any, ...], core_types: dict[str, str]) -> tuple[
             arg_name=_arg_name,
             arg_directions=_arg_directions,
         )
-        call_outputs = collect_call_output_vars(node, walk=_walk, kind=_kind)
-        for child in _walk(node):
-            if _kind(child) != "Call":
-                continue
-            call_name = _call_name(child)
-            if call_name is None or _is_builtin_call(call_name):
-                continue
-            if call_name not in func_ids:
-                func_ids[call_name] = len(func_ids)
-            tasks.append(
-                Task(
-                    task_id=len(tasks),
-                    func_id=func_ids[call_name],
-                    core_type=core_types.get(call_name, "mixed"),
-                    args=tuple(_arg_name(arg) for arg in getattr(child, "args", ())),
-                    arg_directions=_arg_directions(child),
-                    arg_storage_keys=arg_storage_keys(child, storage_keys),
-                    name=call_name,
-                )
+        if multiple_roots:
+            storage_keys = _namespace_storage_keys(storage_keys, function.name, root_index)
+        call_outputs = collect_call_output_vars(function.node, walk=_walk, kind=_kind)
+        for call in function.calls:
+            if call.callee_name not in func_ids:
+                func_ids[call.callee_name] = len(func_ids)
+            task = Task(
+                task_id=len(tasks),
+                func_id=func_ids[call.callee_name],
+                core_type=call.core_type,
+                args=call.arg_names,
+                arg_directions=call.arg_directions,
+                arg_storage_keys=arg_storage_keys(call.node, storage_keys),
+                name=call.callee_name,
             )
-            output_var = call_outputs.get(id(child))
+            tasks.append(task)
+            output_var = call_outputs.get(id(call.node))
             if output_var is not None:
-                propagate_call_output_storage(output_var, child, storage_keys, arg_directions=_arg_directions)
+                propagate_call_output_storage(output_var, call.node, storage_keys, arg_directions=_arg_directions)
     return tuple(tasks)
 
 
-def _extraction_roots(node: Any, entry_name: str | None) -> tuple[Any, ...]:
-    functions = getattr(node, "functions", None)
-    if not isinstance(functions, dict):
-        if entry_name is not None and getattr(node, "name", None) != entry_name:
-            return ()
-        return (node,)
-
-    roots: list[Any] = []
-    for func in functions.values():
-        func_type = getattr(func, "func_type", None)
-        if getattr(func_type, "name", None) == "Orchestration" and (
-            entry_name is None or getattr(func, "name", None) == entry_name
-        ):
-            roots.append(func)
-    return tuple(roots)
+def _namespace_storage_keys(storage_keys: dict[int, str], root_name: str | None, root_index: int) -> dict[int, str]:
+    namespace = root_name or f"root{root_index}"
+    return {identity: _namespace_storage_key(key, namespace) for identity, key in storage_keys.items()}
 
 
-def _resolve_dependency_policy(tasks: tuple[Task, ...], requested_policy: str) -> str:
-    if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0 and not supports_dataflow_dependencies(tasks):
-        return DEPENDENCY_POLICY_SEQUENTIAL_V0
-    return requested_policy
+def _namespace_storage_key(key: str, namespace: str) -> str:
+    prefix, sep, rest = key.partition(":")
+    if not sep:
+        return f"{namespace}.{key}"
+    return f"{prefix}:{namespace}.{rest}"
 
 
-def _function_core_types(node: Any) -> dict[str, str]:
-    functions = getattr(node, "functions", None)
-    if not isinstance(functions, dict):
-        return {}
+def _extract_shape_assumptions(nodes: tuple[Any, ...]) -> tuple[ShapeAssumption, ...]:
+    assumptions: list[ShapeAssumption] = []
+    multiple_roots = len(nodes) > 1
+    for node in nodes:
+        for param in getattr(node, "params", ()):
+            symbol = _shape_symbol(node, param, multiple_roots)
+            dims = _static_shape_dims(param)
+            if symbol and dims is not None:
+                assumptions.append(ShapeAssumption(symbol=symbol, dims=dims))
+    return tuple(assumptions)
 
-    core_types: dict[str, str] = {}
-    for func in functions.values():
-        name = getattr(func, "name", None)
-        if isinstance(name, str):
-            core_types[name] = _core_type_from_function(func)
-    return core_types
+
+def _shape_symbol(root: Any, param: Any, multiple_roots: bool) -> str | None:
+    symbol = _arg_name(param)
+    if symbol == _kind(param):
+        return None
+    if not multiple_roots:
+        return symbol
+    root_name = getattr(root, "name", None)
+    if isinstance(root_name, str) and root_name:
+        return f"{root_name}.{symbol}"
+    return symbol
 
 
-def _core_type_from_function(func: Any) -> str:
-    func_type = getattr(func, "func_type", None)
-    func_type_name = getattr(func_type, "name", None)
-    if func_type_name == "AIC":
-        return "aic"
-    if func_type_name == "AIV":
-        return "aiv"
-    return "mixed"
+def _static_shape_dims(param: Any) -> tuple[int, ...] | None:
+    param_type = _param_type(param)
+    if param_type is None:
+        return None
+    shape = _shape_values(param_type)
+    if shape is None:
+        return None
+    if isinstance(shape, (str, bytes)) or not isinstance(shape, Iterable):
+        return None
+    dims: list[int] = []
+    for dim in shape:
+        value = _const_int_value(dim)
+        if value is None:
+            return None
+        dims.append(value)
+    return tuple(dims)
+
+
+def _param_type(param: Any) -> Any | None:
+    for field in ("type", "type_", "tensor_type"):
+        if hasattr(param, field):
+            return getattr(param, field)
+    return None
+
+
+def _shape_values(param_type: Any) -> Any | None:
+    for field in ("shape", "shape_", "dims", "dims_"):
+        if hasattr(param_type, field):
+            return getattr(param_type, field)
+    return None
+
+
+def _const_int_value(dim: Any) -> int | None:
+    if is_static_shape_dim(dim):
+        return dim
+    value = getattr(dim, "value", None)
+    if is_static_shape_dim(value):
+        return value
+    return None
+
+
+def _resolve_dependency_policy(
+    tasks: tuple[Task, ...], requested_policy: str
+) -> tuple[str, "FallbackCode | None"]:
+    if requested_policy == DEPENDENCY_POLICY_DATAFLOW_V0:
+        code = dataflow_dependency_fallback_code(tasks)
+        if code is not None:
+            return DEPENDENCY_POLICY_SEQUENTIAL_V0, code
+    return requested_policy, None
 
 
 def _arg_name(node: Any) -> str:
@@ -267,11 +386,12 @@ def _direction_name(direction: Any) -> str:
     return str(direction)
 
 
-def _dedupe(reasons: list[str]) -> tuple[str, ...]:
-    result: list[str] = []
-    seen: set[str] = set()
+def _dedupe(reasons: list[FallbackReason]) -> tuple[FallbackReason, ...]:
+    result: list[FallbackReason] = []
+    seen: set[tuple[str, str, str]] = set()
     for reason in reasons:
-        if reason not in seen:
-            seen.add(reason)
+        key = (reason.code, reason.message, reason.severity)
+        if key not in seen:
+            seen.add(key)
             result.append(reason)
     return tuple(result)

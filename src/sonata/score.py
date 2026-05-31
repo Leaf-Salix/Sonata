@@ -16,6 +16,8 @@ early analysis and tests can evolve without coupling to C++ bindings.
 from dataclasses import dataclass, field
 from typing import Any
 
+from .fallback import FallbackCode
+
 
 @dataclass(frozen=True)
 class RuntimeTarget:
@@ -35,7 +37,7 @@ DEFAULT_RUNTIME_TARGET = RuntimeTarget()
 
 @dataclass(frozen=True)
 class ShapeAssumption:
-    """Static shape fact required for a score to remain valid."""
+    """Static shape fact that defines the runtime validity domain for a score."""
 
     symbol: str
     dims: tuple[int, ...]
@@ -56,10 +58,33 @@ class Task:
 
 @dataclass(frozen=True)
 class Dependency:
-    """Explicit edge between two precomputed tasks."""
+    """Explicit edge between two precomputed tasks.
+
+    ``kind`` classifies the dependency semantics:
+    - ``"data"``: RAW (read-after-write) data flow
+    - ``"storage"``: WAW (write-after-write) storage conflict
+    - ``"war"``: WAR (write-after-read) anti-dependency
+    - ``"ordering"``: pure ordering constraint, no data flow
+    """
 
     producer: int
     consumer: int
+    kind: str = "data"
+
+
+@dataclass(frozen=True)
+class FallbackReason:
+    """Structured explanation for why a score or region is ineligible.
+
+    ``code`` is a stable :class:`FallbackCode` value when available, or a
+    best-effort slug derived from ``message`` for unmapped reasons.  Enum
+    codes are safe as routing keys; slug codes may change if message wording
+    changes.
+    """
+
+    code: str
+    message: str
+    severity: str = "error"
 
 
 @dataclass(frozen=True)
@@ -69,6 +94,7 @@ class EligibilityResult:
     eligible: bool
     score: "Score | None" = None
     reasons: tuple[str, ...] = ()
+    reason_details: tuple[FallbackReason, ...] = ()
 
     @classmethod
     def accept(cls, score: "Score") -> "EligibilityResult":
@@ -76,9 +102,41 @@ class EligibilityResult:
         return cls(eligible=True, score=score)
 
     @classmethod
-    def reject(cls, *reasons: str) -> "EligibilityResult":
+    def reject(cls, *reasons: str | FallbackReason) -> "EligibilityResult":
         """Build an ineligible result with one or more explanatory reasons."""
-        return cls(eligible=False, reasons=tuple(reasons))
+        details = tuple(_coerce_fallback_reason(reason, severity="error") for reason in reasons)
+        return cls(
+            eligible=False,
+            reasons=tuple(reason.message for reason in details),
+            reason_details=details,
+        )
+
+    @classmethod
+    def accept_with_warnings(
+        cls, score: "Score", *warnings: str | FallbackReason
+    ) -> "EligibilityResult":
+        """Build an eligible result with warning-level detail entries.
+
+        Use this when a score is valid but carries degraded-confidence
+        information (e.g. low storage coverage, dataflow fallback).
+        """
+        if score is None:
+            raise ValueError("accept_with_warnings requires a non-None score")
+        return cls(
+            eligible=True,
+            score=score,
+            reason_details=tuple(
+                _coerce_fallback_reason(w, severity="warning") for w in warnings
+            ),
+        )
+
+    def has_errors(self) -> bool:
+        """Return whether any reason detail has severity ``error``."""
+        return any(r.severity == "error" for r in self.reason_details)
+
+    def has_warnings(self) -> bool:
+        """Return whether any reason detail has severity ``warning``."""
+        return any(r.severity == "warning" for r in self.reason_details)
 
 
 @dataclass(frozen=True)
@@ -126,14 +184,22 @@ class Score:
         if cycle is not None:
             reasons.append(f"dependency graph must be acyclic, found cycle: {_format_cycle(cycle)}")
 
+        shape_symbols: set[str] = set()
         for shape in self.shape_assumptions:
-            if not shape.symbol:
+            symbol_seen = shape.symbol in shape_symbols
+            if not symbol_seen:
+                shape_symbols.add(shape.symbol)
+
+            if not shape.symbol and not symbol_seen:
                 reasons.append("shape assumption symbol must not be empty")
-            if any(dim < 0 for dim in shape.dims):
-                reasons.append(f"shape assumption {shape.symbol} has negative dimension")
+                continue
+            if symbol_seen:
+                reasons.append(f"shape assumption symbol must be unique: {_shape_symbol_label(shape.symbol)}")
+                continue
+            reasons.extend(_validate_shape_dims(shape.symbol, shape.dims))
 
         if reasons:
-            return EligibilityResult.reject(*reasons)
+            return EligibilityResult.reject(*(_score_validation_reason(reason) for reason in reasons))
         return EligibilityResult.accept(self)
 
 
@@ -173,6 +239,62 @@ def _validate_task(task: Task) -> list[str]:
             f"does not match args size {len(task.args)}"
         )
     return reasons
+
+
+def is_static_shape_dim(dim: Any) -> bool:
+    """Return whether ``dim`` is a positive concrete shape dimension."""
+    return isinstance(dim, int) and not isinstance(dim, bool) and dim > 0
+
+
+def _validate_shape_dims(symbol: str, dims: tuple[int, ...]) -> list[str]:
+    reasons: list[str] = []
+    seen: set[str] = set()
+    for dim in dims:
+        reason = _shape_dim_rejection_reason(symbol, dim)
+        if reason is not None and reason not in seen:
+            seen.add(reason)
+            reasons.append(reason)
+    return reasons
+
+
+def _shape_dim_rejection_reason(symbol: str, dim: Any) -> str | None:
+    if is_static_shape_dim(dim):
+        return None
+    if not isinstance(dim, int) or isinstance(dim, bool):
+        return f"shape assumption {symbol} has non-integer dimension"
+    if dim < 0:
+        return f"shape assumption {symbol} has negative dimension"
+    return f"shape assumption {symbol} has zero dimension"
+
+
+def _shape_symbol_label(symbol: str) -> str:
+    return symbol or "<empty>"
+
+
+def _reason_code(reason: str) -> str:
+    code = "".join(ch.lower() if ch.isalnum() else "_" for ch in reason).strip("_")
+    return "_".join(part for part in code.split("_") if part) or "fallback"
+
+
+def _coerce_fallback_reason(reason: str | FallbackReason, *, severity: str) -> FallbackReason:
+    if isinstance(reason, FallbackReason):
+        if reason.severity == severity:
+            return reason
+        return FallbackReason(code=reason.code, message=reason.message, severity=severity)
+    return _build_fallback_reason(reason, severity=severity)
+
+
+def _build_fallback_reason(message: str, *, severity: str = "error") -> FallbackReason:
+    """Build a best-effort FallbackReason for a raw string message."""
+    return FallbackReason(code=_reason_code(message), message=message, severity=severity)
+
+
+def _score_validation_reason(message: str) -> FallbackReason:
+    return FallbackReason(
+        code=FallbackCode.SCORE_VALIDATION_FAILED.value,
+        message=message,
+        severity="error",
+    )
 
 
 def _visit_for_cycle(

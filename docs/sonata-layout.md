@@ -17,11 +17,13 @@ src/sonata/
 tests/sonata/
   test_audit.py
   test_dependencies.py
+  test_eligibility.py
   test_score.py
+  test_serialization.py
   test_storage.py
 
 tests/pypto_cases/
-  test_eligibility.py
+  test_eligibility.py  # PyPTO-backed compatibility/extraction coverage
 
 patches/pypto/
   runtime-target-seam.patch
@@ -32,7 +34,9 @@ patches/pypto/
 `src/sonata/` contains the experimental Sonata package. Its core model is pure
 Python and should not import PyPTO internals.
 
-`tests/sonata/` contains tests that do not require PyPTO.
+`tests/sonata/` contains tests that do not require PyPTO. Eligibility tests in
+this tree use PyPTO-free structural mock objects so Sonata can validate its
+analysis and schema behavior without importing PyPTO internals.
 
 `tests/pypto_cases/` contains compatibility and extraction tests that still
 need PyPTO. These should run against the future PyPTO submodule.
