@@ -17,17 +17,17 @@ from sonata.version import (
 
 class TestVersionInfo:
     def test_version_string(self):
-        assert SONATA_VERSION == "0.8.0"
+        assert SONATA_VERSION == "0.9.0"
 
     def test_version_info_tuple(self):
-        assert VERSION_INFO == (0, 8, 0)
+        assert VERSION_INFO == (0, 9, 0)
         assert len(VERSION_INFO) == 3
 
     def test_version_string_function(self):
-        assert version_string() == "0.8.0"
+        assert version_string() == "0.9.0"
 
     def test_version_string_with_label(self):
-        assert version_string(include_label=True) == "Sonata 0.8.0"
+        assert version_string(include_label=True) == "Sonata 0.9.0"
 
     def test_version_consistency(self):
         assert ".".join(str(v) for v in VERSION_INFO) == SONATA_VERSION
@@ -163,3 +163,66 @@ class TestModuleApi:
         for symbols in module_api().values():
             flat.update(symbols)
         assert flat == set(public_api())
+
+
+class TestDeprecatedField:
+    def test_descriptor_emits_warning(self):
+        from sonata.version import DeprecatedField
+
+        class Cfg:
+            old = DeprecatedField(default=99, message="gone", since="0.8", replacement="new")
+
+        obj = Cfg()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            val = obj.old
+            assert val == 99
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "Cfg.old is deprecated" in str(w[0].message)
+            assert "since v0.8" in str(w[0].message)
+            assert "gone" in str(w[0].message)
+            assert "new" in str(w[0].message)
+
+    def test_descriptor_set_and_get(self):
+        from sonata.version import DeprecatedField
+
+        class Cfg:
+            old = DeprecatedField(default=0)
+
+        obj = Cfg()
+        obj.old = 42
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            assert obj.old == 42
+            assert len(w) == 1
+
+    def test_class_level_access_returns_descriptor(self):
+        from sonata.version import DeprecatedField
+
+        class Cfg:
+            old = DeprecatedField(default=7)
+
+        assert isinstance(Cfg.__dict__["old"], DeprecatedField)
+
+    def test_score_runtime_target_deprecation(self):
+        from sonata.score import Score, RuntimeTarget
+
+        score = Score(name="t", runtime_target=RuntimeTarget(), tasks=())
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            rt = score.runtime_target
+            assert isinstance(rt, RuntimeTarget)
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "Score.runtime_target is deprecated" in str(w[0].message)
+
+    def test_score_runtime_target_no_duplicate_warning(self):
+        from sonata.score import Score, RuntimeTarget
+
+        score = Score(name="t", runtime_target=RuntimeTarget(), tasks=())
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _ = score.runtime_target
+            _ = score.runtime_target
+            assert len(w) == 1

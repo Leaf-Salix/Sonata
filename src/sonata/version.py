@@ -13,15 +13,15 @@ import functools
 import warnings
 from typing import Any, Callable
 
-SONATA_VERSION = "0.8.0"
-VERSION_INFO = (0, 8, 0)
+SONATA_VERSION = "0.9.0"
+VERSION_INFO = (0, 9, 0)
 
 
 def version_string(*, include_label: bool = False) -> str:
     """Return the Sonata version string.
 
     With ``include_label=True``, appends the library name:
-    ``"Sonata 0.8.0"``.
+    ``"Sonata 0.9.0"``.
     """
     if include_label:
         return f"Sonata {SONATA_VERSION}"
@@ -58,6 +58,59 @@ def deprecated(
         wrapper.__deprecated_message__ = warning_text
         return wrapper
     return decorator
+
+
+class DeprecatedField:
+    """Descriptor that emits a :class:`DeprecationWarning` on first access.
+
+    Works on regular (mutable) classes.  For frozen dataclasses, use the
+    ``_deprecated_field_warnings`` / ``__getattribute__`` protocol instead
+    (see :class:`sonata.score.Score`).
+
+    Example usage on a mutable class::
+
+        class Config:
+            old_option = DeprecatedField(
+                default=42,
+                message="Use new_option instead.",
+                since="0.8",
+            )
+    """
+
+    def __init__(
+        self,
+        default: Any = None,
+        *,
+        message: str = "",
+        since: str = "",
+        replacement: str = "",
+    ) -> None:
+        self.default = default
+        self.message = message
+        self.since = since
+        self.replacement = replacement
+        self._warned = False
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.attr_name = name
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        if obj is None:
+            return self
+        if not self._warned:
+            self._warned = True
+            parts = [f"{objtype.__name__}.{self.attr_name} is deprecated"]
+            if self.since:
+                parts.append(f"since v{self.since}")
+            if self.message:
+                parts.append(f"— {self.message}")
+            if self.replacement:
+                parts.append(f"Use {self.replacement} instead.")
+            warnings.warn(". ".join(parts), DeprecationWarning, stacklevel=2)
+        return obj.__dict__.get(self.attr_name, self.default)
+
+    def __set__(self, obj: Any, value: Any) -> None:
+        obj.__dict__[self.attr_name] = value
 
 
 def schema_versions() -> dict[str, int]:
@@ -106,6 +159,7 @@ def module_api() -> dict[str, list[str]]:
 
 
 __all__ = [
+    "DeprecatedField",
     "SONATA_VERSION",
     "VERSION_INFO",
     "deprecated",

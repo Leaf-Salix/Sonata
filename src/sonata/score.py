@@ -15,6 +15,7 @@ early analysis and tests can evolve without coupling to C++ bindings.
 
 from dataclasses import dataclass, field
 from typing import Any
+import warnings
 
 from .fallback import FallbackCode
 
@@ -149,6 +150,19 @@ class Score:
     dependencies: tuple[Dependency, ...] = ()
     shape_assumptions: tuple[ShapeAssumption, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    _deprecated_field_warnings: frozenset[str] = frozenset({"runtime_target"})
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "runtime_target" and not self.__dict__.get("_rt_warned"):
+            self.__dict__["_rt_warned"] = True
+            warnings.warn(
+                "Score.runtime_target is deprecated since v0.2 "
+                "— use PlanHandle.runtime_target instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return object.__getattribute__(self, name)
 
     def task_count(self) -> int:
         """Return the number of tasks in the score."""

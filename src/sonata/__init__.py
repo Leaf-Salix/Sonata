@@ -97,6 +97,7 @@ from .serialization import (
 )
 from .storage import STORAGE_COVERAGE_REJECT_THRESHOLD, STORAGE_COVERAGE_WARN_THRESHOLD
 from .version import (
+    DeprecatedField,
     SONATA_VERSION,
     VERSION_INFO,
     deprecated,
@@ -122,6 +123,7 @@ __all__ = [
     "DEPENDENCY_POLICY_DATAFLOW_V0",
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
     "DEFAULT_RUNTIME_TARGET",
+    "DeprecatedField",
     "Dependency",
     "DeserializationError",
     "EligibilityResult",
