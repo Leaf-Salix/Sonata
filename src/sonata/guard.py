@@ -55,7 +55,7 @@ for detailed design decisions and trade-offs.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -277,9 +277,165 @@ class ShapeAssumption(GuardCondition):
 # Schema version for guard condition ABI
 GUARD_CONDITION_SCHEMA_VERSION = 1
 
+
+class InvalidateAction(Enum):
+    """Action to take when a guard condition is invalidated.
+    
+    Attributes:
+        REPLAN: Full replanning required. Score and PlanHandle both invalid.
+            Triggered by hard guard violations that change computation structure.
+        INVALIDATE_HANDLE: Only PlanHandle invalidated, Score remains valid.
+            Triggered by soft guard violations that can be handled by rebuilding plan.
+        UPDATE_IN_PLACE: Guard violation can be resolved without full rebuild.
+            Triggered by parameter-level changes that don't affect structure.
+    """
+    
+    REPLAN = "replan"
+    INVALIDATE_HANDLE = "invalidate_handle"
+    UPDATE_IN_PLACE = "update_in_place"
+    
+    def requires_full_replan(self) -> bool:
+        """Return True if this action requires full replanning."""
+        return self == InvalidateAction.REPLAN
+    
+    def is_conservative(self) -> bool:
+        """Return True for conservative actions (REPLAN or INVALIDATE_HANDLE)."""
+        return self in (InvalidateAction.REPLAN, InvalidateAction.INVALIDATE_HANDLE)
+
+
+class GuardEvaluator:
+    """Runtime evaluator for guard conditions.
+    
+    Evaluates whether runtime values satisfy guard conditions.
+    Returns (satisfied: bool, action: InvalidateAction) tuple.
+    
+    Usage:
+        evaluator = GuardEvaluator()
+        satisfied, action = evaluator.evaluate(guard, runtime_values)
+        if not satisfied:
+            if action.requires_full_replan():
+                # Trigger full replan from Score extraction
+            else:
+                # Just invalidate plan handle, keep Score cached
+    """
+    
+    def evaluate(self, guard: GuardCondition, runtime_values: dict[str, Any]) -> tuple[bool, InvalidateAction]:
+        """Evaluate a single guard condition against runtime values.
+        
+        Args:
+            guard: Guard condition to evaluate
+            runtime_values: Dictionary of runtime values keyed by symbol
+            
+        Returns:
+            Tuple of (satisfied: bool, action: InvalidateAction)
+            - If satisfied=True, action indicates what would happen if violated
+            - If satisfied=False, action indicates required recovery action
+        """
+        try:
+            satisfied = guard.evaluate(runtime_values)
+            action = InvalidateAction.REPLAN if guard.severity.requires_replan else InvalidateAction.INVALIDATE_HANDLE
+            return satisfied, action
+        except Exception as e:
+            # On evaluation error, treat as violation with conservative action
+            return False, InvalidateAction.REPLAN
+    
+    def evaluate_all(
+        self, 
+        guards: Iterable[GuardCondition], 
+        runtime_values: dict[str, Any]
+    ) -> tuple[bool, list[tuple[GuardCondition, bool, InvalidateAction]]]:
+        """Evaluate multiple guard conditions.
+        
+        Args:
+            guards: Iterable of guard conditions to evaluate
+            runtime_values: Dictionary of runtime values
+            
+        Returns:
+            Tuple of (all_satisfied: bool, results: list of (guard, satisfied, action))
+            - all_satisfied=True means all guards passed
+            - results contains detailed per-guard evaluation
+        """
+        results = []
+        all_satisfied = True
+        
+        for guard in guards:
+            satisfied, action = self.evaluate(guard, runtime_values)
+            results.append((guard, satisfied, action))
+            if not satisfied:
+                all_satisfied = False
+        
+        return all_satisfied, results
+
+
+class GuardInvalidator:
+    """Strategy class for handling guard invalidation.
+    
+    Implements different invalidation strategies based on severity:
+    - Hard guards → REPLAN (full replanning from Score extraction)
+    - Soft guards → INVALIDATE_HANDLE (rebuild PlanHandle only)
+    
+    Usage:
+        invalidator = GuardInvalidator()
+        action = invalidator.invalidate(guard, reason="shape mismatch")
+        if action == InvalidateAction.REPLAN:
+            # Trigger full replan
+    """
+    
+    def __init__(self, default_action: InvalidateAction = InvalidateAction.REPLAN):
+        """Initialize GuardInvalidator.
+        
+        Args:
+            default_action: Default action for unknown guard types
+        """
+        self.default_action = default_action
+    
+    def invalidate(self, guard: GuardCondition, reason: str = "") -> InvalidateAction:
+        """Determine invalidation action for a guard violation.
+        
+        Args:
+            guard: Guard condition that was violated
+            reason: Human-readable reason for violation
+            
+        Returns:
+            InvalidateAction indicating required recovery strategy
+        """
+        # Use severity-based policy
+        if guard.severity.requires_replan():
+            return InvalidateAction.REPLAN
+        else:
+            return InvalidateAction.INVALIDATE_HANDLE
+    
+    def invalidate_all(
+        self, 
+        results: list[tuple[GuardCondition, bool, InvalidateAction]]
+    ) -> InvalidateAction:
+        """Determine overall action from multiple guard evaluations.
+        
+        Policy: If any hard guard violated → REPLAN, else INVALIDATE_HANDLE.
+        
+        Args:
+            results: List of (guard, satisfied, action) tuples from GuardEvaluator
+            
+        Returns:
+            Conservative action covering all violations
+        """
+        has_hard_violation = False
+        
+        for guard, satisfied, action in results:
+            if not satisfied:
+                if guard.severity.requires_replan():
+                    has_hard_violation = True
+                    break
+        
+        return InvalidateAction.REPLAN if has_hard_violation else InvalidateAction.INVALIDATE_HANDLE
+
+
 __all__ = [
     "GuardCondition",
     "GuardSeverity",
     "ShapeAssumption",
     "GUARD_CONDITION_SCHEMA_VERSION",
+    "InvalidateAction",
+    "GuardEvaluator",
+    "GuardInvalidator",
 ]
