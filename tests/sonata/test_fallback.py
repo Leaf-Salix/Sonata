@@ -19,6 +19,7 @@ class TestFallbackCodeEnum:
         assert FallbackCode.UNSUPPORTED_RUNTIME_SCOPE == "unsupported_runtime_scope"
         assert FallbackCode.TENSOR_READ_NOT_SUPPORTED == "tensor_read_not_supported"
         assert FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION == "entry_function_not_orchestration"
+        assert FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE == "unsupported_pypto_adapter_scope"
         assert FallbackCode.SCORE_VALIDATION_FAILED == "score_validation_failed"
 
     def test_enum_members_are_all_str(self) -> None:

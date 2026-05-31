@@ -60,8 +60,19 @@ def test_collect_storage_keys_records_params_and_tensor_allocations() -> None:
 
     keys = _collect(func)
 
-    assert keys[1] == "param:1:x"
-    assert keys[2] == "alloc:2:local"
+    assert keys[1] == "param:x"
+    assert keys[2] == "alloc:local"
+
+
+def test_collect_storage_keys_disambiguates_duplicate_stable_names() -> None:
+    first = Var("x", unique_id=1)
+    second = Var("x", unique_id=2)
+    func = Function(params=(first, second))
+
+    keys = _collect(func)
+
+    assert keys[1] == "param:x"
+    assert keys[2] == "param:x@2"
 
 
 def test_collect_storage_keys_propagates_call_output_from_write_arg() -> None:
@@ -79,8 +90,8 @@ def test_collect_storage_keys_propagates_call_output_from_write_arg() -> None:
 
     keys = _collect(func)
 
-    assert keys[2] == "alloc:2:local"
-    assert keys[3] == "alloc:2:local"
+    assert keys[2] == "alloc:local"
+    assert keys[3] == "alloc:local"
 
 
 def test_collect_storage_keys_propagates_tuple_get_elements_from_write_args() -> None:
@@ -108,8 +119,8 @@ def test_collect_storage_keys_propagates_tuple_get_elements_from_write_args() ->
 
     keys = _collect(func)
 
-    assert keys[5] == "alloc:2:out0"
-    assert keys[6] == "alloc:3:out1"
+    assert keys[5] == "alloc:out0"
+    assert keys[6] == "alloc:out1"
 
 
 def test_collect_storage_keys_skips_builtin_non_alloc_calls() -> None:
@@ -124,7 +135,7 @@ def test_collect_storage_keys_skips_builtin_non_alloc_calls() -> None:
 
     keys = _collect(func)
 
-    assert keys == {1: "alloc:1:local"}
+    assert keys == {1: "alloc:local"}
 
 
 def test_collect_call_output_vars_tracks_assigned_calls() -> None:
@@ -148,14 +159,14 @@ def test_arg_storage_keys_projects_known_and_unknown_args() -> None:
     assert storage_key(unknown, {1: "buffer:known"}) is None
 
 
-def test_storage_key_uses_unique_id_to_track_aliases_across_var_objects() -> None:
+def test_storage_key_uses_unique_id_for_lookup_but_not_key_text() -> None:
     alias = Var("x_alias", unique_id=1)
     call = Call("kernel", args=(alias,))
 
-    keys = arg_storage_keys(call, {1: "param:1:x"})
+    keys = arg_storage_keys(call, {1: "param:x"})
 
-    assert storage_key(alias, {1: "param:1:x"}) == "param:1:x"
-    assert keys == ("param:1:x",)
+    assert storage_key(alias, {1: "param:x"}) == "param:x"
+    assert keys == ("param:x",)
 
 
 def test_propagate_call_output_storage_accepts_normalized_direction_names() -> None:
@@ -177,11 +188,11 @@ def test_call_write_storage_keys_returns_write_args_only() -> None:
 
     keys = call_write_storage_keys(
         call,
-        {1: "param:1:x", 2: "alloc:2:out0", 3: "alloc:3:out1"},
+        {1: "param:x", 2: "alloc:out0", 3: "alloc:out1"},
         arg_directions=_arg_directions,
     )
 
-    assert keys == ("alloc:2:out0", "alloc:3:out1")
+    assert keys == ("alloc:out0", "alloc:out1")
 
 
 def test_propagate_call_output_storage_ignores_read_only_args() -> None:

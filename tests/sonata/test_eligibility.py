@@ -1,7 +1,13 @@
 from dataclasses import dataclass
 from typing import Any
 
-from sonata import DEPENDENCY_POLICY_DATAFLOW_V0, DEPENDENCY_POLICY_SEQUENTIAL_V0, RuntimeTarget, check_static_eligibility
+from sonata import (
+    DEPENDENCY_POLICY_DATAFLOW_V0,
+    DEPENDENCY_POLICY_SEQUENTIAL_V0,
+    FallbackCode,
+    RuntimeTarget,
+    check_static_eligibility,
+)
 
 
 @dataclass
@@ -110,6 +116,21 @@ class WhileStmt:
 
 @dataclass
 class RuntimeScopeStmt:
+    body: Any
+
+
+@dataclass
+class Submit:
+    body: Any
+
+
+@dataclass
+class SpmdScopeStmt:
+    body: Any
+
+
+@dataclass
+class ManualScopeStmt:
     body: Any
 
 
@@ -496,6 +517,30 @@ def test_static_eligibility_rejects_runtime_scope() -> None:
 
     assert not result.eligible
     assert result.reasons == ("RuntimeScopeStmt is not supported by initial Sonata eligibility",)
+
+
+def test_static_eligibility_rejects_pypto_adapter_out_of_scope_nodes() -> None:
+    for node_type in (Submit, SpmdScopeStmt, ManualScopeStmt):
+        func = Function(name="main", body=node_type(body=(EvalStmt(Call("kernel.add")),)))
+
+        result = check_static_eligibility(func)
+
+        assert not result.eligible
+        assert result.reasons == (f"{node_type.__name__} is out of scope for Sonata v0.1 PyPTO adapter",)
+        assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
+
+
+def test_static_eligibility_rejects_direct_group_pypto_function_root() -> None:
+    func = Function(name="group", body=(EvalStmt(Call("kernel.add", arg_directions=("Input",))),))
+    func.func_type = FuncType("Group")
+
+    result = check_static_eligibility(func)
+
+    assert not result.eligible
+    assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
+    assert result.reasons == (
+        "Group function root is out of scope for Sonata v0.1 PyPTO adapter: group",
+    )
 
 
 def test_static_eligibility_rejects_tensor_read() -> None:
