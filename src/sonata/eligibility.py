@@ -25,7 +25,7 @@ from .dependencies import (
     dataflow_dependency_fallback_code,
 )
 from .fallback import FallbackCode
-from .pypto_adapter import PostSimplifyPyPTOInputAdapter
+from .pypto_adapter import PostSimplifyPyPTOInputAdapter, PyPTOAdapterContractError
 from .score import (
     EligibilityResult,
     FallbackReason,
@@ -52,6 +52,7 @@ def check_static_eligibility(
     runtime_target: RuntimeTarget | None = None,
     entry_name: str | None = None,
     dependency_policy: str = DEPENDENCY_POLICY_SEQUENTIAL_V0,
+    require_certified: bool = False,
 ) -> EligibilityResult:
     """Return whether ``node`` is eligible for an initial Sonata static score."""
     reasons: list[FallbackReason] = []
@@ -66,43 +67,51 @@ def check_static_eligibility(
             )
         )
 
-    for child in adapter.walk(node):
-        child_kind = _kind(child)
-        if child_kind in _CONTROL_FLOW_KINDS:
-            reasons.append(
-                _fallback_reason(
-                    FallbackCode.CONTROL_FLOW_NOT_SUPPORTED,
-                    f"{child_kind} is not supported by initial Sonata eligibility",
-                )
-            )
-        elif child_kind == "RuntimeScopeStmt":
-            reasons.append(
-                _fallback_reason(
-                    FallbackCode.UNSUPPORTED_RUNTIME_SCOPE,
-                    f"{child_kind} is not supported by initial Sonata eligibility",
-                )
-            )
-        elif child_kind in adapter.unsupported_kinds:
-            reasons.append(
-                _fallback_reason(
-                    FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
-                    f"{child_kind} is out of scope for Sonata v0.1 PyPTO adapter",
-                )
-            )
-        elif child_kind == "Call" and _call_name(child) == "tensor.read":
-            reasons.append(
-                _fallback_reason(
-                    FallbackCode.TENSOR_READ_NOT_SUPPORTED,
-                    "tensor.read calls are not supported by initial Sonata eligibility",
-                )
-            )
-
     extraction_roots = adapter.extraction_roots()
+    for root in extraction_roots:
+        for child in adapter.walk(root):
+            child_kind = _kind(child)
+            if child_kind in _CONTROL_FLOW_KINDS:
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.CONTROL_FLOW_NOT_SUPPORTED,
+                        f"{child_kind} is not supported by initial Sonata eligibility",
+                    )
+                )
+            elif child_kind == "RuntimeScopeStmt":
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.UNSUPPORTED_RUNTIME_SCOPE,
+                        f"{child_kind} is not supported by initial Sonata eligibility",
+                    )
+                )
+            elif child_kind in adapter.unsupported_kinds:
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                        f"{child_kind} is out of scope for Sonata v0.1 PyPTO adapter",
+                    )
+                )
+            elif child_kind == "Call" and _call_name(child) == "tensor.read":
+                reasons.append(
+                    _fallback_reason(
+                        FallbackCode.TENSOR_READ_NOT_SUPPORTED,
+                        "tensor.read calls are not supported by initial Sonata eligibility",
+                    )
+                )
+
     if entry_name is not None and not extraction_roots:
         reasons.append(
             _fallback_reason(
                 FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION,
                 f"entry function is not an orchestration function: {entry_name}",
+            )
+        )
+    elif root_kind == "Program" and not extraction_roots:
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION,
+                "program has no Orchestration functions for Sonata eligibility",
             )
         )
     root_error = adapter.root_out_of_scope_error()
@@ -125,8 +134,17 @@ def check_static_eligibility(
     if reasons:
         return EligibilityResult.reject(*_dedupe(reasons))
 
+    try:
+        facts = adapter.normalize(require_certified=require_certified)
+    except PyPTOAdapterContractError as exc:
+        return EligibilityResult.reject(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                str(exc),
+            )
+        )
+
     name = str(getattr(node, "name", "sonata_score"))
-    facts = adapter.normalize()
     tasks = _tasks_from_facts(facts.functions)
     resolved_policy, fallback_code = _resolve_dependency_policy(tasks, dependency_policy)
     score = Score(

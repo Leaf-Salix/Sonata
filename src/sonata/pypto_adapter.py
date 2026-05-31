@@ -126,7 +126,7 @@ class PostSimplifyPyPTOInputAdapter:
             if self.entry_name is not None and getattr(self.node, "name", None) != self.entry_name:
                 return ()
             func_type_name = self.function_type_name(self.node)
-            if func_type_name in self.unsupported_function_types:
+            if func_type_name is not None and func_type_name != "Orchestration":
                 return ()
             return (self.node,)
 
@@ -208,10 +208,12 @@ class PostSimplifyPyPTOInputAdapter:
         if isinstance(functions, dict):
             return None
         func_type_name = self.function_type_name(self.node)
-        if func_type_name not in self.unsupported_function_types:
+        if func_type_name is None or func_type_name == "Orchestration":
             return None
         name = self.function_name(self.node) or "<anonymous>"
-        return f"{func_type_name} function root is out of scope for Sonata v0.1 PyPTO adapter: {name}"
+        if func_type_name in self.unsupported_function_types:
+            return f"{func_type_name} function root is out of scope for Sonata v0.1 PyPTO adapter: {name}"
+        return f"{func_type_name} function root is not an Orchestration function: {name}"
 
     def out_of_scope_errors(self) -> tuple[str, ...]:
         """Return v0.1 adapter scope violations that must not normalize silently."""
@@ -222,10 +224,11 @@ class PostSimplifyPyPTOInputAdapter:
         unsupported_call = self.has_unsupported_function_call()
         if unsupported_call is not None:
             errors.append(f"Group/Spmd callee is out of scope for Sonata v0.1: {unsupported_call}")
-        for child in self.walk(self.node):
-            child_kind = self.kind(child)
-            if child_kind in self.unsupported_kinds:
-                errors.append(f"{child_kind} is out of scope for Sonata v0.1 PyPTO adapter")
+        for root in self.extraction_roots():
+            for child in self.walk(root):
+                child_kind = self.kind(child)
+                if child_kind in self.unsupported_kinds:
+                    errors.append(f"{child_kind} is out of scope for Sonata v0.1 PyPTO adapter")
         return tuple(dict.fromkeys(errors))
 
     def certified_contract_errors(self) -> tuple[str, ...]:

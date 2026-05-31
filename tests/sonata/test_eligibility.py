@@ -14,6 +14,7 @@ from sonata import (
 class Function:
     name: str
     body: Any
+    func_type: Any | None = None
 
 
 @dataclass
@@ -541,6 +542,85 @@ def test_static_eligibility_rejects_direct_group_pypto_function_root() -> None:
     assert result.reasons == (
         "Group function root is out of scope for Sonata v0.1 PyPTO adapter: group",
     )
+
+
+def test_static_eligibility_rejects_direct_typed_non_orchestration_root() -> None:
+    func = Function(name="kernel", body=(EvalStmt(Call("kernel.add", arg_directions=("Input",))),))
+    func.func_type = FuncType("AIV")
+
+    result = check_static_eligibility(func)
+
+    assert not result.eligible
+    assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
+    assert result.reasons == ("AIV function root is not an Orchestration function: kernel",)
+
+
+def test_static_eligibility_accepts_untyped_structural_function_root() -> None:
+    func = Function(name="main", body=(EvalStmt(Call("kernel.add", args=("x",), arg_directions=("Input",))),))
+
+    result = check_static_eligibility(func)
+
+    assert result.eligible
+    assert result.score is not None
+    assert result.score.tasks[0].name == "kernel.add"
+
+
+def test_static_eligibility_certified_mode_rejects_missing_directions() -> None:
+    program = Program(
+        functions={
+            "kernel": Function(name="kernel", body=(), func_type=FuncType("AIV")),
+            "main": Function(
+                name="main",
+                body=(EvalStmt(Call("kernel", args=("x",), arg_directions=())),),
+                func_type=FuncType("Orchestration"),
+            ),
+        }
+    )
+
+    relaxed = check_static_eligibility(program)
+    strict = check_static_eligibility(program, require_certified=True)
+
+    assert relaxed.eligible
+    assert not strict.eligible
+    assert strict.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
+    assert strict.reasons == ("Call kernel has no arg_directions in certified dump",)
+
+
+def test_static_eligibility_rejects_program_without_orchestration_roots() -> None:
+    program = Program(
+        functions={
+            "kernel": Function(name="kernel", body=(), func_type=FuncType("AIV")),
+        }
+    )
+
+    result = check_static_eligibility(program)
+
+    assert not result.eligible
+    assert result.reason_details[0].code == FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION.value
+    assert result.reasons == ("program has no Orchestration functions for Sonata eligibility",)
+
+
+def test_static_eligibility_scans_selected_orchestration_roots_only() -> None:
+    program = Program(
+        functions={
+            "kernel": Function(
+                name="kernel",
+                body=ForStmt(body=(EvalStmt(Call("tile.add")),)),
+                func_type=FuncType("AIV"),
+            ),
+            "main": Function(
+                name="main",
+                body=(EvalStmt(Call("kernel", args=("x",), arg_directions=("Input",))),),
+                func_type=FuncType("Orchestration"),
+            ),
+        }
+    )
+
+    result = check_static_eligibility(program, require_certified=True)
+
+    assert result.eligible
+    assert result.score is not None
+    assert result.score.tasks[0].name == "kernel"
 
 
 def test_static_eligibility_rejects_tensor_read() -> None:

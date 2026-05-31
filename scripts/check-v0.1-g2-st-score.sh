@@ -86,6 +86,7 @@ def show(case_name, source_path, program):
     result = check_static_eligibility(
         certified,
         dependency_policy=DEPENDENCY_POLICY_DATAFLOW_V0,
+        require_certified=True,
     )
     print("\nELIGIBLE:", result.eligible)
     if result.reasons:

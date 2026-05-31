@@ -143,6 +143,20 @@ def test_adapter_rejects_direct_group_or_spmd_function_root() -> None:
         adapter.normalize()
 
 
+def test_adapter_rejects_direct_typed_non_orchestration_function_root() -> None:
+    adapter = PostSimplifyPyPTOInputAdapter(
+        Function(
+            name="kernel",
+            func_type=FuncType("AIV"),
+            body=(EvalStmt(Call("kernel", arg_directions=("Input",))),),
+        )
+    )
+
+    assert adapter.extraction_roots() == ()
+    with pytest.raises(PyPTOAdapterContractError, match="AIV function root is not an Orchestration function"):
+        adapter.normalize()
+
+
 def test_certified_adapter_requires_arg_directions_to_match_args() -> None:
     x = Var("x")
     program = Program(

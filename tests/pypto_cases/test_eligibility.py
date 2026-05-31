@@ -156,7 +156,11 @@ def _upstream_l2_multi_orch_program() -> Any:
 def _certified_score(program: Any):
     certified = _run_default_pipeline_until_final_simplify(program)
     PostSimplifyPyPTOInputAdapter(certified).normalize(require_certified=True)
-    result = check_static_eligibility(certified, dependency_policy=DEPENDENCY_POLICY_DATAFLOW_V0)
+    result = check_static_eligibility(
+        certified,
+        dependency_policy=DEPENDENCY_POLICY_DATAFLOW_V0,
+        require_certified=True,
+    )
     assert result.eligible, result.reasons
     assert result.score is not None
     return result.score
@@ -563,7 +567,7 @@ def test_static_eligibility_rejects_unsupported_root() -> None:
     assert result.reasons == ("unsupported root for Sonata eligibility: Call",)
 
 
-def test_static_eligibility_accepts_real_pypto_function() -> None:
+def test_static_eligibility_rejects_real_pypto_opaque_function_root() -> None:
     program = pl.parse_program(
         """
 @pl.program
@@ -576,10 +580,45 @@ class P:
 
     result = check_static_eligibility(program.get_function("main"))
 
-    assert result.eligible
-    assert result.score is not None
-    assert result.score.name == "main"
-    assert result.score.tasks == ()
+    assert not result.eligible
+    assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
+    assert result.reasons == ("Opaque function root is not an Orchestration function: main",)
+
+
+def test_static_eligibility_rejects_real_pypto_typed_non_orchestration_root() -> None:
+    program = pl.parse_program(
+        """
+@pl.program
+class P:
+    @pl.function(type=pl.FunctionType.AIV)
+    def vector(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
+        return x
+"""
+    )
+
+    result = check_static_eligibility(program.get_function("vector"))
+
+    assert not result.eligible
+    assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
+    assert result.reasons == ("AIV function root is not an Orchestration function: vector",)
+
+
+def test_static_eligibility_rejects_real_pypto_program_without_orchestration_roots() -> None:
+    program = pl.parse_program(
+        """
+@pl.program
+class P:
+    @pl.function(type=pl.FunctionType.AIV)
+    def vector(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
+        return x
+"""
+    )
+
+    result = check_static_eligibility(program)
+
+    assert not result.eligible
+    assert result.reason_details[0].code == FallbackCode.ENTRY_FUNCTION_NOT_ORCHESTRATION.value
+    assert result.reasons == ("program has no Orchestration functions for Sonata eligibility",)
 
 
 def test_static_eligibility_extracts_real_pypto_call_task() -> None:
@@ -606,6 +645,31 @@ class P:
     assert result.score.tasks[0].func_id == 0
     assert result.score.tasks[0].name == "k1"
     assert result.score.tasks[0].args == ("x",)
+
+
+def test_static_eligibility_ignores_real_pypto_callee_internal_control_flow() -> None:
+    program = pl.parse_program(
+        """
+@pl.program
+class P:
+    @pl.function(type=pl.FunctionType.AIV)
+    def vector(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
+        for i in pl.range(4):
+            x = x
+        return x
+
+    @pl.function(type=pl.FunctionType.Orchestration)
+    def main(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
+        a = self.vector(x)
+        return a
+"""
+    )
+
+    result = check_static_eligibility(program)
+
+    assert result.eligible
+    assert result.score is not None
+    assert [task.name for task in result.score.tasks] == ["vector"]
 
 
 def test_static_eligibility_skips_builtin_tensor_create_tasks() -> None:
@@ -895,7 +959,7 @@ def test_static_eligibility_rejects_real_pypto_program_with_loop() -> None:
         """
 @pl.program
 class P:
-    @pl.function
+    @pl.function(type=pl.FunctionType.Orchestration)
     def main(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
         for i in pl.range(4):
             x = pl.add(x, 1.0)
