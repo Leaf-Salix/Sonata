@@ -9,6 +9,7 @@ from sonata.plan_handle import (
     PlanHandle,
     RUNTIME_CONTRACT_VERSION,
     RuntimeArgBinding,
+    GuardStatus,
 )
 from sonata.score import (
     Dependency,
@@ -17,6 +18,7 @@ from sonata.score import (
     ShapeAssumption,
     Task,
 )
+from sonata.guard import GUARD_SEVERITY_HARD, GUARD_SEVERITY_SOFT
 from sonata.serialization import (
     plan_handle_to_dict,
     plan_handle_to_json,
@@ -309,3 +311,181 @@ class TestEndToEndSmoke:
         assert not result.success
         codes = [r.code for r in result.reasons]
         assert "runtime_adapter_fingerprint_mismatch" in codes
+
+
+# ============================================================================
+# Phase 4: PlanHandle Guard Status Integration Tests
+# ============================================================================
+
+class TestPlanHandleGuardStatus:
+    """Tests for guard status integration in PlanHandle (v0.10+)."""
+    
+    def test_guard_status_default_all_satisfied(self):
+        """PlanHandle should default to ALL_SATISFIED guard status."""
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        assert ph.guard_status == GuardStatus.ALL_SATISFIED
+    
+    def test_guard_status_custom_value(self):
+        """PlanHandle should accept custom guard_status."""
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        # Create new PlanHandle with different guard status
+        ph_modified = PlanHandle(
+            score_fingerprint=ph.score_fingerprint,
+            runtime_target=ph.runtime_target,
+            source_adapter=ph.source_adapter,
+            func_registry=ph.func_registry,
+            guard_status=GuardStatus.PARTIAL_FAILED,
+        )
+        assert ph_modified.guard_status == GuardStatus.PARTIAL_FAILED
+    
+    def test_critical_guards_empty_by_default(self):
+        """critical_guards should be empty tuple by default."""
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        assert ph.critical_guards == ()
+    
+    def test_critical_guards_with_values(self):
+        """critical_guards should accept GuardCondition instances."""
+        from sonata.guard import ShapeAssumption
+        
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        
+        # Add critical guards
+        critical = (
+            ShapeAssumption(symbol="batch_size", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ShapeAssumption(symbol="seq_len", dims=(128,), severity=GUARD_SEVERITY_SOFT),
+        )
+        ph_modified = PlanHandle(
+            score_fingerprint=ph.score_fingerprint,
+            runtime_target=ph.runtime_target,
+            source_adapter=ph.source_adapter,
+            func_registry=ph.func_registry,
+            critical_guards=critical,
+        )
+        assert len(ph_modified.critical_guards) == 2
+        assert ph_modified.critical_guards[0].symbol == "batch_size"
+    
+    def test_guard_status_in_metadata(self):
+        """guard_status should be included in metadata dict."""
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        
+        d = plan_handle_to_dict(ph)
+        assert "guard_status" in d
+        assert d["guard_status"] == "all_satisfied"
+    
+    def test_guard_evaluator_integration(self):
+        """Integration test: use GuardEvaluator to update PlanHandle status."""
+        from sonata.guard import GuardEvaluator
+        from sonata.plan_handle import GuardStatus
+        
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+            shape_assumptions=(
+                ShapeAssumption(symbol="batch_size", dims=(32,), severity=GUARD_SEVERITY_HARD),
+                ShapeAssumption(symbol="seq_len", dims=(128,), severity=GUARD_SEVERITY_SOFT),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        
+        evaluator = GuardEvaluator()
+        
+        # All satisfied case
+        runtime_values = {"batch_size": [32], "seq_len": [128]}
+        all_satisfied, results = evaluator.evaluate_all(
+            score.shape_assumptions, runtime_values
+        )
+        
+        if all_satisfied:
+            ph = PlanHandle(
+                score_fingerprint=ph.score_fingerprint,
+                runtime_target=ph.runtime_target,
+                source_adapter=ph.source_adapter,
+                func_registry=ph.func_registry,
+                guard_status=GuardStatus.ALL_SATISFIED,
+                critical_guards=score.shape_assumptions,
+            )
+            assert ph.guard_status == GuardStatus.ALL_SATISFIED
+        
+        # Partial failure case
+        runtime_values = {"batch_size": [32], "seq_len": [256]}  # seq_len changed
+        all_satisfied, results = evaluator.evaluate_all(
+            score.shape_assumptions, runtime_values
+        )
+        
+        if not all_satisfied:
+            # Check if any hard guard failed
+            has_hard_failure = any(
+                not satisfied and guard.severity.requires_replan
+                for guard, satisfied, _ in results
+            )
+            
+            if has_hard_failure:
+                new_status = GuardStatus.ALL_FAILED
+            else:
+                new_status = GuardStatus.PARTIAL_FAILED
+            
+            ph = PlanHandle(
+                score_fingerprint=ph.score_fingerprint,
+                runtime_target=ph.runtime_target,
+                source_adapter=ph.source_adapter,
+                func_registry=ph.func_registry,
+                guard_status=new_status,
+                critical_guards=score.shape_assumptions,
+            )
+            assert ph.guard_status == new_status

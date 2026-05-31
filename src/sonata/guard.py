@@ -55,7 +55,7 @@ for detailed design decisions and trade-offs.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 
 @dataclass(frozen=True)
@@ -156,7 +156,7 @@ class GuardCondition(ABC):
         """
         return {
             "symbol": self.symbol,
-            "severity": self.severity,
+            "severity": self.severity.value,  # Return string value, not object
         }
     
     @classmethod
@@ -400,7 +400,7 @@ class GuardInvalidator:
             InvalidateAction indicating required recovery strategy
         """
         # Use severity-based policy
-        if guard.severity.requires_replan():
+        if guard.severity.requires_replan:  # property, not method
             return InvalidateAction.REPLAN
         else:
             return InvalidateAction.INVALIDATE_HANDLE
@@ -423,11 +423,127 @@ class GuardInvalidator:
         
         for guard, satisfied, action in results:
             if not satisfied:
-                if guard.severity.requires_replan():
+                if guard.severity.requires_replan:  # property, not method
                     has_hard_violation = True
                     break
         
         return InvalidateAction.REPLAN if has_hard_violation else InvalidateAction.INVALIDATE_HANDLE
+
+
+# ============================================================================
+# Phase 3: Over-guarding Mitigation (C1-C5)
+# ============================================================================
+
+class GuardSelector(ABC):
+    """Selects a subset of guards to minimize over-guarding.
+    
+    Over-guarding occurs when too many guard conditions make fingerprints
+    overly fragile (e.g., 100 shape assumptions for a 100-parameter graph).
+    This interface allows selecting the most important Top-K guards.
+    
+    Usage:
+        selector = EntryParamGuardSelector(top_k=10)
+        critical_guards = selector.select(guards, runtime_info)
+    """
+    
+    @abstractmethod
+    def select(
+        self, 
+        guards: Iterable[GuardCondition],
+        runtime_info: dict[str, Any] | None = None
+    ) -> list[GuardCondition]:
+        """Select the most important guards from a set.
+        
+        Args:
+            guards: All available guard conditions
+            runtime_info: Optional runtime context (e.g., call frequency, 
+                parameter usage patterns)
+        
+        Returns:
+            Subset of guards deemed most important (Top-K)
+        """
+        pass
+
+
+@dataclass(frozen=True)
+class EntryParamGuardSelector(GuardSelector):
+    """Default strategy: prioritize entry function parameters.
+    
+    Rationale: Entry function parameters (graph inputs) are more likely
+    to vary across invocations than intermediate tensors. Prioritizing
+    them provides better cache hit rates while maintaining safety.
+    
+    Attributes:
+        top_k: Maximum number of guards to select. If None, select all.
+        priority_symbols: Optional list of symbol names to prioritize.
+            These will be selected before others.
+    
+    Usage:
+        selector = EntryParamGuardSelector(top_k=10, priority_symbols=["batch_size", "seq_len"])
+        critical_guards = selector.select(all_guards)
+    """
+    
+    top_k: int | None = None
+    priority_symbols: tuple[str, ...] = field(default_factory=tuple)
+    
+    def select(
+        self, 
+        guards: Iterable[GuardCondition],
+        runtime_info: dict[str, Any] | None = None
+    ) -> list[GuardCondition]:
+        """Select guards by priority order: entry params → others.
+        
+        Args:
+            guards: All available guard conditions
+            runtime_info: Ignored in current implementation (reserved for future)
+        
+        Returns:
+            Top-K guards based on priority
+        """
+        guards_list = list(guards)
+        
+        # First, select priority symbols
+        selected = [g for g in guards_list if g.symbol in self.priority_symbols]
+        
+        # Then, add remaining guards in original order
+        remaining = [g for g in guards_list if g.symbol not in self.priority_symbols]
+        selected.extend(remaining)
+        
+        # Apply top-k limit
+        if self.top_k is not None and len(selected) > self.top_k:
+            selected = selected[:self.top_k]
+        
+        return selected
+
+
+def check_guard_density(
+    guards: Iterable[GuardCondition],
+    warning_threshold: int = 50,
+    logger: Optional[callable] = None
+) -> tuple[bool, int]:
+    """Check if guard density exceeds warning threshold.
+    
+    Used to detect potential over-guarding scenarios.
+    
+    Args:
+        guards: All guard conditions
+        warning_threshold: Number above which to emit warning (default 50)
+        logger: Optional logging function(warning_threshold, message)
+    
+    Returns:
+        Tuple of (exceeds_threshold: bool, count: int)
+    """
+    count = sum(1 for _ in guards)
+    exceeds = count > warning_threshold
+    
+    if exceeds and logger:
+        logger(
+            warning_threshold,
+            f"Guard density {count} exceeds threshold {warning_threshold}. "
+            "Consider using GuardSelector to reduce over-guarding."
+        )
+    
+    return exceeds, count
 
 
 __all__ = [
@@ -438,4 +554,8 @@ __all__ = [
     "InvalidateAction",
     "GuardEvaluator",
     "GuardInvalidator",
+    "GuardSelector",
+    "EntryParamGuardSelector",
+    "check_guard_density",
+    "GuardStatus",  # Export from plan_handle module
 ]

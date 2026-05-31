@@ -56,6 +56,11 @@ def plan_handle_to_dict(plan_handle: "PlanHandle") -> dict[str, Any]:
             for b in plan_handle.arg_bindings
         ],
         "metadata": _json_like(plan_handle.metadata),
+        # Phase 4: Guard condition integration
+        "guard_status": plan_handle.guard_status.value,
+        "critical_guards": [
+            _json_like(guard.to_dict()) for guard in plan_handle.critical_guards
+        ],
     }
 
 

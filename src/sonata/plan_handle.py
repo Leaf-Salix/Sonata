@@ -15,9 +15,27 @@ Score to a specific runtime target, adapter stage, and function registry.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from .score import RuntimeTarget, Score
+
+
+class GuardStatus(Enum):
+    """Current guard evaluation status for a PlanHandle.
+    
+    Attributes:
+        ALL_SATISFIED: All guard conditions are currently satisfied.
+            The plan handle is valid and can be used.
+        PARTIAL_FAILED: Some guards failed but not critical ones.
+            May still be usable with soft invalidation strategy.
+        ALL_FAILED: Critical guards failed. Plan handle must be invalidated
+            and replan triggered from Score.
+    """
+    
+    ALL_SATISFIED = "all_satisfied"
+    PARTIAL_FAILED = "partial_failed"
+    ALL_FAILED = "all_failed"
 
 
 PLAN_HANDLE_SCHEMA_VERSION = 1
@@ -116,6 +134,18 @@ class PlanHandle:
     Bridges a Score (computation identity) to a specific runtime target,
     adapter stage, and function registry. PlanHandle is the primary carrier
     for runtime-specific metadata in v0.2+.
+    
+    Attributes:
+        score_fingerprint: Canonical fingerprint of the computation (Score).
+        runtime_target: Target runtime configuration (e.g., host_build_graph).
+        source_adapter: Adapter that produced this PlanHandle.
+        runtime_contract_version: Version of the runtime contract.
+        func_registry: Function name to runtime ID mapping.
+        arg_bindings: Runtime argument bindings for tasks.
+        schema_version: PlanHandle schema version.
+        metadata: Additional metadata dictionary.
+        guard_status: Current evaluation status of guard conditions.
+        critical_guards: Subset of guards deemed critical for fingerprinting.
     """
 
     score_fingerprint: str
@@ -126,6 +156,9 @@ class PlanHandle:
     arg_bindings: tuple[RuntimeArgBinding, ...] = ()
     schema_version: int = PLAN_HANDLE_SCHEMA_VERSION
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Phase 4: Guard condition integration
+    guard_status: GuardStatus = GuardStatus.ALL_SATISFIED
+    critical_guards: tuple[Any, ...] = field(default_factory=tuple)  # GuardCondition instances
 
     @classmethod
     def from_score(
@@ -158,4 +191,5 @@ __all__ = [
     "PlanHandle",
     "RUNTIME_CONTRACT_VERSION",
     "RuntimeArgBinding",
+    "GuardStatus",
 ]
