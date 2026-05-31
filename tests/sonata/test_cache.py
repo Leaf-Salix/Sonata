@@ -12,7 +12,7 @@ from sonata.cache import (
     ScoreCache,
     cached_score,
 )
-from sonata.guard import GuardSeverity
+from sonata.guard import GuardSeverity, GUARD_SEVERITY_HARD, GUARD_SEVERITY_SOFT, GUARD_SEVERITY_HARD
 from sonata.plan_handle import PlanHandle
 from sonata.score import Dependency, RuntimeTarget, Score, ShapeAssumption, Task
 from sonata.serialization import score_fingerprint
@@ -27,7 +27,7 @@ def _make_score(name: str = "test_graph") -> Score:
             Task(task_id=1, func_id=1, core_type="aiv", name="func_b"),
         ),
         dependencies=(Dependency(producer=0, consumer=1),),
-        shape_assumptions=(ShapeAssumption(symbol="N", dims=(128, 64), severity=GuardSeverity.HARD),),
+        shape_assumptions=(ShapeAssumption(symbol="N", dims=(128, 64), severity=GUARD_SEVERITY_HARD),),
     )
 
 

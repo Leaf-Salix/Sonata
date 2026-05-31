@@ -222,8 +222,9 @@ class ShapeAssumption(GuardCondition):
         >>> guard.evaluate({"batch_size": 64})  # False (dims changed)
     """
     
+    symbol: str
     dims: tuple[int, ...] = field(default_factory=tuple)
-    severity: GuardSeverity = GuardSeverity.HARD
+    severity: GuardSeverity = GUARD_SEVERITY_HARD
     
     def evaluate(self, runtime_values: dict[str, Any]) -> bool:
         """Check if runtime tensor shape matches assumed shape.

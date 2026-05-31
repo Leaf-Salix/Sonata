@@ -15,6 +15,7 @@ from sonata import (
     score_to_dict,
     score_to_json,
 )
+from sonata.guard import GUARD_SEVERITY_HARD
 
 
 def test_score_to_dict_emits_stable_json_like_structure() -> None:
@@ -47,7 +48,7 @@ def test_score_to_dict_emits_stable_json_like_structure() -> None:
     assert "fingerprint_version" not in data
     assert data["runtime_target"]["aicpu_thread_num"] is None
     assert data["tasks"][0]["arg_storage_keys"] == ["param:x", "alloc:out", None]
-    assert data["shape_assumptions"] == [{"symbol": "x", "dims": [64, 32]}]
+    assert data["shape_assumptions"] == [{"symbol": "x", "dims": [64, 32], "severity": "hard"}]
     assert data["metadata"] == {"nodep_args": [{"arg": "x", "task_id": 0}]}
 
 
@@ -83,7 +84,7 @@ def test_score_to_json_matches_v1_golden_schema() -> None:
                 name="kernel.add",
             ),
         ),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16,), severity="hard"),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16,), severity=GUARD_SEVERITY_HARD),),
         metadata={"dependency_policy": "sequential_v0"},
     )
 
@@ -107,6 +108,7 @@ def test_score_to_json_matches_v1_golden_schema() -> None:
       "dims": [
         16
       ],
+      "severity": "hard",
       "symbol": "x"
     }
   ],

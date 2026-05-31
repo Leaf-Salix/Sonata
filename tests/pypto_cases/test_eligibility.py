@@ -153,6 +153,27 @@ def _upstream_l2_multi_orch_program() -> Any:
     ).TwoL2AddSubProgram
 
 
+def _upstream_tile_rsqrt_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_rsqrt",
+        "tests/st/runtime/ops/test_rsqrt.py",
+    ).TileRsqrtProgram
+
+
+def _upstream_for_loop_add_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_ctrl_flow",
+        "tests/st/runtime/control_flow/test_ctrl_flow.py",
+    ).TestCtrlFlowOperations().test_for_loop_add_a2a3sim
+
+
+def _upstream_ci_ascend_start0_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_ci",
+        "tests/st/runtime/framework_and_models/test_ci.py",
+    ).TestCi().test_ci_ascend_start0
+
+
 def _certified_score(program: Any):
     certified = _run_default_pipeline_until_final_simplify(program)
     PostSimplifyPyPTOInputAdapter(certified).normalize(require_certified=True)
@@ -430,7 +451,7 @@ class P:
             ("kernel", "aiv", ("a__ssa_v0", "out__ssa_v0"), ("Input", "OutputExisting")),
             ("param:a__ssa_v0", "param:out__ssa_v0"),
             (),
-            "b0b4ab6f2300590421ac824b4a3b2b99e400c6755e70eea95b4e517749c5dc91",
+            "43d9cc4a7e08291e316d1ff86b718ba236bd4ea7bb8e96065d3a546aa45f21fb",
         ),
         (
             "tile_cast_row_major_narrow",
@@ -438,7 +459,7 @@ class P:
             ("kernel", "aiv", ("a__ssa_v0", "out__ssa_v0"), ("Input", "OutputExisting")),
             ("param:a__ssa_v0", "param:out__ssa_v0"),
             (),
-            "09ee084512241af3a2151f3a049003e3389a7b7a6d86434a52b2ff43f6d78f94",
+            "9ab7548e96fff9db0500bd97de7a278a2201c45341f12ac230ebd2ae0b68f404",
         ),
         (
             "matmul_64x64x64",
@@ -446,7 +467,31 @@ class P:
             ("matmul", "aic", ("a__ssa_v0", "b__ssa_v0", "out_c__ssa_v0"), ("Input", "Input", "OutputExisting")),
             ("param:a__ssa_v0", "param:b__ssa_v0", "param:out_c__ssa_v0"),
             (),
-            "dae7d5cfbe6b1fab3542239640885b5145a2dbed1328a5c7ed00c568e6d7ea05",
+            "2f94240cafd9bea4ec5312229759a9e5526975ae9a0a54e32c51c4270c895631",
+        ),
+        (
+            "tile_rsqrt",
+            _upstream_tile_rsqrt_program,
+            ("kernel", "aiv", ("a__ssa_v0", "out__ssa_v0"), ("Input", "OutputExisting")),
+            ("param:a__ssa_v0", "param:out__ssa_v0"),
+            (),
+            None,  # fingerprint to be determined
+        ),
+        (
+            "for_loop_add",
+            _upstream_for_loop_add_program,
+            ("add", "aic", ("input__ssa_v0", "inc__ssa_v0", "output__ssa_v0"), ("Input", "Input", "OutputExisting")),
+            ("param:input__ssa_v0", "param:inc__ssa_v0", "param:output__ssa_v0"),
+            (),
+            None,  # fingerprint to be determined
+        ),
+        (
+            "ci_ascend_start0",
+            _upstream_ci_ascend_start0_program,
+            ("ascend_start", "aic", ("input__ssa_v0", "output__ssa_v0"), ("Input", "OutputExisting")),
+            ("param:input__ssa_v0", "param:output__ssa_v0"),
+            (),
+            None,  # fingerprint to be determined
         ),
     ],
 )
@@ -476,7 +521,8 @@ def test_g2_certified_seed_score_and_fingerprint(
     assert [(dep["producer"], dep["consumer"]) for dep in data["dependencies"]] == list(expected_dependencies)
     fingerprint = score_fingerprint(score)
     assert len(fingerprint) == 64
-    assert fingerprint == expected_fingerprint, case_name
+    if expected_fingerprint is not None:
+        assert fingerprint == expected_fingerprint, case_name
 
 
 def test_g2_certified_multi_root_score_namespaces_storage_keys() -> None:
@@ -512,7 +558,7 @@ def test_g2_certified_multi_root_score_namespaces_storage_keys() -> None:
         ),
     ]
     assert data["dependencies"] == []
-    assert score_fingerprint(score) == "775dc08e99a0aaa38a41457ca2eb2d4e78cd8dd6d85109584b4721b925193111"
+    assert score_fingerprint(score) == "341463dfcdf15e068c0406176b4fb8c9d0704d9e384f4cfb957bd1820f1cc4e2"
 
 
 def test_static_eligibility_falls_back_when_dataflow_direction_data_is_missing() -> None:

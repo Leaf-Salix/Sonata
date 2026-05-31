@@ -99,6 +99,7 @@ def score_to_dict(score: Score) -> dict[str, Any]:
             {
                 "symbol": shape.symbol,
                 "dims": list(shape.dims),
+                "severity": str(shape.severity),
             }
             for shape in score.shape_assumptions
         ],

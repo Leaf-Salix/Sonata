@@ -180,9 +180,14 @@ def _shape_assumptions_from_list(items: Any) -> tuple[ShapeAssumption, ...]:
         dims = item.get("dims", ())
         if not isinstance(dims, (list, tuple)):
             raise DeserializationError(f"shape_assumptions[{i}].dims must be a list")
+        # Get severity with default to "hard" for backward compatibility
+        severity_str = item.get("severity", "hard")
+        from .guard import GuardSeverity
+        severity = GuardSeverity(severity_str)
         result.append(ShapeAssumption(
             symbol=_require_str(item, "symbol", f"shape_assumptions[{i}]"),
             dims=tuple(dims),
+            severity=severity,
         ))
     return tuple(result)
 

@@ -13,6 +13,7 @@ from sonata.deserialization import (
     score_from_dict,
     score_from_json,
 )
+from sonata.guard import GUARD_SEVERITY_HARD
 from sonata.plan_handle import PlanHandle
 from sonata.score import Dependency, EligibilityResult, FallbackReason, RuntimeTarget, Score, ShapeAssumption, Task
 from sonata.serialization import (
@@ -46,8 +47,8 @@ def _make_score() -> Score:
             Dependency(producer=0, consumer=1, kind="storage"),
         ),
         shape_assumptions=(
-            ShapeAssumption(symbol="N", dims=(128, 64), severity="hard"),
-            ShapeAssumption(symbol="M", dims=(32,), severity="hard"),
+            ShapeAssumption(symbol="N", dims=(128, 64), severity=GUARD_SEVERITY_HARD),
+            ShapeAssumption(symbol="M", dims=(32,), severity=GUARD_SEVERITY_HARD),
         ),
         metadata={"extractor": "structural_v0", "dependency_policy": "dataflow_v0"},
     )
