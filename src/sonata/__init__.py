@@ -17,6 +17,7 @@ from .alias import (
     AliasRelation,
     analyze_aliases,
 )
+from .cache import CACHE_SCHEMA_VERSION, CacheEntry, ScoreCache, cached_score
 from .dependencies import (
     DEPENDENCY_POLICY_DATAFLOW_V0,
     DEPENDENCY_POLICY_SEQUENTIAL_V0,
@@ -86,6 +87,8 @@ __all__ = [
     "AliasRelation",
     "BufferAllocation",
     "BufferLifetime",
+    "CACHE_SCHEMA_VERSION",
+    "CacheEntry",
     "DEPENDENCY_POLICY_DATAFLOW_V0",
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
     "DEFAULT_RUNTIME_TARGET",
@@ -112,6 +115,7 @@ __all__ = [
     "STORAGE_COVERAGE_REJECT_THRESHOLD",
     "STORAGE_COVERAGE_WARN_THRESHOLD",
     "Score",
+    "ScoreCache",
     "ShapeAssumption",
     "StorageConflict",
     "Task",
@@ -125,6 +129,7 @@ __all__ = [
     "build_mixed_dependencies",
     "build_ordering_dependencies",
     "build_sequential_dependencies",
+    "cached_score",
     "check_static_eligibility",
     "check_region_eligibility",
     "code_for_reason",
