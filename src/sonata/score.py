@@ -58,10 +58,18 @@ class Task:
 
 @dataclass(frozen=True)
 class Dependency:
-    """Explicit edge between two precomputed tasks."""
+    """Explicit edge between two precomputed tasks.
+
+    ``kind`` classifies the dependency semantics:
+    - ``"data"``: RAW (read-after-write) data flow
+    - ``"storage"``: WAW (write-after-write) storage conflict
+    - ``"war"``: WAR (write-after-read) anti-dependency
+    - ``"ordering"``: pure ordering constraint, no data flow
+    """
 
     producer: int
     consumer: int
+    kind: str = "data"
 
 
 @dataclass(frozen=True)

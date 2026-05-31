@@ -9,17 +9,29 @@
 
 """Experimental static execution planning helpers for PyPTO Sonata."""
 
+from .alias import (
+    ALIAS_ALIAS,
+    ALIAS_DISJOINT,
+    ALIAS_INPLACE,
+    ALIAS_VIEW,
+    AliasRelation,
+    analyze_aliases,
+)
 from .dependencies import (
     DEPENDENCY_POLICY_DATAFLOW_V0,
     DEPENDENCY_POLICY_SEQUENTIAL_V0,
     build_dataflow_dependencies,
     build_dependencies,
+    build_mixed_dependencies,
+    build_ordering_dependencies,
     build_sequential_dependencies,
     dataflow_dependency_fallback_code,
     supports_dataflow_dependencies,
 )
 from .eligibility import check_static_eligibility
 from .fallback import FallbackCode, code_for_reason
+from .liveness import BufferLifetime, StorageConflict, compute_lifetimes, find_conflicts
+from .memory_plan import BufferAllocation, MemoryPlan, plan_memory
 from .plan_handle import (
     FuncRegistry,
     FuncRegistryEntry,
@@ -59,6 +71,13 @@ from .serialization import (
 from .storage import STORAGE_COVERAGE_REJECT_THRESHOLD, STORAGE_COVERAGE_WARN_THRESHOLD
 
 __all__ = [
+    "ALIAS_ALIAS",
+    "ALIAS_DISJOINT",
+    "ALIAS_INPLACE",
+    "ALIAS_VIEW",
+    "AliasRelation",
+    "BufferAllocation",
+    "BufferLifetime",
     "DEPENDENCY_POLICY_DATAFLOW_V0",
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
     "DEFAULT_RUNTIME_TARGET",
@@ -74,6 +93,7 @@ __all__ = [
     "HostBuildGraphPlan",
     "HostBuildGraphRuntimeAdapter",
     "HostBuildGraphTask",
+    "MemoryPlan",
     "PLAN_HANDLE_SCHEMA_VERSION",
     "PlanHandle",
     "RUNTIME_CONTRACT_VERSION",
@@ -85,16 +105,23 @@ __all__ = [
     "STORAGE_COVERAGE_WARN_THRESHOLD",
     "Score",
     "ShapeAssumption",
+    "StorageConflict",
     "Task",
+    "analyze_aliases",
     "build_dataflow_dependencies",
     "build_dependencies",
+    "build_mixed_dependencies",
+    "build_ordering_dependencies",
     "build_sequential_dependencies",
     "check_static_eligibility",
     "code_for_reason",
+    "compute_lifetimes",
     "dataflow_dependency_fallback_code",
     "eligibility_result_to_dict",
+    "find_conflicts",
     "plan_handle_to_dict",
     "plan_handle_to_json",
+    "plan_memory",
     "score_fingerprint",
     "score_to_dict",
     "score_to_json",
