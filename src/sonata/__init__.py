@@ -32,6 +32,14 @@ from .eligibility import check_static_eligibility
 from .fallback import FallbackCode, code_for_reason
 from .liveness import BufferLifetime, StorageConflict, compute_lifetimes, find_conflicts
 from .memory_plan import BufferAllocation, MemoryPlan, plan_memory
+from .regions import (
+    REGION_DYNAMIC,
+    REGION_STATIC,
+    Region,
+    RegionMap,
+    check_region_eligibility,
+    extract_regions,
+)
 from .plan_handle import (
     FuncRegistry,
     FuncRegistryEntry,
@@ -107,6 +115,10 @@ __all__ = [
     "ShapeAssumption",
     "StorageConflict",
     "Task",
+    "REGION_DYNAMIC",
+    "REGION_STATIC",
+    "Region",
+    "RegionMap",
     "analyze_aliases",
     "build_dataflow_dependencies",
     "build_dependencies",
@@ -114,10 +126,12 @@ __all__ = [
     "build_ordering_dependencies",
     "build_sequential_dependencies",
     "check_static_eligibility",
+    "check_region_eligibility",
     "code_for_reason",
     "compute_lifetimes",
     "dataflow_dependency_fallback_code",
     "eligibility_result_to_dict",
+    "extract_regions",
     "find_conflicts",
     "plan_handle_to_dict",
     "plan_handle_to_json",
