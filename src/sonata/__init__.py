@@ -20,6 +20,21 @@ from .dependencies import (
 )
 from .eligibility import check_static_eligibility
 from .fallback import FallbackCode, code_for_reason
+from .plan_handle import (
+    FuncRegistry,
+    FuncRegistryEntry,
+    PLAN_HANDLE_SCHEMA_VERSION,
+    PlanHandle,
+    RUNTIME_CONTRACT_VERSION,
+    RuntimeArgBinding,
+)
+from .runtime_adapter import (
+    HostBuildGraphEdge,
+    HostBuildGraphPlan,
+    HostBuildGraphRuntimeAdapter,
+    HostBuildGraphTask,
+    RuntimeAdapterResult,
+)
 from .score import (
     DEFAULT_RUNTIME_TARGET,
     Dependency,
@@ -35,6 +50,8 @@ from .serialization import (
     FINGERPRINT_VERSION,
     SCORE_SCHEMA_VERSION,
     eligibility_result_to_dict,
+    plan_handle_to_dict,
+    plan_handle_to_json,
     score_fingerprint,
     score_to_dict,
     score_to_json,
@@ -51,6 +68,17 @@ __all__ = [
     "FINGERPRINT_VERSION",
     "FallbackCode",
     "FallbackReason",
+    "FuncRegistry",
+    "FuncRegistryEntry",
+    "HostBuildGraphEdge",
+    "HostBuildGraphPlan",
+    "HostBuildGraphRuntimeAdapter",
+    "HostBuildGraphTask",
+    "PLAN_HANDLE_SCHEMA_VERSION",
+    "PlanHandle",
+    "RUNTIME_CONTRACT_VERSION",
+    "RuntimeAdapterResult",
+    "RuntimeArgBinding",
     "RuntimeTarget",
     "SCORE_SCHEMA_VERSION",
     "STORAGE_COVERAGE_REJECT_THRESHOLD",
@@ -65,6 +93,8 @@ __all__ = [
     "code_for_reason",
     "dataflow_dependency_fallback_code",
     "eligibility_result_to_dict",
+    "plan_handle_to_dict",
+    "plan_handle_to_json",
     "score_fingerprint",
     "score_to_dict",
     "score_to_json",

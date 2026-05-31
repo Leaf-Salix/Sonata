@@ -32,6 +32,13 @@ class FallbackCode(str, Enum):
     # Reserved for D-line (dataflow fallback)
     DATAFLOW_DIRECTIONS_UNAVAILABLE = "dataflow_directions_unavailable"
     DATAFLOW_DIRECTIONS_INCOMPLETE = "dataflow_directions_incomplete"
+    # Reserved for v0.2 runtime adapter
+    RUNTIME_ADAPTER_FINGERPRINT_MISMATCH = "runtime_adapter_fingerprint_mismatch"
+    RUNTIME_ADAPTER_CONTRACT_VERSION_MISMATCH = "runtime_adapter_contract_version_mismatch"
+    RUNTIME_ADAPTER_FUNC_NOT_REGISTERED = "runtime_adapter_func_not_registered"
+    RUNTIME_ADAPTER_FUNC_UNREFERENCED = "runtime_adapter_func_unreferenced"
+    RUNTIME_ADAPTER_BINDING_INCOMPLETE = "runtime_adapter_binding_incomplete"
+    RUNTIME_ADAPTER_INVALID_EDGE = "runtime_adapter_invalid_edge"
 
 
 def code_for_reason(message: str) -> FallbackCode | None:
