@@ -9,6 +9,15 @@
 
 """Experimental static execution planning helpers for PyPTO Sonata."""
 
+from .adapters import (
+    AdapterCapability,
+    AdapterDescriptor,
+    AdapterRegistry,
+    POST_SIMPLIFY,
+    POST_SIMPLIFY_WITH_SCOPE,
+    PRE_RUNTIME,
+    default_registry,
+)
 from .alias import (
     ALIAS_ALIAS,
     ALIAS_DISJOINT,
@@ -89,6 +98,9 @@ from .serialization import (
 from .storage import STORAGE_COVERAGE_REJECT_THRESHOLD, STORAGE_COVERAGE_WARN_THRESHOLD
 
 __all__ = [
+    "AdapterCapability",
+    "AdapterDescriptor",
+    "AdapterRegistry",
     "ALIAS_ALIAS",
     "ALIAS_DISJOINT",
     "ALIAS_INPLACE",
@@ -117,6 +129,9 @@ __all__ = [
     "MemoryPlan",
     "PLAN_HANDLE_SCHEMA_VERSION",
     "PlanHandle",
+    "POST_SIMPLIFY",
+    "POST_SIMPLIFY_WITH_SCOPE",
+    "PRE_RUNTIME",
     "RUNTIME_CONTRACT_VERSION",
     "RuntimeAdapterResult",
     "RuntimeArgBinding",
@@ -145,6 +160,7 @@ __all__ = [
     "code_for_reason",
     "compute_lifetimes",
     "dataflow_dependency_fallback_code",
+    "default_registry",
     "eligibility_result_from_dict",
     "eligibility_result_from_json",
     "eligibility_result_to_dict",
