@@ -24,6 +24,7 @@ class FallbackCode(str, Enum):
     UNSUPPORTED_RUNTIME_SCOPE = "unsupported_runtime_scope"
     TENSOR_READ_NOT_SUPPORTED = "tensor_read_not_supported"
     ENTRY_FUNCTION_NOT_ORCHESTRATION = "entry_function_not_orchestration"
+    UNSUPPORTED_PYPTO_ADAPTER_SCOPE = "unsupported_pypto_adapter_scope"
     SCORE_VALIDATION_FAILED = "score_validation_failed"
     # Reserved for C-line (storage coverage)
     STORAGE_COVERAGE_BELOW_THRESHOLD = "storage_coverage_below_threshold"

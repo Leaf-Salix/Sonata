@@ -25,6 +25,7 @@ from .dependencies import (
     dataflow_dependency_fallback_code,
 )
 from .fallback import FallbackCode
+from .pypto_adapter import PostSimplifyPyPTOInputAdapter
 from .score import (
     EligibilityResult,
     FallbackReason,
@@ -43,8 +44,6 @@ from .storage import (
 )
 
 _CONTROL_FLOW_KINDS = {"ForStmt", "IfStmt", "WhileStmt"}
-_UNSUPPORTED_KINDS = {"RuntimeScopeStmt"}
-_BUILTIN_OP_PREFIXES = ("tile.", "tensor.", "system.", "array.")
 
 
 def check_static_eligibility(
@@ -56,6 +55,7 @@ def check_static_eligibility(
 ) -> EligibilityResult:
     """Return whether ``node`` is eligible for an initial Sonata static score."""
     reasons: list[FallbackReason] = []
+    adapter = PostSimplifyPyPTOInputAdapter(node, entry_name=entry_name)
     root_kind = _kind(node)
 
     if root_kind not in {"Function", "Program"}:
@@ -66,7 +66,7 @@ def check_static_eligibility(
             )
         )
 
-    for child in _walk(node):
+    for child in adapter.walk(node):
         child_kind = _kind(child)
         if child_kind in _CONTROL_FLOW_KINDS:
             reasons.append(
@@ -75,11 +75,18 @@ def check_static_eligibility(
                     f"{child_kind} is not supported by initial Sonata eligibility",
                 )
             )
-        elif child_kind in _UNSUPPORTED_KINDS:
+        elif child_kind == "RuntimeScopeStmt":
             reasons.append(
                 _fallback_reason(
                     FallbackCode.UNSUPPORTED_RUNTIME_SCOPE,
                     f"{child_kind} is not supported by initial Sonata eligibility",
+                )
+            )
+        elif child_kind in adapter.unsupported_kinds:
+            reasons.append(
+                _fallback_reason(
+                    FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                    f"{child_kind} is out of scope for Sonata v0.1 PyPTO adapter",
                 )
             )
         elif child_kind == "Call" and _call_name(child) == "tensor.read":
@@ -90,7 +97,7 @@ def check_static_eligibility(
                 )
             )
 
-    extraction_roots = _extraction_roots(node, entry_name)
+    extraction_roots = adapter.extraction_roots()
     if entry_name is not None and not extraction_roots:
         reasons.append(
             _fallback_reason(
@@ -98,12 +105,29 @@ def check_static_eligibility(
                 f"entry function is not an orchestration function: {entry_name}",
             )
         )
+    root_error = adapter.root_out_of_scope_error()
+    if root_error is not None:
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                root_error,
+            )
+        )
+    unsupported_call = adapter.has_unsupported_function_call()
+    if unsupported_call is not None:
+        reasons.append(
+            _fallback_reason(
+                FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE,
+                f"Group/Spmd callee is out of scope for Sonata v0.1: {unsupported_call}",
+            )
+        )
 
     if reasons:
         return EligibilityResult.reject(*_dedupe(reasons))
 
     name = str(getattr(node, "name", "sonata_score"))
-    tasks = _extract_tasks(extraction_roots, _function_core_types(node))
+    facts = adapter.normalize()
+    tasks = _tasks_from_facts(facts.functions)
     resolved_policy, fallback_code = _resolve_dependency_policy(tasks, dependency_policy)
     score = Score(
         name=name,
@@ -152,43 +176,10 @@ def _check_storage_coverage(result: EligibilityResult) -> EligibilityResult:
 
 def _walk(node: Any) -> Iterable[Any]:
     """Yield ``node`` and recursively walk common IR-like child fields."""
-    seen: dict[int, Any] = {}
-    stack = [node]
-    child_fields = (
-        "functions",
-        "body",
-        "then_body",
-        "else_body",
-        "branches",
-        "stmts",
-        "statements",
-        "seq",
-        "args",
-        "value",
-        "expr",
-        "condition",
-    )
-
-    while stack:
-        current = stack.pop()
-        if current is None or isinstance(current, (str, bytes, int, float, bool)):
-            continue
-        ident = id(current)
-        if ident in seen:
-            continue
-        seen[ident] = current
-        yield current
-
-        if isinstance(current, dict):
-            stack.extend(current.values())
-            continue
-        if isinstance(current, (list, tuple)):
-            stack.extend(reversed(current))
-            continue
-
-        for field in child_fields:
-            if hasattr(current, field):
-                stack.append(getattr(current, field))
+    # NOTE: kept as a local wrapper rather than calling adapter.walk() inline.
+    # If the adapter interface changes (different stage boundary, different
+    # normalization strategy), eligibility may need its own traversal again.
+    yield from PostSimplifyPyPTOInputAdapter.walk(node)
 
 
 def _kind(node: Any) -> str:
@@ -218,15 +209,16 @@ def _call_name(node: Any) -> str | None:
 
 
 def _is_builtin_call(call_name: str) -> bool:
-    return call_name.startswith(_BUILTIN_OP_PREFIXES)
+    return PostSimplifyPyPTOInputAdapter.is_builtin_call(call_name)
 
 
-def _extract_tasks(nodes: tuple[Any, ...], core_types: dict[str, str]) -> tuple[Task, ...]:
+def _tasks_from_facts(functions: tuple[Any, ...]) -> tuple[Task, ...]:
     tasks: list[Task] = []
     func_ids: dict[str, int] = {}
-    for node in nodes:
+    multiple_roots = len(functions) > 1
+    for root_index, function in enumerate(functions):
         storage_keys = collect_storage_keys(
-            node,
+            function.node,
             walk=_walk,
             kind=_kind,
             call_name=_call_name,
@@ -234,30 +226,38 @@ def _extract_tasks(nodes: tuple[Any, ...], core_types: dict[str, str]) -> tuple[
             arg_name=_arg_name,
             arg_directions=_arg_directions,
         )
-        call_outputs = collect_call_output_vars(node, walk=_walk, kind=_kind)
-        for child in _walk(node):
-            if _kind(child) != "Call":
-                continue
-            call_name = _call_name(child)
-            if call_name is None or _is_builtin_call(call_name):
-                continue
-            if call_name not in func_ids:
-                func_ids[call_name] = len(func_ids)
-            tasks.append(
-                Task(
-                    task_id=len(tasks),
-                    func_id=func_ids[call_name],
-                    core_type=core_types.get(call_name, "mixed"),
-                    args=tuple(_arg_name(arg) for arg in getattr(child, "args", ())),
-                    arg_directions=_arg_directions(child),
-                    arg_storage_keys=arg_storage_keys(child, storage_keys),
-                    name=call_name,
-                )
+        if multiple_roots:
+            storage_keys = _namespace_storage_keys(storage_keys, function.name, root_index)
+        call_outputs = collect_call_output_vars(function.node, walk=_walk, kind=_kind)
+        for call in function.calls:
+            if call.callee_name not in func_ids:
+                func_ids[call.callee_name] = len(func_ids)
+            task = Task(
+                task_id=len(tasks),
+                func_id=func_ids[call.callee_name],
+                core_type=call.core_type,
+                args=call.arg_names,
+                arg_directions=call.arg_directions,
+                arg_storage_keys=arg_storage_keys(call.node, storage_keys),
+                name=call.callee_name,
             )
-            output_var = call_outputs.get(id(child))
+            tasks.append(task)
+            output_var = call_outputs.get(id(call.node))
             if output_var is not None:
-                propagate_call_output_storage(output_var, child, storage_keys, arg_directions=_arg_directions)
+                propagate_call_output_storage(output_var, call.node, storage_keys, arg_directions=_arg_directions)
     return tuple(tasks)
+
+
+def _namespace_storage_keys(storage_keys: dict[int, str], root_name: str | None, root_index: int) -> dict[int, str]:
+    namespace = root_name or f"root{root_index}"
+    return {identity: _namespace_storage_key(key, namespace) for identity, key in storage_keys.items()}
+
+
+def _namespace_storage_key(key: str, namespace: str) -> str:
+    prefix, sep, rest = key.partition(":")
+    if not sep:
+        return f"{namespace}.{key}"
+    return f"{prefix}:{namespace}.{rest}"
 
 
 def _extract_shape_assumptions(nodes: tuple[Any, ...]) -> tuple[ShapeAssumption, ...]:
@@ -325,23 +325,6 @@ def _const_int_value(dim: Any) -> int | None:
     return None
 
 
-def _extraction_roots(node: Any, entry_name: str | None) -> tuple[Any, ...]:
-    functions = getattr(node, "functions", None)
-    if not isinstance(functions, dict):
-        if entry_name is not None and getattr(node, "name", None) != entry_name:
-            return ()
-        return (node,)
-
-    roots: list[Any] = []
-    for func in functions.values():
-        func_type = getattr(func, "func_type", None)
-        if getattr(func_type, "name", None) == "Orchestration" and (
-            entry_name is None or getattr(func, "name", None) == entry_name
-        ):
-            roots.append(func)
-    return tuple(roots)
-
-
 def _resolve_dependency_policy(
     tasks: tuple[Task, ...], requested_policy: str
 ) -> tuple[str, "FallbackCode | None"]:
@@ -350,29 +333,6 @@ def _resolve_dependency_policy(
         if code is not None:
             return DEPENDENCY_POLICY_SEQUENTIAL_V0, code
     return requested_policy, None
-
-
-def _function_core_types(node: Any) -> dict[str, str]:
-    functions = getattr(node, "functions", None)
-    if not isinstance(functions, dict):
-        return {}
-
-    core_types: dict[str, str] = {}
-    for func in functions.values():
-        name = getattr(func, "name", None)
-        if isinstance(name, str):
-            core_types[name] = _core_type_from_function(func)
-    return core_types
-
-
-def _core_type_from_function(func: Any) -> str:
-    func_type = getattr(func, "func_type", None)
-    func_type_name = getattr(func_type, "name", None)
-    if func_type_name == "AIC":
-        return "aic"
-    if func_type_name == "AIV":
-        return "aiv"
-    return "mixed"
 
 
 def _arg_name(node: Any) -> str:

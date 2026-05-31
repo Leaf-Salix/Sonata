@@ -8,13 +8,34 @@
 # -----------------------------------------------------------------------------------------------------------
 
 from dataclasses import dataclass
+import importlib.util
+from pathlib import Path
+import sys
 from typing import Any
 
 import pypto.language as pl
 import pytest
 from pypto import passes
+from pypto.backend import BackendType, is_backend_configured, set_backend_type
+from pypto.ir.pass_manager import OptimizationStrategy, PassManager
 from pypto.pypto_core import passes as _core_passes
-from sonata import DEPENDENCY_POLICY_DATAFLOW_V0, RuntimeTarget, check_static_eligibility
+from sonata import (
+    DEPENDENCY_POLICY_DATAFLOW_V0,
+    FallbackCode,
+    RuntimeTarget,
+    check_static_eligibility,
+    score_fingerprint,
+    score_to_dict,
+)
+from sonata.pypto_adapter import DEFAULT_CERTIFIED_DUMP, PostSimplifyPyPTOInputAdapter
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_UPSTREAM_PYPTO_ROOT = _REPO_ROOT / "upstream" / "pypto"
+_UPSTREAM_ST_ROOT = _UPSTREAM_PYPTO_ROOT / "tests" / "st"
+for _path in (_UPSTREAM_ST_ROOT, _UPSTREAM_PYPTO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.append(str(_path))
 
 
 @dataclass
@@ -60,6 +81,85 @@ class IfStmt:
 @dataclass
 class RuntimeScopeStmt:
     body: Any
+
+
+def _run_default_pipeline_until_final_simplify(program: Any) -> Any:
+    """Return the named certified dump: Simplify after CollectCommGroups."""
+    if not is_backend_configured():
+        set_backend_type(BackendType.Ascend910B)
+    with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+        manager = PassManager.get_strategy(OptimizationStrategy.Default)
+        current = program
+        after_collect_comm_groups = False
+        for pass_name, pass_obj in zip(manager.pass_names, manager.passes):
+            current = pass_obj(current)
+            if pass_name == "CollectCommGroups":
+                after_collect_comm_groups = True
+            elif after_collect_comm_groups and pass_name == "Simplify":
+                return current
+    raise AssertionError("default pipeline did not expose Simplify after CollectCommGroups")
+
+
+def _contains_kind(node: Any, kind: str) -> bool:
+    return any(PostSimplifyPyPTOInputAdapter.kind(child) == kind for child in PostSimplifyPyPTOInputAdapter.walk(node))
+
+
+def _load_upstream_st_module(module_name: str, relative_path: str) -> Any:
+    path = _UPSTREAM_PYPTO_ROOT / relative_path
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"could not load upstream ST module: {relative_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _upstream_tile_abs_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_tile_abs",
+        "tests/st/runtime/ops/test_abs.py",
+    ).TileAbsProgram
+
+
+def _upstream_tile_cast_row_major_narrow_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_tile_cast",
+        "tests/st/runtime/ops/test_cast.py",
+    ).TileCastRowMajorNarrowProgram
+
+
+def _upstream_matmul_64x64x64_program() -> Any:
+    module = _load_upstream_st_module(
+        "pypto_st_matmul",
+        "tests/st/runtime/ops/test_matmul.py",
+    )
+    # TestMatmul(m, k, n, platform) must match upstream PTOTestCase constructor.
+    # If the upstream signature changes, this will raise TypeError immediately
+    # rather than silently producing a wrong program.
+    try:
+        case = module.TestMatmul(m=64, k=64, n=64, platform="a2a3sim")
+    except TypeError as exc:
+        raise AssertionError(
+            f"upstream TestMatmul constructor signature changed: {exc}. "
+            "Update this G2 seed loader to match the new signature."
+        ) from exc
+    return case.get_program()
+
+
+def _upstream_l2_multi_orch_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_l2_multi_orch",
+        "tests/st/distributed/test_l2_multi_orch.py",
+    ).TwoL2AddSubProgram
+
+
+def _certified_score(program: Any):
+    certified = _run_default_pipeline_until_final_simplify(program)
+    PostSimplifyPyPTOInputAdapter(certified).normalize(require_certified=True)
+    result = check_static_eligibility(certified, dependency_policy=DEPENDENCY_POLICY_DATAFLOW_V0)
+    assert result.eligible, result.reasons
+    assert result.score is not None
+    return result.score
 
 
 def test_static_eligibility_accepts_simple_straight_line_function() -> None:
@@ -268,6 +368,147 @@ class P:
             "storage_key": result.score.tasks[0].arg_storage_keys[1],
         },
     )
+
+
+def test_certified_final_simplify_stage_exposes_adapter_contract() -> None:
+    program = pl.parse_program(
+        """
+@pl.program
+class P:
+    @pl.function(type=pl.FunctionType.InCore)
+    def kernel(
+        self,
+        x: pl.Tensor[[16, 16], pl.FP32],
+        out: pl.Out[pl.Tensor[[16, 16], pl.FP32]],
+    ) -> pl.Tensor[[16, 16], pl.FP32]:
+        return out
+
+    @pl.function(type=pl.FunctionType.Orchestration)
+    def main(self, x: pl.Tensor[[16, 16], pl.FP32]) -> pl.Tensor[[16, 16], pl.FP32]:
+        local: pl.Tensor[[16, 16], pl.FP32] = pl.create_tensor([16, 16], dtype=pl.FP32)
+        local = self.kernel(x, local)
+        return local
+"""
+    )
+
+    certified = _run_default_pipeline_until_final_simplify(program)
+    adapter = PostSimplifyPyPTOInputAdapter(certified)
+    facts = adapter.normalize(require_certified=True)
+
+    assert facts.certified_dump == DEFAULT_CERTIFIED_DUMP
+    assert len(facts.functions) == 1
+    function = facts.functions[0]
+    assert function.name == "main"
+    assert function.is_orchestration
+    assert len(function.calls) == 1
+    call = function.calls[0]
+    assert call.callee_name == "kernel"
+    assert call.arg_names == ("x__ssa_v0", "local__ssa_v0")
+    assert call.arg_directions == ("Input", "OutputExisting")
+    assert len(call.arg_directions) == len(call.args)
+    assert call.core_type == "aiv"
+    assert not _contains_kind(certified, "RuntimeScopeStmt")
+
+
+@pytest.mark.parametrize(
+    (
+        "case_name",
+        "program_factory",
+        "expected_task",
+        "expected_storage_keys",
+        "expected_dependencies",
+        "expected_fingerprint",
+    ),
+    [
+        (
+            "tile_abs",
+            _upstream_tile_abs_program,
+            ("kernel", "aiv", ("a__ssa_v0", "out__ssa_v0"), ("Input", "OutputExisting")),
+            ("param:a__ssa_v0", "param:out__ssa_v0"),
+            (),
+            "b0b4ab6f2300590421ac824b4a3b2b99e400c6755e70eea95b4e517749c5dc91",
+        ),
+        (
+            "tile_cast_row_major_narrow",
+            _upstream_tile_cast_row_major_narrow_program,
+            ("kernel", "aiv", ("a__ssa_v0", "out__ssa_v0"), ("Input", "OutputExisting")),
+            ("param:a__ssa_v0", "param:out__ssa_v0"),
+            (),
+            "09ee084512241af3a2151f3a049003e3389a7b7a6d86434a52b2ff43f6d78f94",
+        ),
+        (
+            "matmul_64x64x64",
+            _upstream_matmul_64x64x64_program,
+            ("matmul", "aic", ("a__ssa_v0", "b__ssa_v0", "out_c__ssa_v0"), ("Input", "Input", "OutputExisting")),
+            ("param:a__ssa_v0", "param:b__ssa_v0", "param:out_c__ssa_v0"),
+            (),
+            "dae7d5cfbe6b1fab3542239640885b5145a2dbed1328a5c7ed00c568e6d7ea05",
+        ),
+    ],
+)
+def test_g2_certified_seed_score_and_fingerprint(
+    case_name: str,
+    program_factory: Any,
+    expected_task: tuple[str, str, tuple[str, ...], tuple[str, ...]],
+    expected_storage_keys: tuple[str, ...],
+    expected_dependencies: tuple[tuple[int, int], ...],
+    expected_fingerprint: str,
+) -> None:
+    score = _certified_score(program_factory())
+
+    data = score_to_dict(score)
+    assert data["name"].endswith("Program")
+    assert data["metadata"]["dependency_policy"] == "dataflow_v0"
+    assert data["metadata"]["entry_name"] == "orchestrator"
+    assert len(data["tasks"]) == 1
+    task = data["tasks"][0]
+    expected_name, expected_core_type, expected_args, expected_directions = expected_task
+    assert task["name"] == expected_name
+    assert task["core_type"] == expected_core_type
+    assert tuple(task["args"]) == expected_args
+    assert tuple(task["arg_directions"]) == expected_directions
+    assert tuple(task["arg_storage_keys"]) == expected_storage_keys
+    assert len(task["arg_directions"]) == len(task["args"])
+    assert [(dep["producer"], dep["consumer"]) for dep in data["dependencies"]] == list(expected_dependencies)
+    fingerprint = score_fingerprint(score)
+    assert len(fingerprint) == 64
+    assert fingerprint == expected_fingerprint, case_name
+
+
+def test_g2_certified_multi_root_score_namespaces_storage_keys() -> None:
+    score = _certified_score(_upstream_l2_multi_orch_program())
+
+    data = score_to_dict(score)
+    assert data["name"] == "TwoL2AddSubProgram"
+    assert data["metadata"]["dependency_policy"] == "dataflow_v0"
+    assert data["metadata"]["entry_policy"] == "all_orchestration"
+    assert tuple(data["metadata"]["entry_names"]) == ("chip_orch_add", "chip_orch_sub")
+    assert [(task["name"], task["core_type"]) for task in data["tasks"]] == [
+        ("tile_add", "aiv"),
+        ("tile_sub", "aiv"),
+    ]
+    assert [tuple(task["args"]) for task in data["tasks"]] == [
+        ("a__ssa_v0", "b__ssa_v0", "f__ssa_v0"),
+        ("a__ssa_v0", "b__ssa_v0", "f__ssa_v0"),
+    ]
+    assert [tuple(task["arg_directions"]) for task in data["tasks"]] == [
+        ("Input", "Input", "OutputExisting"),
+        ("Input", "Input", "OutputExisting"),
+    ]
+    assert [tuple(task["arg_storage_keys"]) for task in data["tasks"]] == [
+        (
+            "param:chip_orch_add.a__ssa_v0",
+            "param:chip_orch_add.b__ssa_v0",
+            "param:chip_orch_add.f__ssa_v0",
+        ),
+        (
+            "param:chip_orch_sub.a__ssa_v0",
+            "param:chip_orch_sub.b__ssa_v0",
+            "param:chip_orch_sub.f__ssa_v0",
+        ),
+    ]
+    assert data["dependencies"] == []
+    assert score_fingerprint(score) == "775dc08e99a0aaa38a41457ca2eb2d4e78cd8dd6d85109584b4721b925193111"
 
 
 def test_static_eligibility_falls_back_when_dataflow_direction_data_is_missing() -> None:
@@ -481,7 +722,7 @@ class P:
     assert [(dep.producer, dep.consumer) for dep in result.score.dependencies] == [(0, 1), (0, 2)]
 
 
-def test_static_eligibility_infers_real_pypto_core_types_from_program() -> None:
+def test_static_eligibility_infers_real_pypto_aic_aiv_core_types_from_program() -> None:
     program = pl.parse_program(
         """
 @pl.program
@@ -494,16 +735,11 @@ class P:
     def vector(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
         return x
 
-    @pl.function(type=pl.FunctionType.Group)
-    def group(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
-        return x
-
     @pl.function(type=pl.FunctionType.Orchestration)
     def main(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
         a = self.cube(x)
         b = self.vector(a)
-        c = self.group(b)
-        return c
+        return b
 """
     )
 
@@ -514,9 +750,31 @@ class P:
     assert [(task.name, task.core_type) for task in result.score.tasks] == [
         ("cube", "aic"),
         ("vector", "aiv"),
-        ("group", "mixed"),
     ]
-    assert [(dep.producer, dep.consumer) for dep in result.score.dependencies] == [(0, 1), (1, 2)]
+    assert [(dep.producer, dep.consumer) for dep in result.score.dependencies] == [(0, 1)]
+
+
+def test_static_eligibility_rejects_real_pypto_group_callee_for_v01() -> None:
+    program = pl.parse_program(
+        """
+@pl.program
+class P:
+    @pl.function(type=pl.FunctionType.Group)
+    def group(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
+        return x
+
+    @pl.function(type=pl.FunctionType.Orchestration)
+    def main(self, x: pl.Tensor[[64], pl.FP32]) -> pl.Tensor[[64], pl.FP32]:
+        y = self.group(x)
+        return y
+"""
+    )
+
+    result = check_static_eligibility(program)
+
+    assert not result.eligible
+    assert result.reasons == ("Group/Spmd callee is out of scope for Sonata v0.1: group",)
+    assert result.reason_details[0].code == FallbackCode.UNSUPPORTED_PYPTO_ADAPTER_SCOPE.value
 
 
 def test_static_eligibility_extracts_tasks_only_from_orchestration_functions() -> None:
