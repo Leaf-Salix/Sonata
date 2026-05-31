@@ -39,7 +39,7 @@ def _make_score(**overrides):
                  arg_storage_keys=("alloc:b", "alloc:c"), name="add"),
         ),
         dependencies=(Dependency(producer=0, consumer=1),),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(32, 64)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(32, 64), severity="hard"),),
     )
     defaults.update(overrides)
     return Score(**defaults)
@@ -207,7 +207,7 @@ class TestEndToEndSmoke:
                      arg_storage_keys=("param:x", "alloc:y"), name="matmul"),
             ),
             dependencies=(),
-            shape_assumptions=(ShapeAssumption(symbol="x", dims=(64, 64)),),
+            shape_assumptions=(ShapeAssumption(symbol="x", dims=(64, 64), severity="hard"),),
         )
         ph = PlanHandle.from_score(score)
         assert ph.score_fingerprint == score_fingerprint(score)
@@ -274,7 +274,7 @@ class TestEndToEndSmoke:
                      args=("x",), arg_directions=("input",),
                      arg_storage_keys=("param:x",), name="op"),
             ),
-            shape_assumptions=(ShapeAssumption(symbol="x", dims=(32,)),),
+            shape_assumptions=(ShapeAssumption(symbol="x", dims=(32,), severity="hard"),),
         )
         score_b = Score(
             name="guard_test",
@@ -285,7 +285,7 @@ class TestEndToEndSmoke:
                      args=("x",), arg_directions=("input",),
                      arg_storage_keys=("param:x",), name="op"),
             ),
-            shape_assumptions=(ShapeAssumption(symbol="x", dims=(64,)),),
+            shape_assumptions=(ShapeAssumption(symbol="x", dims=(64,), severity="hard"),),
         )
         fp_a = score_fingerprint(score_a)
         fp_b = score_fingerprint(score_b)

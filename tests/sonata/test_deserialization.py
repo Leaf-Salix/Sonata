@@ -46,8 +46,8 @@ def _make_score() -> Score:
             Dependency(producer=0, consumer=1, kind="storage"),
         ),
         shape_assumptions=(
-            ShapeAssumption(symbol="N", dims=(128, 64)),
-            ShapeAssumption(symbol="M", dims=(32,)),
+            ShapeAssumption(symbol="N", dims=(128, 64), severity="hard"),
+            ShapeAssumption(symbol="M", dims=(32,), severity="hard"),
         ),
         metadata={"extractor": "structural_v0", "dependency_policy": "dataflow_v0"},
     )

@@ -18,6 +18,7 @@ from typing import Any
 import warnings
 
 from .fallback import FallbackCode
+from .guard import ShapeAssumption, GuardCondition
 
 
 @dataclass(frozen=True)
@@ -34,14 +35,6 @@ class RuntimeTarget:
 
 
 DEFAULT_RUNTIME_TARGET = RuntimeTarget()
-
-
-@dataclass(frozen=True)
-class ShapeAssumption:
-    """Static shape fact that defines the runtime validity domain for a score."""
-
-    symbol: str
-    dims: tuple[int, ...]
 
 
 @dataclass(frozen=True)

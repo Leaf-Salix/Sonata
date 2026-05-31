@@ -13,15 +13,15 @@ import functools
 import warnings
 from typing import Any, Callable
 
-SONATA_VERSION = "0.9.0"
-VERSION_INFO = (0, 9, 0)
+SONATA_VERSION = "0.10.0"
+VERSION_INFO = (0, 10, 0)
 
 
 def version_string(*, include_label: bool = False) -> str:
     """Return the Sonata version string.
 
     With ``include_label=True``, appends the library name:
-    ``"Sonata 0.9.0"``.
+    ``"Sonata 0.10.0"``.
     """
     if include_label:
         return f"Sonata {SONATA_VERSION}"

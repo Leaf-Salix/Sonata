@@ -35,7 +35,7 @@ def test_score_counts_tasks_and_dependencies() -> None:
             Task(task_id=1, func_id=1, core_type="aiv", args=("c", "out"), name="store"),
         ),
         dependencies=(Dependency(producer=0, consumer=1),),
-        shape_assumptions=(ShapeAssumption(symbol="a", dims=(1024,)),),
+        shape_assumptions=(ShapeAssumption(symbol="a", dims=(1024,), severity="hard"),),
     )
 
     assert score.task_count() == 2
@@ -52,7 +52,7 @@ def test_score_validate_accepts_consistent_score() -> None:
             Task(task_id=1, func_id=1, core_type="aic"),
         ),
         dependencies=(Dependency(producer=0, consumer=1),),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16, 32)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16, 32), severity="hard"),),
     )
 
     result = score.validate()
@@ -111,7 +111,7 @@ def test_score_validate_accumulates_rejection_reasons() -> None:
             Task(task_id=0, func_id=-1, core_type="gpu"),
         ),
         dependencies=(Dependency(producer=0, consumer=0),),
-        shape_assumptions=(ShapeAssumption(symbol="", dims=(4, -1)),),
+        shape_assumptions=(ShapeAssumption(symbol="", dims=(4, -1), severity="hard"),),
     )
 
     result = score.validate()
@@ -158,8 +158,8 @@ def test_score_validate_rejects_duplicate_shape_assumption_symbols() -> None:
         name="duplicate_shapes",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
         shape_assumptions=(
-            ShapeAssumption(symbol="x", dims=(16,)),
-            ShapeAssumption(symbol="x", dims=(32,)),
+            ShapeAssumption(symbol="x", dims=(16,), severity="hard"),
+            ShapeAssumption(symbol="x", dims=(32,), severity="hard"),
         ),
     )
 
@@ -174,8 +174,8 @@ def test_score_validate_does_not_repeat_dim_errors_for_duplicate_shape_symbols()
         name="duplicate_bad_shapes",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
         shape_assumptions=(
-            ShapeAssumption(symbol="x", dims=(-1,)),
-            ShapeAssumption(symbol="x", dims=(-1,)),
+            ShapeAssumption(symbol="x", dims=(-1,), severity="hard"),
+            ShapeAssumption(symbol="x", dims=(-1,), severity="hard"),
         ),
     )
 
@@ -193,8 +193,8 @@ def test_score_validate_rejects_duplicate_empty_shape_assumption_symbols() -> No
         name="duplicate_empty_shapes",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
         shape_assumptions=(
-            ShapeAssumption(symbol="", dims=(16,)),
-            ShapeAssumption(symbol="", dims=(32,)),
+            ShapeAssumption(symbol="", dims=(16,), severity="hard"),
+            ShapeAssumption(symbol="", dims=(32,), severity="hard"),
         ),
     )
 
@@ -211,7 +211,7 @@ def test_score_validate_skips_dim_validation_for_empty_shape_symbol() -> None:
     score = Score(
         name="empty_shape_symbol",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
-        shape_assumptions=(ShapeAssumption(symbol="", dims=("n",)),),
+        shape_assumptions=(ShapeAssumption(symbol="", dims=("n",), severity="hard"),),
     )
 
     result = score.validate()
@@ -224,7 +224,7 @@ def test_score_validate_rejects_zero_shape_assumption_dimension() -> None:
     score = Score(
         name="zero_shape_dim",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, 16)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, 16), severity="hard"),),
     )
 
     result = score.validate()
@@ -237,7 +237,7 @@ def test_score_validate_rejects_non_integer_shape_assumption_dimension() -> None
     score = Score(
         name="symbolic_shape_dim",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=("n", 16)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=("n", 16), severity="hard"),),
     )
 
     result = score.validate()
@@ -250,7 +250,7 @@ def test_score_validate_rejects_bool_shape_assumption_dimension() -> None:
     score = Score(
         name="bool_shape_dim",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(True, 16)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(True, 16), severity="hard"),),
     )
 
     result = score.validate()
@@ -263,7 +263,7 @@ def test_score_validate_reports_each_shape_dim_error_category() -> None:
     score = Score(
         name="multi_bad_shape_dim",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_invalid_graph"),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, -1, "n", True)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(0, -1, "n", True), severity="hard"),),
     )
 
     result = score.validate()

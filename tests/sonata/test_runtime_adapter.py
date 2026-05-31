@@ -40,7 +40,7 @@ def _make_score(**overrides):
                  arg_storage_keys=("alloc:b", "alloc:c"), name="add"),
         ),
         dependencies=(Dependency(producer=0, consumer=1),),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(32, 64)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(32, 64), severity="hard"),),
     )
     defaults.update(overrides)
     return Score(**defaults)

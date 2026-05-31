@@ -37,7 +37,7 @@ def test_score_to_dict_emits_stable_json_like_structure() -> None:
                 name="kernel",
             ),
         ),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(64, 32)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(64, 32), severity="hard"),),
         metadata={"nodep_args": ({"task_id": 0, "arg": "x"},)},
     )
 
@@ -83,7 +83,7 @@ def test_score_to_json_matches_v1_golden_schema() -> None:
                 name="kernel.add",
             ),
         ),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16,)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(16,), severity="hard"),),
         metadata={"dependency_policy": "sequential_v0"},
     )
 
@@ -226,12 +226,12 @@ def test_score_fingerprint_changes_for_shape_assumptions() -> None:
     first = Score(
         name="plan",
         runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="build_plan_graph"),
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(64, 32)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(64, 32), severity="hard"),),
     )
     second = Score(
         name="plan",
         runtime_target=first.runtime_target,
-        shape_assumptions=(ShapeAssumption(symbol="x", dims=(128, 32)),),
+        shape_assumptions=(ShapeAssumption(symbol="x", dims=(128, 32), severity="hard"),),
     )
 
     assert score_fingerprint(first) != score_fingerprint(second)
