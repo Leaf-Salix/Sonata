@@ -67,12 +67,14 @@ def test_collect_storage_keys_records_params_and_tensor_allocations() -> None:
 def test_collect_storage_keys_disambiguates_duplicate_stable_names() -> None:
     first = Var("x", unique_id=1)
     second = Var("x", unique_id=2)
-    func = Function(params=(first, second))
+    third = Var("x", unique_id=3)
+    func = Function(params=(first, second, third))
 
     keys = _collect(func)
 
     assert keys[1] == "param:x"
     assert keys[2] == "param:x@2"
+    assert keys[3] == "param:x@3"
 
 
 def test_collect_storage_keys_propagates_call_output_from_write_arg() -> None:
