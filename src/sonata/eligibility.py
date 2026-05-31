@@ -215,7 +215,8 @@ def _is_builtin_call(call_name: str) -> bool:
 def _tasks_from_facts(functions: tuple[Any, ...]) -> tuple[Task, ...]:
     tasks: list[Task] = []
     func_ids: dict[str, int] = {}
-    for function in functions:
+    multiple_roots = len(functions) > 1
+    for root_index, function in enumerate(functions):
         storage_keys = collect_storage_keys(
             function.node,
             walk=_walk,
@@ -225,6 +226,8 @@ def _tasks_from_facts(functions: tuple[Any, ...]) -> tuple[Task, ...]:
             arg_name=_arg_name,
             arg_directions=_arg_directions,
         )
+        if multiple_roots:
+            storage_keys = _namespace_storage_keys(storage_keys, function.name, root_index)
         call_outputs = collect_call_output_vars(function.node, walk=_walk, kind=_kind)
         for call in function.calls:
             if call.callee_name not in func_ids:
@@ -243,6 +246,18 @@ def _tasks_from_facts(functions: tuple[Any, ...]) -> tuple[Task, ...]:
             if output_var is not None:
                 propagate_call_output_storage(output_var, call.node, storage_keys, arg_directions=_arg_directions)
     return tuple(tasks)
+
+
+def _namespace_storage_keys(storage_keys: dict[int, str], root_name: str | None, root_index: int) -> dict[int, str]:
+    namespace = root_name or f"root{root_index}"
+    return {identity: _namespace_storage_key(key, namespace) for identity, key in storage_keys.items()}
+
+
+def _namespace_storage_key(key: str, namespace: str) -> str:
+    prefix, sep, rest = key.partition(":")
+    if not sep:
+        return f"{namespace}.{key}"
+    return f"{prefix}:{namespace}.{rest}"
 
 
 def _extract_shape_assumptions(nodes: tuple[Any, ...]) -> tuple[ShapeAssumption, ...]:

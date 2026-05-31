@@ -146,6 +146,13 @@ def _upstream_matmul_64x64x64_program() -> Any:
     return case.get_program()
 
 
+def _upstream_l2_multi_orch_program() -> Any:
+    return _load_upstream_st_module(
+        "pypto_st_l2_multi_orch",
+        "tests/st/distributed/test_l2_multi_orch.py",
+    ).TwoL2AddSubProgram
+
+
 def _certified_score(program: Any):
     certified = _run_default_pipeline_until_final_simplify(program)
     PostSimplifyPyPTOInputAdapter(certified).normalize(require_certified=True)
@@ -466,6 +473,42 @@ def test_g2_certified_seed_score_and_fingerprint(
     fingerprint = score_fingerprint(score)
     assert len(fingerprint) == 64
     assert fingerprint == expected_fingerprint, case_name
+
+
+def test_g2_certified_multi_root_score_namespaces_storage_keys() -> None:
+    score = _certified_score(_upstream_l2_multi_orch_program())
+
+    data = score_to_dict(score)
+    assert data["name"] == "TwoL2AddSubProgram"
+    assert data["metadata"]["dependency_policy"] == "dataflow_v0"
+    assert data["metadata"]["entry_policy"] == "all_orchestration"
+    assert tuple(data["metadata"]["entry_names"]) == ("chip_orch_add", "chip_orch_sub")
+    assert [(task["name"], task["core_type"]) for task in data["tasks"]] == [
+        ("tile_add", "aiv"),
+        ("tile_sub", "aiv"),
+    ]
+    assert [tuple(task["args"]) for task in data["tasks"]] == [
+        ("a__ssa_v0", "b__ssa_v0", "f__ssa_v0"),
+        ("a__ssa_v0", "b__ssa_v0", "f__ssa_v0"),
+    ]
+    assert [tuple(task["arg_directions"]) for task in data["tasks"]] == [
+        ("Input", "Input", "OutputExisting"),
+        ("Input", "Input", "OutputExisting"),
+    ]
+    assert [tuple(task["arg_storage_keys"]) for task in data["tasks"]] == [
+        (
+            "param:chip_orch_add.a__ssa_v0",
+            "param:chip_orch_add.b__ssa_v0",
+            "param:chip_orch_add.f__ssa_v0",
+        ),
+        (
+            "param:chip_orch_sub.a__ssa_v0",
+            "param:chip_orch_sub.b__ssa_v0",
+            "param:chip_orch_sub.f__ssa_v0",
+        ),
+    ]
+    assert data["dependencies"] == []
+    assert score_fingerprint(score) == "775dc08e99a0aaa38a41457ca2eb2d4e78cd8dd6d85109584b4721b925193111"
 
 
 def test_static_eligibility_falls_back_when_dataflow_direction_data_is_missing() -> None:

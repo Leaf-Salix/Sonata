@@ -111,4 +111,7 @@ show("tile_cast_row_major_narrow", path, mod.TileCastRowMajorNarrowProgram)
 path, mod = load_module("st_matmul", "tests/st/runtime/ops/test_matmul.py")
 case = mod.TestMatmul(m=64, k=64, n=64, platform="a2a3sim")
 show("matmul_64x64x64", path, case.get_program())
+
+path, mod = load_module("st_l2_multi_orch", "tests/st/distributed/test_l2_multi_orch.py")
+show("l2_multi_orch_add_sub", path, mod.TwoL2AddSubProgram)
 PY
