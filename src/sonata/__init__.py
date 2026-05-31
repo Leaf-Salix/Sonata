@@ -96,6 +96,15 @@ from .serialization import (
     score_to_json,
 )
 from .storage import STORAGE_COVERAGE_REJECT_THRESHOLD, STORAGE_COVERAGE_WARN_THRESHOLD
+from .version import (
+    SONATA_VERSION,
+    VERSION_INFO,
+    deprecated,
+    module_api,
+    public_api,
+    schema_versions,
+    version_string,
+)
 
 __all__ = [
     "AdapterCapability",
@@ -137,6 +146,7 @@ __all__ = [
     "RuntimeArgBinding",
     "RuntimeTarget",
     "SCORE_SCHEMA_VERSION",
+    "SONATA_VERSION",
     "STORAGE_COVERAGE_REJECT_THRESHOLD",
     "STORAGE_COVERAGE_WARN_THRESHOLD",
     "Score",
@@ -144,6 +154,7 @@ __all__ = [
     "ShapeAssumption",
     "StorageConflict",
     "Task",
+    "VERSION_INFO",
     "REGION_DYNAMIC",
     "REGION_STATIC",
     "Region",
@@ -161,20 +172,25 @@ __all__ = [
     "compute_lifetimes",
     "dataflow_dependency_fallback_code",
     "default_registry",
+    "deprecated",
     "eligibility_result_from_dict",
     "eligibility_result_from_json",
     "eligibility_result_to_dict",
     "extract_regions",
     "find_conflicts",
+    "module_api",
     "plan_handle_from_dict",
     "plan_handle_from_json",
     "plan_handle_to_dict",
     "plan_handle_to_json",
     "plan_memory",
+    "public_api",
+    "schema_versions",
     "score_fingerprint",
     "score_from_dict",
     "score_from_json",
     "score_to_dict",
     "score_to_json",
     "supports_dataflow_dependencies",
+    "version_string",
 ]
