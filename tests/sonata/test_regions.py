@@ -605,3 +605,50 @@ class TestStoreRegionTree:
         result = lookup_region_tree("root.child[99]", cache,
                                     path_to_fingerprint={"root": "abc"})
         assert result is None
+
+    def test_region_tree_cache_invalidation(self):
+        """Invalidating a node removes it and descendants, not ancestors."""
+        from sonata.cache import ScoreCache
+        from sonata.score import RuntimeTarget, Score
+        from sonata.regions import (
+            store_region_tree, lookup_region_tree, invalidate_region_tree,
+        )
+
+        cache = ScoreCache()
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+
+        # Build: static(0) -> [dynamic(1), static(2) -> [dynamic(3)]]
+        dyn3 = RegionTreeNode(region=Region(region_id=3, kind=REGION_DYNAMIC))
+        static2 = RegionTreeNode(
+            region=Region(region_id=2, kind=REGION_STATIC),
+            children=(dyn3,),
+        )
+        dyn1 = RegionTreeNode(region=Region(region_id=1, kind=REGION_DYNAMIC))
+        root = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            children=(dyn1, static2),
+        )
+        tree = RegionTree(root=root)
+
+        per_region = {
+            f"region_{i}": Score(name=f"s{i}", runtime_target=rt,
+                                 tasks=(), dependencies=(), shape_assumptions=())
+            for i in range(4)
+        }
+        mappings = store_region_tree(tree, {}, cache, per_region_scores=per_region)
+
+        # All 4 regions should be cached
+        assert lookup_region_tree("root", cache, path_to_fingerprint=mappings) is not None
+        assert lookup_region_tree("root.child[1]", cache, path_to_fingerprint=mappings) is not None
+
+        # Invalidate static2 (region 2) — should also remove dyn3 (region 3)
+        removed = invalidate_region_tree(tree, static2, cache, path_to_fingerprint=mappings)
+        assert removed == 2  # static2 + dyn3
+
+        # static2 and dyn3 are gone
+        assert lookup_region_tree("root.child[1]", cache, path_to_fingerprint=mappings) is None
+        assert lookup_region_tree("root.child[1].child[0]", cache, path_to_fingerprint=mappings) is None
+
+        # root and dyn1 are still valid (ancestors/siblings untouched)
+        assert lookup_region_tree("root", cache, path_to_fingerprint=mappings) is not None
+        assert lookup_region_tree("root.child[0]", cache, path_to_fingerprint=mappings) is not None

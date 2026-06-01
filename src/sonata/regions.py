@@ -681,6 +681,57 @@ def lookup_region_tree(
     return cache.lookup(fp)
 
 
+def invalidate_region_tree(
+    region_tree: RegionTree,
+    violated_node: RegionTreeNode,
+    cache: Any,  # ScoreCache
+    *,
+    path_to_fingerprint: dict[str, str] | None = None,
+) -> int:
+    """Invalidate a region and all its descendants in the cache.
+
+    v0.11 Phase 1 C3: Cache invalidation on guard violation
+
+    When a guard is violated in region N, N and all descendants are
+    invalidated.  Ancestors remain valid (conservative approach).
+
+    Args:
+        region_tree: The full RegionTree (needed to locate violated_node).
+        violated_node: The node whose guard was violated.
+        cache: ScoreCache instance.
+        path_to_fingerprint: Mapping from store_region_tree.
+
+    Returns:
+        Number of cache entries removed.
+    """
+    if path_to_fingerprint is None:
+        return 0
+
+    violated_fps: set[str] = set()
+
+    def _collect(node: RegionTreeNode, path: str):
+        fp = path_to_fingerprint.get(path)
+        if fp is not None:
+            violated_fps.add(fp)
+        for i, child in enumerate(node.children):
+            _collect(child, f"{path}.child[{i}]")
+
+    def _find_and_collect(node: RegionTreeNode, path: str = "root") -> bool:
+        if node is violated_node:
+            _collect(node, path)
+            return True
+        for i, child in enumerate(node.children):
+            if _find_and_collect(child, f"{path}.child[{i}]"):
+                return True
+        return False
+
+    _find_and_collect(region_tree.root)
+
+    if not violated_fps:
+        return 0
+    return cache.invalidate(*violated_fps)
+
+
 __all__ = [
     "REGION_DYNAMIC",
     "REGION_STATIC",
@@ -694,4 +745,5 @@ __all__ = [
     # v0.11 Phase 1 C
     "store_region_tree",
     "lookup_region_tree",
+    "invalidate_region_tree",
 ]
