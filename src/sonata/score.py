@@ -74,11 +74,16 @@ class FallbackReason:
     best-effort slug derived from ``message`` for unmapped reasons.  Enum
     codes are safe as routing keys; slug codes may change if message wording
     changes.
+
+    Region-level fields (v0.11): ``region_type`` and ``control_flow_node``
+    provide per-region context for mixed-graph fallback analysis.
     """
 
     code: str
     message: str
     severity: str = "error"
+    region_type: str | None = None
+    control_flow_node: str | None = None
 
 
 @dataclass(frozen=True)

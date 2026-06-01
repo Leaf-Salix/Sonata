@@ -498,9 +498,56 @@ class TestRegionStatus:
             children=(dyn, sta),
         )
         assert root.region_status == "mixed"
-    """Tests for store_region_tree function (Phase 1 C1-C3)."""
-    
-    def test_fingerprint_mappings(self):
+
+
+class TestRegionFallbackReasons:
+    """Tests for region-level fallback semantics (Phase 1 B3)."""
+
+    def test_region_fallback_reasons(self):
+        """Dynamic region fallback reasons include region_type and control_flow_node."""
+        body = [
+            _make_stmt("Call"),
+            _make_stmt("IfStmt"),     # dynamic
+            _make_stmt("Call"),
+            _make_stmt("ForStmt"),    # dynamic
+            _make_stmt("Call"),
+        ]
+        node = _make_func(body, name="fallback_func")
+        result = check_region_eligibility(node)
+
+        assert result.eligible  # has static regions
+        # Dynamic regions should have structured fallback reasons
+        dynamic_regions = [r for r in result.metadata['region_tree'].dynamic_nodes()]
+        assert len(dynamic_regions) == 2
+
+        # Check fallback reason fields on the first dynamic region
+        if_stmt_region = dynamic_regions[0].region
+        assert if_stmt_region.fallback_reason is not None
+        assert if_stmt_region.fallback_reason.region_type == "dynamic"
+        assert if_stmt_region.fallback_reason.control_flow_node == "IfStmt"
+
+        for_stmt_region = dynamic_regions[1].region
+        assert for_stmt_region.fallback_reason is not None
+        assert for_stmt_region.fallback_reason.control_flow_node == "ForStmt"
+
+    def test_multi_region_scores(self):
+        """Each maximal static subtree gets its own Score."""
+        body = [
+            _make_stmt("Call"),
+            _make_stmt("ForStmt"),
+            _make_stmt("Call"),
+            _make_stmt("Call"),
+        ]
+        node = _make_func(body, name="multi_score_func")
+        result = check_region_eligibility(node)
+
+        assert result.eligible
+        per_region = result.metadata['per_region_scores']
+        # Two static subtrees: region 0 (before ForStmt) and region 2 (after)
+        assert len(per_region) == 2
+
+
+class TestStoreRegionTree:
         """Test that store_region_tree returns correct fingerprint mappings."""
         from sonata.regions import store_region_tree
         

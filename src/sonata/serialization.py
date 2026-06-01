@@ -123,7 +123,10 @@ def eligibility_result_to_dict(result: EligibilityResult) -> dict[str, Any]:
         "schema_version": ELIGIBILITY_RESULT_SCHEMA_VERSION,
         "eligible": result.eligible,
         "reasons": list(result.reasons),
-        "reason_details": [_json_like(asdict(reason)) for reason in result.reason_details],
+        "reason_details": [
+            {k: v for k, v in _json_like(asdict(reason)).items() if v is not None}
+            for reason in result.reason_details
+        ],
         "score": score_to_dict(result.score) if result.score is not None else None,
     }
 

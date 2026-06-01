@@ -255,10 +255,16 @@ class RegionTree:
         return result
     
     def static_subtrees(self) -> list[RegionTreeNode]:
-        """Get all maximal static subtrees (static nodes with no static children)."""
+        """Get all maximal static subtrees.
+
+        A maximal static subtree root is a static node that is either a leaf
+        or has at least one dynamic child (i.e. the static lineage is broken).
+        """
         subtrees = []
         for node in self.all_nodes:
-            if node.region.is_static and not any(c.region.is_static for c in node.children):
+            if node.region.is_static and (
+                not node.children or any(c.region.is_dynamic for c in node.children)
+            ):
                 subtrees.append(node)
         return subtrees
     
@@ -390,6 +396,8 @@ def extract_regions(node: Any) -> RegionMap:
                     code=FallbackCode.CONTROL_FLOW_NOT_SUPPORTED.value,
                     message=f"{kind} region falls back to dynamic execution",
                     severity="warning",
+                    region_type="dynamic",
+                    control_flow_node=kind,
                 ),
             ))
             region_id += 1
@@ -507,12 +515,24 @@ def check_region_eligibility(
     # Collect fallback reasons from dynamic regions
     for dynamic_node in region_tree.dynamic_nodes():
         if dynamic_node.region.fallback_reason is not None:
-            fallback_reasons.append(dynamic_node.region.fallback_reason)
+            fr = dynamic_node.region.fallback_reason
+            # Enrich with region-level context if not already set
+            if fr.region_type is None:
+                fr = FallbackReason(
+                    code=fr.code,
+                    message=fr.message,
+                    severity=fr.severity,
+                    region_type="dynamic",
+                    control_flow_node=dynamic_node.region.control_flow_kind,
+                )
+            fallback_reasons.append(fr)
         else:
             fallback_reasons.append(FallbackReason(
                 code=FallbackCode.CONTROL_FLOW_NOT_SUPPORTED.value,
                 message=f"Dynamic region {dynamic_node.region.region_id} falls back to AICPU",
                 severity="warning",
+                region_type="dynamic",
+                control_flow_node=dynamic_node.region.control_flow_kind,
             ))
     
     # If we have static regions, accept with warnings about dynamic regions
