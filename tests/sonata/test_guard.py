@@ -536,3 +536,73 @@ class TestEvaluateRegion:
         selected = evaluator.select_region_guards(node, selector=selector)
         assert len(selected) == 2
         assert selected[0].symbol == "batch_size"
+
+
+class TestRegionGuardEvaluation:
+    """Integration tests for region guard evaluation (v0.11 Phase 1 D4)."""
+
+    def _make_score(self, assumptions):
+        from sonata.score import Score, RuntimeTarget
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        return Score(name="test", runtime_target=rt, tasks=(),
+                     dependencies=(), shape_assumptions=tuple(assumptions))
+
+    def test_region_guard_evaluation(self):
+        """Full region tree evaluation: static parent + dynamic child."""
+        from sonata.regions import (
+            Region, RegionTreeNode, RegionTree,
+            REGION_STATIC, REGION_DYNAMIC,
+            check_region_eligibility,
+        )
+        from sonata.plan_handle import GuardStatus
+
+        evaluator = GuardEvaluator()
+        # Build: static(0)->[dynamic(1), static(2)]
+        dyn1 = RegionTreeNode(region=Region(region_id=1, kind=REGION_DYNAMIC))
+        score2 = self._make_score([ShapeAssumption(symbol="n", dims=(64,))])
+        static2 = RegionTreeNode(region=Region(region_id=2, kind=REGION_STATIC), score=score2)
+        score0 = self._make_score([ShapeAssumption(symbol="bs", dims=(32,))])
+        root = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            score=score0,
+            children=(dyn1, static2),
+        )
+        tree = RegionTree(root=root)
+
+        # Both satisfied
+        assert evaluator.evaluate_region(root, {"bs": (32,), "n": (64,)}) == GuardStatus.ALL_SATISFIED
+        # One violated (soft default → PARTIAL_FAILED since ShapeAssumption defaults to HARD → ALL_FAILED)
+        assert evaluator.evaluate_region(root, {"bs": (32,), "n": (128,)}) == GuardStatus.ALL_FAILED
+
+    def test_top_k_selection_per_region(self):
+        """Selector limits guards per region with priority."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        selector = EntryParamGuardSelector(top_k=3, priority_symbols=("batch_size",))
+        evaluator = GuardEvaluator()
+        assumptions = [
+            ShapeAssumption(symbol="batch_size", dims=(32,)),
+            ShapeAssumption(symbol="seq_len", dims=(128,)),
+            ShapeAssumption(symbol="hidden", dims=(768,)),
+            ShapeAssumption(symbol="heads", dims=(12,)),
+            ShapeAssumption(symbol="layers", dims=(6,)),
+        ]
+        score = self._make_score(assumptions)
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC), score=score)
+        selected = evaluator.select_region_guards(node, selector=selector)
+        assert len(selected) == 3
+        assert selected[0].symbol == "batch_size"  # prioritized
+
+    def test_guard_density_warnings(self):
+        """Density > threshold emits a warning."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        evaluator = GuardEvaluator()
+        assumptions = [ShapeAssumption(symbol=f"s{i}", dims=(i,)) for i in range(60)]
+        score = self._make_score(assumptions)
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC), score=score)
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            evaluator.select_region_guards(node, density_threshold=50)
+            density_warnings = [x for x in w if "density 60 exceeds threshold 50" in str(x.message)]
+            assert len(density_warnings) == 1
