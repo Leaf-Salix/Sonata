@@ -159,6 +159,8 @@ class PlanHandle:
     # Phase 4: Guard condition integration
     guard_status: GuardStatus = GuardStatus.ALL_SATISFIED
     critical_guards: tuple[Any, ...] = field(default_factory=tuple)  # GuardCondition instances
+    # v0.11 Phase 1 D3: Per-region guard status
+    region_guard_status: dict[str, GuardStatus] = field(default_factory=dict)
 
     @classmethod
     def from_score(

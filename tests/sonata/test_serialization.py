@@ -237,3 +237,31 @@ def test_score_fingerprint_changes_for_shape_assumptions() -> None:
     )
 
     assert score_fingerprint(first) != score_fingerprint(second)
+
+
+def test_plan_handle_region_guard_status_roundtrip() -> None:
+    """region_guard_status survives serialization -> deserialization."""
+    from sonata.plan_handle import GuardStatus, PlanHandle, RuntimeTarget
+    from sonata.serialization import plan_handle_to_dict
+    from sonata.deserialization import plan_handle_from_dict
+
+    rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+    ph = PlanHandle(
+        score_fingerprint="abc123",
+        runtime_target=rt,
+        source_adapter="test",
+        region_guard_status={
+            "root": GuardStatus.ALL_SATISFIED,
+            "root.child[0]": GuardStatus.PARTIAL_FAILED,
+            "root.child[1]": GuardStatus.ALL_FAILED,
+        },
+    )
+    data = plan_handle_to_dict(ph)
+    assert data["region_guard_status"] == {
+        "root": "all_satisfied",
+        "root.child[0]": "partial_failed",
+        "root.child[1]": "all_failed",
+    }
+
+    restored = plan_handle_from_dict(data)
+    assert restored.region_guard_status == ph.region_guard_status

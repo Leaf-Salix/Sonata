@@ -61,6 +61,10 @@ def plan_handle_to_dict(plan_handle: "PlanHandle") -> dict[str, Any]:
         "critical_guards": [
             _json_like(guard.to_dict()) for guard in plan_handle.critical_guards
         ],
+        # v0.11: Per-region guard status
+        "region_guard_status": {
+            k: v.value for k, v in plan_handle.region_guard_status.items()
+        },
     }
 
 

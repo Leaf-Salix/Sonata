@@ -19,6 +19,7 @@ from typing import Any
 from .plan_handle import (
     FuncRegistry,
     FuncRegistryEntry,
+    GuardStatus,
     PLAN_HANDLE_SCHEMA_VERSION,
     PlanHandle,
     RUNTIME_CONTRACT_VERSION,
@@ -85,6 +86,15 @@ def plan_handle_from_dict(data: dict[str, Any]) -> PlanHandle:
     metadata = data.get("metadata", {})
     if not isinstance(metadata, dict):
         raise DeserializationError("plan_handle.metadata must be a dict")
+    # v0.11: Per-region guard status
+    region_gs_raw = data.get("region_guard_status", {})
+    region_guard_status: dict[str, GuardStatus] = {}
+    if isinstance(region_gs_raw, dict):
+        for k, v in region_gs_raw.items():
+            try:
+                region_guard_status[k] = GuardStatus(v)
+            except ValueError:
+                raise DeserializationError(f"plan_handle.region_guard_status[{k!r}]: invalid GuardStatus {v!r}")
     return PlanHandle(
         score_fingerprint=fp,
         runtime_target=rt,
@@ -93,6 +103,7 @@ def plan_handle_from_dict(data: dict[str, Any]) -> PlanHandle:
         func_registry=registry,
         arg_bindings=bindings,
         metadata=metadata,
+        region_guard_status=region_guard_status,
     )
 
 
