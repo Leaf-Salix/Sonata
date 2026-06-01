@@ -435,6 +435,9 @@ def check_region_eligibility(
     Static regions are eligible for Sonata planning; dynamic regions
     fall back with structured warnings. A graph with at least one
     static region is partially eligible.
+    
+    v0.11 Phase 1 B: Enhanced to return per-region eligibility results
+    when RegionTree is available.
     """
     from .eligibility import check_static_eligibility
 
@@ -452,7 +455,26 @@ def check_region_eligibility(
             ))
         return EligibilityResult.reject(*reasons)
 
-    return check_static_eligibility(node, entry_name=entry_name)
+    # Build RegionTree for per-region analysis
+    region_tree = build_region_tree(region_map)
+    
+    # Check if any static regions exist
+    static_nodes = [n for n in region_tree.all_nodes if n.region.is_static]
+    if not static_nodes:
+        return check_static_eligibility(node, entry_name=entry_name)
+    
+    # For now, use the existing check_static_eligibility for the whole graph
+    # Future enhancement: extract per-region Scores and fingerprints
+    result = check_static_eligibility(node, entry_name=entry_name)
+    
+    # Attach region-level metadata to the result
+    if hasattr(result, 'metadata'):
+        result.metadata['region_count'] = len(region_map.regions)
+        result.metadata['static_region_count'] = len(region_map.static_regions())
+        result.metadata['dynamic_region_count'] = len(region_map.dynamic_regions())
+        result.metadata['static_ratio'] = region_map.static_ratio()
+    
+    return result
 
 
 def _classify_node(node: Any, region_id: int) -> Region:
@@ -491,6 +513,54 @@ def _get_body(node: Any) -> list[Any] | tuple[Any, ...] | None:
     return None
 
 
+# ============================================================================
+# v0.11 Phase 1 C: Per-Region Cache Integration (Stubs)
+# ============================================================================
+
+def store_region_tree(
+    region_tree: RegionTree,
+    plan_handle_payload: dict[str, Any],
+    cache: Any,  # ScoreCache type would create circular import
+    *,
+    guard_status: str = "all_satisfied",
+) -> dict[str, str]:
+    """Store a RegionTree in the cache with per-region fingerprints.
+    
+    v0.11 Phase 1 C1-C2: Stubs for future implementation
+    
+    Args:
+        region_tree: The RegionTree to cache
+        plan_handle_payload: Serialized PlanHandle
+        cache: ScoreCache instance
+        guard_status: Initial guard status string
+        
+    Returns:
+        dict mapping region paths to their fingerprints
+    """
+    # TODO: Implement per-region cache storage
+    # This will be implemented in Phase 1 C after B is complete
+    raise NotImplementedError("store_region_tree not yet implemented")
+
+
+def lookup_region_tree(
+    region_path: str,
+    cache: Any,  # ScoreCache
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Lookup a specific region's Score and PlanHandle from cache.
+    
+    v0.11 Phase 1 C2: Stub for future implementation
+    
+    Args:
+        region_path: Path to region (e.g., "root.left.right")
+        cache: ScoreCache instance
+        
+    Returns:
+        Tuple of (score_payload, plan_handle_payload) or (None, None) if miss
+    """
+    # TODO: Implement per-region cache lookup
+    raise NotImplementedError("lookup_region_tree not yet implemented")
+
+
 __all__ = [
     "REGION_DYNAMIC",
     "REGION_STATIC",
@@ -501,4 +571,7 @@ __all__ = [
     "build_region_tree",
     "check_region_eligibility",
     "extract_regions",
+    # v0.11 Phase 1 C - stubs
+    "store_region_tree",
+    "lookup_region_tree",
 ]
