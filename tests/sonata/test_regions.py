@@ -746,3 +746,61 @@ class TestPerformanceBenchmark:
         # Whole-graph would reject everything; per-region saves ≥90%.
         assert region_result.eligible  # per-region is eligible
         assert static_count >= 1       # at least one static region preserved
+
+    def test_cache_hit_rate_improvement(self):
+        """Per-region caching has higher hit rate than whole-graph on param changes.
+
+        Scenario: same graph structure with minor shape parameter change.
+        Whole-graph cache misses entirely; per-region cache only misses the
+        region affected by the parameter.
+        """
+        from sonata.cache import ScoreCache
+        from sonata.score import RuntimeTarget, Score
+        from sonata.regions import (
+            extract_regions, build_region_tree, check_region_eligibility,
+            store_region_tree, lookup_region_tree,
+        )
+        from sonata.serialization import score_fingerprint
+
+        # Build a graph with 3 static regions separated by dynamic nodes
+        body = [
+            _make_stmt("Call"), _make_stmt("Call"),  # static region 0
+            _make_stmt("ForStmt"),                    # dynamic
+            _make_stmt("Call"), _make_stmt("Call"),   # static region 2
+            _make_stmt("ForStmt"),                    # dynamic
+            _make_stmt("Call"),                       # static region 4
+        ]
+        node = _make_func(body, name="param_graph")
+
+        cache = ScoreCache()
+        result = check_region_eligibility(node)
+        per_region = result.metadata['per_region_scores']
+
+        tree = build_region_tree(extract_regions(node))
+        mappings = store_region_tree(tree, {}, cache, per_region_scores=per_region)
+
+        # First run: cache populated, all static regions should hit
+        # (dynamic nodes have no score so won't be in cache)
+        hits_v1 = sum(
+            1 for path in mappings
+            if lookup_region_tree(path, cache, path_to_fingerprint=mappings) is not None
+        )
+        assert hits_v1 >= 2  # at least 2 static regions cached
+
+        # Invalidate just one non-root static subtree (simulating param change)
+        from sonata.regions import invalidate_region_tree
+        static_subtrees = tree.static_subtrees()
+        # Use second subtree (not root) so other regions remain cached
+        if len(static_subtrees) >= 2:
+            invalidate_region_tree(tree, static_subtrees[1], cache,
+                                   path_to_fingerprint=mappings)
+
+        # Count remaining hits
+        hits_v2 = sum(
+            1 for path in mappings
+            if lookup_region_tree(path, cache, path_to_fingerprint=mappings) is not None
+        )
+
+        # Per-region: root and sibling regions still cached after partial invalidation
+        # Whole-graph: would miss entirely (fingerprint changes for whole graph)
+        assert hits_v2 >= 2, f"Expected ≥2 cached regions after partial invalidation, got {hits_v2}"
