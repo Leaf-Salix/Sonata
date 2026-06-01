@@ -548,25 +548,60 @@ class TestRegionFallbackReasons:
 
 
 class TestStoreRegionTree:
-        """Test that store_region_tree returns correct fingerprint mappings."""
+    """Tests for store_region_tree and lookup_region_tree (Phase 1 C1-C2)."""
+
+    def test_fingerprint_mappings(self):
+        """store_region_tree returns correct fingerprint mappings."""
+        from sonata.cache import ScoreCache
         from sonata.regions import store_region_tree
-        
-        # Create a simple tree: static(0) -> [dynamic(1), dynamic(2)]
+
+        cache = ScoreCache()
         dyn1 = RegionTreeNode(region=Region(region_id=1, kind=REGION_DYNAMIC))
         dyn2 = RegionTreeNode(region=Region(region_id=2, kind=REGION_DYNAMIC))
         root = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC),
                              children=(dyn1, dyn2))
         tree = RegionTree(root=root)
-        
-        # Call store_region_tree (returns mappings even without actual cache)
-        mappings = store_region_tree(tree, {}, None)
-        
-        # Should have mappings for root and children
+
+        mappings = store_region_tree(tree, {}, cache)
+
         assert "root" in mappings
         assert "root.child[0]" in mappings
         assert "root.child[1]" in mappings
-        
-        # All values should be fingerprints (hex strings)
+
         for path, fp in mappings.items():
             assert isinstance(fp, str)
             assert len(fp) == 64
+
+    def test_store_with_per_region_scores(self):
+        """Per-region scores are stored in cache and retrievable."""
+        from sonata.cache import ScoreCache
+        from sonata.score import RuntimeTarget, Score
+        from sonata.regions import store_region_tree, lookup_region_tree
+
+        cache = ScoreCache()
+        dyn = RegionTreeNode(region=Region(region_id=1, kind=REGION_DYNAMIC))
+        root = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC),
+                              children=(dyn,))
+        tree = RegionTree(root=root)
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        score = Score(name="region_0_score", runtime_target=rt,
+                      tasks=(), dependencies=(), shape_assumptions=())
+        per_region = {"region_0": score}
+
+        mappings = store_region_tree(tree, {}, cache, per_region_scores=per_region)
+
+        # Root score should be in cache
+        cached = lookup_region_tree("root", cache, path_to_fingerprint=mappings)
+        assert cached is not None
+        assert cached["name"] == "region_0_score"
+
+    def test_lookup_miss(self):
+        """lookup_region_tree returns None for unknown path."""
+        from sonata.cache import ScoreCache
+        from sonata.regions import lookup_region_tree
+
+        cache = ScoreCache()
+        result = lookup_region_tree("root.child[99]", cache,
+                                    path_to_fingerprint={"root": "abc"})
+        assert result is None

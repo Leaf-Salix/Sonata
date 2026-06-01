@@ -610,63 +610,75 @@ def store_region_tree(
     cache: Any,  # ScoreCache type would create circular import
     *,
     guard_status: str = "all_satisfied",
+    per_region_scores: dict[str, Score] | None = None,
 ) -> dict[str, str]:
     """Store a RegionTree in the cache with per-region fingerprints.
-    
-    v0.11 Phase 1 C1-C3: Per-region cache integration
-    
+
+    v0.11 Phase 1 C1: Per-region cache integration
+
+    Each node's fingerprint is computed and stored. If a node has a Score
+    (or one is provided via ``per_region_scores``), it is stored in the
+    cache keyed by that fingerprint.
+
     Args:
         region_tree: The RegionTree to cache
         plan_handle_payload: Serialized PlanHandle
         cache: ScoreCache instance
         guard_status: Initial guard status string
-        
+        per_region_scores: Optional mapping of region key → Score
+
     Returns:
         dict mapping region paths to their fingerprints
     """
-    # TODO: This requires ScoreCache integration
-    # For now, return fingerprint mappings without actual cache storage
     mappings: dict[str, str] = {}
-    
-    # Store root node
-    root_fp = region_tree.root.fingerprint
-    mappings["root"] = root_fp
-    
-    # Store all child nodes with path-based keys
-    def traverse_and_map(node: RegionTreeNode, path: str = "root"):
-        if node.children:
-            for i, child in enumerate(node.children):
-                child_path = f"{path}.child[{i}]"
-                child_fp = child.fingerprint
-                mappings[child_path] = child_fp
-                traverse_and_map(child, child_path)
-    
-    traverse_and_map(region_tree.root)
-    
-    # TODO: Actually store in cache when ScoreCache is available
-    # cache.store_region_tree(region_tree, plan_handle_payload, guard_status=guard_status)
-    
+
+    def traverse_and_store(node: RegionTreeNode, path: str = "root"):
+        fp = node.fingerprint
+        mappings[path] = fp
+
+        # Store Score if the node has one
+        if node.score is not None:
+            cache.store(node.score, fingerprint=fp)
+        # Also check per_region_scores by region key
+        elif per_region_scores:
+            region_key = f"region_{node.region.region_id}"
+            if region_key in per_region_scores:
+                cache.store(per_region_scores[region_key], fingerprint=fp)
+
+        for i, child in enumerate(node.children):
+            child_path = f"{path}.child[{i}]"
+            traverse_and_store(child, child_path)
+
+    traverse_and_store(region_tree.root)
     return mappings
 
 
 def lookup_region_tree(
     region_path: str,
     cache: Any,  # ScoreCache
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Lookup a specific region's Score and PlanHandle from cache.
-    
+    *,
+    path_to_fingerprint: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Lookup a specific region's cached Score by path.
+
     v0.11 Phase 1 C2: Per-region cache lookup
-    
+
     Args:
-        region_path: Path to region (e.g., "root", "root.child[0]", "root.child[1].child[0]")
+        region_path: Path to region (e.g. "root", "root.child[0]")
         cache: ScoreCache instance
-        
+        path_to_fingerprint: Mapping from store_region_tree; if None the
+            path itself is used as the fingerprint key.
+
     Returns:
-        Tuple of (score_payload, plan_handle_payload) or (None, None) if miss
+        Cached score payload dict, or None on miss.
     """
-    # TODO: Implement actual cache lookup
-    # This requires ScoreCache integration
-    raise NotImplementedError("lookup_region_tree not yet implemented - requires ScoreCache")
+    if path_to_fingerprint is not None:
+        fp = path_to_fingerprint.get(region_path)
+        if fp is None:
+            return None
+    else:
+        fp = region_path
+    return cache.lookup(fp)
 
 
 __all__ = [
