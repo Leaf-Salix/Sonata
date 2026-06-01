@@ -505,3 +505,34 @@ class TestEvaluateRegion:
         )
         # x satisfied, y violated → ALL_FAILED (hard violation in descendant)
         assert evaluator.evaluate_region(parent, {"x": (32,), "y": (99,)}) == GuardStatus.ALL_FAILED
+
+    def test_select_region_guards(self):
+        """select_region_guards returns guards from subtree and warns on density."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        evaluator = GuardEvaluator()
+        assumptions = [ShapeAssumption(symbol=f"s{i}", dims=(i,)) for i in range(55)]
+        score = self._make_score_with_assumptions(assumptions)
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC), score=score)
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            selected = evaluator.select_region_guards(node)
+            assert len(selected) == 55
+            assert any("density 55 exceeds threshold 50" in str(warning.message) for warning in w)
+
+    def test_select_region_guards_with_top_k(self):
+        """EntryParamGuardSelector with top_k limits selection."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        evaluator = GuardEvaluator()
+        assumptions = [
+            ShapeAssumption(symbol="batch_size", dims=(32,)),
+            ShapeAssumption(symbol="hidden", dims=(768,)),
+            ShapeAssumption(symbol="other", dims=(1,)),
+        ]
+        score = self._make_score_with_assumptions(assumptions)
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC), score=score)
+        selector = EntryParamGuardSelector(top_k=2, priority_symbols=("batch_size",))
+        selected = evaluator.select_region_guards(node, selector=selector)
+        assert len(selected) == 2
+        assert selected[0].symbol == "batch_size"

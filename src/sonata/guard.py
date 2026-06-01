@@ -452,6 +452,52 @@ class GuardEvaluator:
 
         return GuardStatus.PARTIAL_FAILED if any_failed else GuardStatus.ALL_SATISFIED
 
+    def select_region_guards(
+        self,
+        node: "RegionTreeNode",
+        selector: "GuardSelector | None" = None,
+        *,
+        density_threshold: int = 50,
+    ) -> list[GuardCondition]:
+        """Select top-K guards from a region subtree.
+
+        Collects shape assumptions from the node's Score and all
+        descendants, applies the selector (default:
+        EntryParamGuardSelector), and warns if guard density exceeds
+        ``density_threshold``.
+
+        Args:
+            node: Root of the region subtree.
+            selector: Guard selection strategy.  Defaults to
+                EntryParamGuardSelector (no top_k limit).
+            density_threshold: Warn when total guard count exceeds this.
+
+        Returns:
+            Selected guard conditions.
+        """
+        guards: list[GuardCondition] = []
+
+        def _collect(n: "RegionTreeNode") -> None:
+            if n.score is not None:
+                guards.extend(n.score.shape_assumptions)
+            for child in n.children:
+                _collect(child)
+
+        _collect(node)
+
+        exceeds, count = check_guard_density(guards, warning_threshold=density_threshold)
+        if exceeds:
+            warnings.warn(
+                f"Region guard density {count} exceeds threshold {density_threshold}. "
+                "Consider using GuardSelector.top_k to reduce over-guarding.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        if selector is None:
+            selector = EntryParamGuardSelector()
+        return selector.select(guards)
+
 
 class GuardInvalidator:
     """Strategy class for handling guard invalidation.
