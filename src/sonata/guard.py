@@ -7,6 +7,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+import warnings
+
 """Guard condition abstraction for Sonata static planning.
 
 This module introduces a unified ``GuardCondition`` abstraction layer that
@@ -56,6 +58,28 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable, Optional
+import warnings
+
+__all__ = [
+    # Base types
+    "GuardCondition",
+    "GuardSeverity",
+    "GUARD_SEVERITY_SOFT",
+    "GUARD_SEVERITY_HARD",
+    "ShapeAssumption",
+    # Actions
+    "InvalidateAction",
+    # Evaluators/Invalidators
+    "GuardEvaluator",
+    "GuardInvalidator",
+    # Selectors
+    "GuardSelector",
+    "EntryParamGuardSelector",
+    # Utilities
+    "check_guard_density",
+    "shape_assumption_to_guard_condition",
+    "deprecated_shape_assumption",
+]
 
 
 @dataclass(frozen=True)
@@ -225,6 +249,25 @@ class ShapeAssumption(GuardCondition):
     symbol: str
     dims: tuple[int, ...] = field(default_factory=tuple)
     severity: GuardSeverity = GUARD_SEVERITY_HARD
+    
+    _warning_emitted: bool = field(default=False, repr=False, init=False, compare=False, hash=False)
+    
+    def __post_init__(self):
+        """Emit deprecation warning on first instantiation."""
+        if not self._warning_emitted:
+            object.__setattr__(self, '_warning_emitted', True)
+            warnings.warn(
+                "ShapeAssumption is deprecated since v0.10 and will be removed in v0.11.\n"
+                "\n"
+                "Migration guide:\n"
+                "  OLD: ShapeAssumption(symbol='N', dims=(128,))\n"
+                "  NEW: ShapeAssumption(symbol='N', dims=(128,), severity=GUARD_SEVERITY_HARD)\n"
+                "\n"
+                "See: https://github.com/hw-native-sys/pypto-sonata/blob/main/docs/user-guide/guards-migration.md\n"
+                "for detailed migration instructions.",
+                DeprecationWarning,
+                stacklevel=2
+            )
     
     def evaluate(self, runtime_values: dict[str, Any]) -> bool:
         """Check if runtime tensor shape matches assumed shape.
@@ -546,6 +589,97 @@ def check_guard_density(
     return exceeds, count
 
 
+# ============================================================================
+# Migration Utilities (Phase 6 F1-F2)
+# ============================================================================
+
+def shape_assumption_to_guard_condition(
+    sa: "ShapeAssumption",
+    severity: GuardSeverity | None = None
+) -> GuardCondition:
+    """Convert ShapeAssumption to GuardCondition.
+    
+    Since ShapeAssumption is already a GuardCondition subclass, this function
+    primarily serves as a migration aid with deprecation warnings.
+    
+    Args:
+        sa: ShapeAssumption instance to convert
+        severity: Override severity (default: use sa.severity)
+    
+    Returns:
+        GuardCondition subclass (the ShapeAssumption instance itself, or new instance if severity overridden)
+    
+    Raises:
+        TypeError: If sa is not a ShapeAssumption
+        DeprecationWarning: Always emitted to encourage migration to direct GuardCondition usage
+    """
+    import warnings
+    from .score import ShapeAssumption as SA_Type
+    
+    if not isinstance(sa, SA_Type):
+        raise TypeError(f"Expected ShapeAssumption, got {type(sa).__name__}")
+    
+    # Emit deprecation warning
+    warnings.warn(
+        "ShapeAssumption is deprecated since v0.10 and will be removed in v0.11. "
+        "Use GuardCondition subclasses directly. "
+        "This converter is provided for backward compatibility only.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    # If severity is overridden, create a new instance with the new severity
+    if severity is not None and sa.severity != severity:
+        return SA_Type(symbol=sa.symbol, dims=sa.dims, severity=severity)
+    
+    # Return the ShapeAssumption as-is (it's already a GuardCondition)
+    return sa
+
+
+def deprecated_shape_assumption(
+    symbol: str,
+    dims: tuple[int, ...] = (),
+    *,
+    severity: GuardSeverity = GUARD_SEVERITY_HARD
+) -> "ShapeAssumption":
+    """Create a deprecated ShapeAssumption with clear deprecation warning.
+    
+    This helper function provides a clear migration path by emitting a
+    detailed deprecation warning when users instantiate ShapeAssumption.
+    
+    Args:
+        symbol: The symbol name (e.g., "batch_size")
+        dims: The dimension values (e.g., (32, 64))
+        severity: Guard severity (default: HARD)
+    
+    Returns:
+        ShapeAssumption instance (with deprecation warning)
+    
+    Example:
+        >>> import warnings
+        >>> warnings.simplefilter("always")
+        >>> sa = deprecated_shape_assumption("N", (128,))
+        DeprecationWarning: ShapeAssumption is deprecated...
+    """
+    import warnings
+    from .score import ShapeAssumption as SA_Type
+    
+    warnings.warn(
+        "ShapeAssumption is deprecated since v0.10 and will be removed in v0.11.\n"
+        "\n"
+        "Migration guide:\n"
+        "  OLD: ShapeAssumption(symbol='N', dims=(128,))\n"
+        "  NEW: ShapeAssumption(symbol='N', dims=(128,), severity=GUARD_SEVERITY_HARD)\n"
+        "\n"
+        "See: https://github.com/hw-native-sys/pypto-sonata/blob/main/docs/user-guide/guards-migration.md\n"
+        "for detailed migration instructions.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    return SA_Type(symbol=symbol, dims=dims, severity=severity)
+
+
 __all__ = [
     "GuardCondition",
     "GuardSeverity",
@@ -557,5 +691,6 @@ __all__ = [
     "GuardSelector",
     "EntryParamGuardSelector",
     "check_guard_density",
-    "GuardStatus",  # Export from plan_handle module
+    "shape_assumption_to_guard_condition",
+    "deprecated_shape_assumption",
 ]

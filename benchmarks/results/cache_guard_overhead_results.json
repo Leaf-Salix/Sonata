@@ -1,0 +1,17 @@
+[
+  {
+    "scenario": "ALL_SATISFIED (no violations)",
+    "avg_time_us": 3924.0809,
+    "iterations": 10000
+  },
+  {
+    "scenario": "ALL_FAILED (all guards violated)",
+    "avg_time_us": 3828.5901,
+    "overhead_pct": -2.43
+  },
+  {
+    "scenario": "PARTIAL_FAILED (some guards violated)",
+    "avg_time_us": 3464.7815,
+    "overhead_pct": -11.7
+  }
+]

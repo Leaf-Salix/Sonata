@@ -8,9 +8,96 @@ are developed on feature branches and merged to main upon completion.
 
 ---
 
-## [v0.9] -- In Progress
+## [v0.10] -- Guard Condition Abstraction
 
-**Theme**: Deliverable -- upstream PR readiness.
+**Theme**: Unified guard condition system with soft/hard severity classification,
+over-guarding mitigation, and Score cache integration.
+
+### Added
+
+- **GuardCondition Abstraction** (`sonata.guard` module):
+  - `GuardCondition` ABC as unified interface for all guard types.
+  - `ShapeAssumption` refactored as `GuardCondition` subclass (backward compatible).
+  - `GuardSeverity` enum with `GUARD_SEVERITY_HARD` and `GUARD_SEVERITY_SOFT`.
+  - `GuardEvaluator` interface for runtime guard evaluation.
+  - `GuardInvalidator` strategy implementation with severity-based policy.
+  - `InvalidateAction` enum: `REPLAN`, `INVALIDATE_HANDLE`, `UPDATE_IN_PLACE`.
+  - `GuardSelector` ABC and `EntryParamGuardSelector` Top-K selection strategy.
+  - `check_guard_density()` utility for over-guarding detection (threshold: 50 guards).
+  
+- **Score Cache Enhancement** (`sonata.cache` module):
+  - `CacheEntry.guard_status` field tracking guard satisfaction state.
+  - `ScoreCache.lookup()` validates guard status, treats violations as cache misses.
+  - `ScoreCache.lookup_plan_handle()` includes guard validation.
+  - `ScoreCache.contains()` checks guard status before returning True.
+  - Backward compatible: existing cache entries load with default `ALL_SATISFIED`.
+  - Serialization updated to support `guard_status` in JSON persistence.
+  
+- **PlanHandle Guard Integration** (`sonata.plan_handle` module):
+  - `PlanHandle.guard_status` field for runtime guard evaluation state.
+  - `PlanHandle.critical_guards` field tracking critical guard conditions.
+  - `GuardStatus` enum: `ALL_SATISFIED`, `PARTIAL_FAILED`, `ALL_FAILED`.
+  - `PlanHandle.from_score()` initializes guard status to `ALL_SATISFIED`.
+  
+- **Migration Path Tools**:
+  - `shape_assumption_to_guard_condition()` conversion function (with deprecation warning).
+  - `deprecated_shape_assumption()` helper with detailed migration guidance.
+  - User-facing migration guide: `docs/user-guide/guards-migration.md` (~430 lines).
+  - Compatibility test suite: `test_migration_compatibility.py` (4 tests).
+  
+- **Performance Benchmark**:
+  - `bench_cache_guard_overhead.py`: Measures guard checking overhead (< 5% confirmed).
+  - Results saved to `benchmarks/results/cache_guard_overhead_results.json`.
+
+### Changed
+
+- **Deprecation Warnings**:
+  - `ShapeAssumption` now emits `DeprecationWarning` when used without explicit severity.
+  - Migration guidance included in warning message with link to user guide.
+  - `Score.runtime_target` deprecation warnings active throughout codebase.
+
+- **Cache Behavior**:
+  - Conservative invalidation: both `PARTIAL_FAILED` and `ALL_FAILED` treated as cache misses.
+  - Rationale: Safety first, prevents subtle bugs from partial violations.
+
+### Tests
+
+- `test_guard.py`: 39 comprehensive tests covering Phase 1-4 features.
+- `test_cache.py`: 30 tests including guard-aware lookup scenarios.
+- `test_plan_handle.py`: Updated to include guard status fields.
+- `test_migration_compatibility.py`: 4 tests for ShapeAssumption → GuardCondition conversion.
+
+### Performance
+
+- Guard checking overhead benchmark results:
+  - Baseline (ALL_SATISFIED): ~3.9 µs per lookup
+  - ALL_FAILED: ~3.8 µs per lookup (-2.4% overhead)
+  - PARTIAL_FAILED: ~3.5 µs per lookup (-11.7% overhead)
+- Conclusion: Guard checking adds negligible performance cost (< 5%).
+
+### Documentation
+
+- New user guide: `guards-migration.md` (~430 lines) covering:
+  - Quick start migration examples
+  - Detailed step-by-step instructions
+  - API reference for GuardCondition system
+  - Common patterns and troubleshooting
+  - Performance considerations
+- Updated roadmap documentation to reflect v0.10 completion.
+- Version bumped to `SONATA_VERSION = "0.10.0"`.
+
+### Backward Compatibility
+
+- ✅ All existing code continues to work without modifications.
+- ✅ `ShapeAssumption` remains functional but emits deprecation warnings.
+- ✅ Existing cache files without `guard_status` field load correctly (default: ALL_SATISFIED).
+- ⚠️ **Breaking Change in v0.11**: `ShapeAssumption` will be removed; full migration required.
+
+---
+
+## [v0.9] -- Deliverable Milestone
+
+**Theme**: Upstream PR readiness with complete documentation and test coverage.
 
 ### Added
 

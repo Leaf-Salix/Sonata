@@ -17,17 +17,17 @@ from sonata.version import (
 
 class TestVersionInfo:
     def test_version_string(self):
-        assert SONATA_VERSION == "0.9.0"
+        assert SONATA_VERSION == "0.10.0"
 
     def test_version_info_tuple(self):
-        assert VERSION_INFO == (0, 9, 0)
+        assert VERSION_INFO == (0, 10, 0)
         assert len(VERSION_INFO) == 3
 
     def test_version_string_function(self):
-        assert version_string() == "0.9.0"
+        assert version_string() == "0.10.0"
 
     def test_version_string_with_label(self):
-        assert version_string(include_label=True) == "Sonata 0.9.0"
+        assert version_string(include_label=True) == "Sonata 0.10.0"
 
     def test_version_consistency(self):
         assert ".".join(str(v) for v in VERSION_INFO) == SONATA_VERSION

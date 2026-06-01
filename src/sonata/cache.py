@@ -21,6 +21,7 @@ from time import time
 from typing import Any, Callable, TYPE_CHECKING
 
 from .deserialization import score_from_dict as _score_from_dict
+from .plan_handle import GuardStatus, PlanHandle as PH_GuardStatus
 from .score import Score
 from .serialization import (
     FINGERPRINT_VERSION,
@@ -38,7 +39,7 @@ CACHE_SCHEMA_VERSION = 1
 
 @dataclass(frozen=True)
 class CacheEntry:
-    """One cached Score with optional PlanHandle association."""
+    """One cached Score with optional PlanHandle association and guard status."""
 
     fingerprint: str
     score_payload: dict[str, Any]
@@ -47,6 +48,7 @@ class CacheEntry:
     created_at: float = field(default_factory=time)
     plan_handle_payload: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    guard_status: GuardStatus = GuardStatus.ALL_SATISFIED
 
 
 class ScoreCache:
@@ -57,13 +59,20 @@ class ScoreCache:
         self._hits: int = 0
         self._misses: int = 0
 
-    def store(self, score: Score, *, fingerprint: str | None = None) -> str:
-        """Store a Score and return its fingerprint."""
+    def store(self, score: Score, *, fingerprint: str | None = None, guard_status: GuardStatus = GuardStatus.ALL_SATISFIED) -> str:
+        """Store a Score and return its fingerprint.
+        
+        Args:
+            score: The Score to cache
+            fingerprint: Optional fingerprint hint
+            guard_status: Initial guard status (default: ALL_SATISFIED)
+        """
         fp = fingerprint or score_fingerprint(score)
         payload = score_to_dict(score)
         existing = self._entries.get(fp)
         plan_payload = existing.plan_handle_payload if existing else None
         meta = existing.metadata if existing else {}
+        gs = existing.guard_status if existing else guard_status
         self._entries[fp] = CacheEntry(
             fingerprint=fp,
             score_payload=payload,
@@ -71,6 +80,7 @@ class ScoreCache:
             fingerprint_version=FINGERPRINT_VERSION,
             plan_handle_payload=plan_payload,
             metadata=meta,
+            guard_status=gs,
         )
         return fp
 
@@ -91,11 +101,15 @@ class ScoreCache:
             created_at=existing.created_at,
             plan_handle_payload=plan_handle_to_dict(plan_handle),
             metadata=existing.metadata,
+            guard_status=getattr(plan_handle, 'guard_status', existing.guard_status),
         )
         return fp
 
     def lookup(self, fingerprint: str) -> dict[str, Any] | None:
-        """Return the cached Score payload or None on miss."""
+        """Return the cached Score payload or None on miss.
+        
+        Treats guard violations (PARTIAL_FAILED or ALL_FAILED) as cache misses.
+        """
         entry = self._entries.get(fingerprint)
         if entry is None:
             self._misses += 1
@@ -103,24 +117,43 @@ class ScoreCache:
         if entry.schema_version != SCORE_SCHEMA_VERSION:
             self._misses += 1
             return None
+        # Phase 5 E2: Guard validation - treat violations as cache miss
+        if entry.guard_status != GuardStatus.ALL_SATISFIED:
+            self._misses += 1
+            return None
         self._hits += 1
         return entry.score_payload
 
     def lookup_plan_handle(self, fingerprint: str) -> dict[str, Any] | None:
-        """Return the cached PlanHandle payload or None on miss."""
+        """Return the cached PlanHandle payload or None on miss.
+        
+        Treats guard violations as cache misses.
+        """
         entry = self._entries.get(fingerprint)
         if entry is None or entry.plan_handle_payload is None:
+            self._misses += 1
+            return None
+        # Phase 5 E2: Guard validation for plan handle lookup
+        if entry.guard_status != GuardStatus.ALL_SATISFIED:
             self._misses += 1
             return None
         self._hits += 1
         return entry.plan_handle_payload
 
     def contains(self, fingerprint: str) -> bool:
-        """Return whether a valid entry exists for ``fingerprint``."""
+        """Return whether a valid entry exists for ``fingerprint``.
+        
+        Returns False if guard status is not ALL_SATISFIED.
+        """
         entry = self._entries.get(fingerprint)
         if entry is None:
             return False
-        return entry.schema_version == SCORE_SCHEMA_VERSION
+        if entry.schema_version != SCORE_SCHEMA_VERSION:
+            return False
+        # Phase 5 E2: Guard validation for contains check
+        if entry.guard_status != GuardStatus.ALL_SATISFIED:
+            return False
+        return True
 
     def invalidate(self, *fingerprints: str) -> int:
         """Remove entries by fingerprint. Returns count of removed entries."""
@@ -224,10 +257,18 @@ def _entry_to_dict(entry: CacheEntry) -> dict[str, Any]:
         "created_at": entry.created_at,
         "plan_handle_payload": entry.plan_handle_payload,
         "metadata": entry.metadata,
+        "guard_status": entry.guard_status.value,
     }
 
 
 def _entry_from_dict(data: dict[str, Any]) -> CacheEntry:
+    # Phase 5 E1: Deserialize guard_status with backward compatibility
+    guard_status_value = data.get("guard_status", "all_satisfied")
+    try:
+        guard_status = GuardStatus(guard_status_value)
+    except ValueError:
+        guard_status = GuardStatus.ALL_SATISFIED  # Default for unknown values
+    
     return CacheEntry(
         fingerprint=data["fingerprint"],
         score_payload=data["score_payload"],
@@ -236,6 +277,7 @@ def _entry_from_dict(data: dict[str, Any]) -> CacheEntry:
         created_at=data.get("created_at", 0.0),
         plan_handle_payload=data.get("plan_handle_payload"),
         metadata=data.get("metadata", {}),
+        guard_status=guard_status,
     )
 
 
