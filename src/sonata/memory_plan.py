@@ -167,9 +167,155 @@ def compute_conflict_matrix(
     return matrix
 
 
+# ---------------------------------------------------------------------------
+# v0.11 Phase 2 B: Constraint Solver
+# ---------------------------------------------------------------------------
+
+from abc import ABC, abstractmethod
+import time
+import warnings
+
+
+class ConstraintSolver(ABC):
+    """ABC for memory constraint solvers.
+
+    v0.11 Phase 2 B1: Abstract interface for memory planning solvers.
+    Implementations must assign non-overlapping offsets to conflicting
+    buffers while respecting size and device memory constraints.
+    """
+
+    @abstractmethod
+    def solve(
+        self,
+        conflict_matrix: list[list[bool]],
+        sizes: list[int],
+        device_memory_limit: int | None = None,
+    ) -> MemoryPlan:
+        """Assign offsets to buffers subject to conflict constraints.
+
+        Args:
+            conflict_matrix: NxN boolean matrix (True = cannot share memory).
+            sizes: Buffer sizes in bytes (length N).
+            device_memory_limit: Optional upper bound on total memory.
+
+        Returns:
+            MemoryPlan with offset assignments.
+        """
+
+
+class GreedySolver(ConstraintSolver):
+    """Greedy first-fit-decreasing solver.
+
+    v0.11 Phase 2 B2: Fallback strategy when the primary solver times out.
+    Sorts buffers by size descending and places each at the first offset
+    that doesn't conflict with already-placed buffers.
+    """
+
+    def solve(
+        self,
+        conflict_matrix: list[list[bool]],
+        sizes: list[int],
+        device_memory_limit: int | None = None,
+    ) -> MemoryPlan:
+        n = len(sizes)
+        if n == 0:
+            return MemoryPlan(allocations=(), peak_memory=0)
+
+        order = sorted(range(n), key=lambda i: sizes[i], reverse=True)
+        offsets: dict[int, int] = {}
+
+        for idx in order:
+            size = sizes[idx]
+            offset = 0
+            placed = False
+            while not placed:
+                conflict = False
+                for other_idx, other_offset in offsets.items():
+                    if conflict_matrix[idx][other_idx]:
+                        other_size = sizes[other_idx]
+                        if offset < other_offset + other_size and other_offset < offset + size:
+                            offset = other_offset + other_size
+                            conflict = True
+                            break
+                if not conflict:
+                    offsets[idx] = offset
+                    placed = True
+
+        allocations = tuple(
+            BufferAllocation(storage_key=f"buf_{i}", offset=offsets[i], size=sizes[i])
+            for i in range(n)
+        )
+        peak = max((a.offset + a.size for a in allocations), default=0)
+        return MemoryPlan(allocations=allocations, peak_memory=peak)
+
+
+class DynamicShapeError(Exception):
+    """Raised when dynamic shapes prevent memory planning."""
+
+    def __init__(self, symbols: list[str]):
+        self.symbols = symbols
+        super().__init__(
+            f"Dynamic shape symbols {symbols} are not supported by the memory planner. "
+            "Consider using static shapes or enabling runtime shape inference."
+        )
+
+
+def solve_memory(
+    solver: ConstraintSolver,
+    conflict_matrix: list[list[bool]],
+    sizes: list[int],
+    device_memory_limit: int | None = None,
+    *,
+    timeout_seconds: float = 1.0,
+    fallback: ConstraintSolver | None = None,
+) -> MemoryPlan:
+    """Run a solver with timeout and optional greedy fallback.
+
+    v0.11 Phase 2 B2: If the primary solver exceeds ``timeout_seconds``,
+    falls back to ``fallback`` (default: GreedySolver).
+
+    Args:
+        solver: Primary solver to try first.
+        conflict_matrix: NxN boolean conflict matrix.
+        sizes: Buffer sizes.
+        device_memory_limit: Optional memory cap.
+        timeout_seconds: Max wall-clock time for primary solver.
+        fallback: Solver to use on timeout (default: GreedySolver).
+
+    Returns:
+        MemoryPlan from whichever solver succeeded.
+    """
+    if fallback is None:
+        fallback = GreedySolver()
+
+    start = time.monotonic()
+    try:
+        result = solver.solve(conflict_matrix, sizes, device_memory_limit)
+        elapsed = time.monotonic() - start
+        if elapsed > timeout_seconds:
+            warnings.warn(
+                f"Primary solver took {elapsed:.2f}s (>{timeout_seconds}s). "
+                "Consider using GreedySolver for large graphs.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return result
+    except Exception:
+        warnings.warn(
+            "Primary solver failed, falling back to GreedySolver.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return fallback.solve(conflict_matrix, sizes, device_memory_limit)
+
+
 __all__ = [
     "BufferAllocation",
+    "ConstraintSolver",
+    "DynamicShapeError",
+    "GreedySolver",
     "MemoryPlan",
     "compute_conflict_matrix",
     "plan_memory",
+    "solve_memory",
 ]

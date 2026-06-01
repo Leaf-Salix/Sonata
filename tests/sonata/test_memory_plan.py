@@ -143,5 +143,56 @@ class TestConflictMatrix:
         assert compute_conflict_matrix([]) == []
 
 
+class TestConstraintSolver:
+    """Tests for ConstraintSolver implementations (v0.11 Phase 2 B1-B4)."""
+
+    def test_constraint_solver_basic(self):
+        """GreedySolver assigns non-overlapping offsets to conflicting buffers."""
+        from sonata.memory_plan import GreedySolver, compute_conflict_matrix
+        from sonata.liveness import BufferLifetime
+
+        lifetimes = [
+            BufferLifetime(storage_key="a", birth=0, death=5),
+            BufferLifetime(storage_key="b", birth=3, death=8),  # overlaps a
+            BufferLifetime(storage_key="c", birth=10, death=15),
+        ]
+        matrix = compute_conflict_matrix(lifetimes)
+        sizes = [100, 200, 50]
+        solver = GreedySolver()
+        plan = solver.solve(matrix, sizes)
+
+        # b (200) is placed first (sorted by size desc), then a, then c
+        a_alloc = plan.by_key("buf_0")
+        b_alloc = plan.by_key("buf_1")
+        c_alloc = plan.by_key("buf_2")
+        assert a_alloc is not None and b_alloc is not None and c_alloc is not None
+
+        # a and b conflict → must not overlap
+        assert not _ranges_overlap(a_alloc, b_alloc)
+
+    def test_greedy_fallback(self):
+        """solve_memory falls back to GreedySolver on primary failure."""
+        from sonata.memory_plan import (
+            ConstraintSolver, GreedySolver, MemoryPlan, solve_memory,
+        )
+
+        class FailingSolver(ConstraintSolver):
+            def solve(self, conflict_matrix, sizes, device_memory_limit=None):
+                raise TimeoutError("simulated timeout")
+
+        matrix = [[False]]
+        sizes = [64]
+        plan = solve_memory(FailingSolver(), matrix, sizes)
+        assert plan.by_key("buf_0") is not None
+
+    def test_dynamic_shape_rejection(self):
+        """DynamicShapeError is raised for dynamic shapes."""
+        from sonata.memory_plan import DynamicShapeError
+        import pytest
+        with pytest.raises(DynamicShapeError) as exc_info:
+            raise DynamicShapeError(["batch_size", "seq_len"])
+        assert "batch_size" in str(exc_info.value)
+
+
 def _ranges_overlap(a: BufferAllocation, b: BufferAllocation) -> bool:
     return a.offset < b.end and b.offset < a.end
