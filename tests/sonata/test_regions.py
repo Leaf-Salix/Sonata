@@ -652,3 +652,64 @@ class TestStoreRegionTree:
         # root and dyn1 are still valid (ancestors/siblings untouched)
         assert lookup_region_tree("root", cache, path_to_fingerprint=mappings) is not None
         assert lookup_region_tree("root.child[0]", cache, path_to_fingerprint=mappings) is not None
+
+
+class TestEndToEndRegionizedWorkflow:
+    """E1: End-to-end regionized workflow smoke test.
+
+    Input: IR with mixed static/dynamic regions.
+    Process: extract -> check eligibility -> build region tree -> cache -> retrieve.
+    Expected: static regions cached, dynamic regions fall back.
+    """
+
+    def test_full_workflow(self):
+        from sonata.cache import ScoreCache
+        from sonata.regions import (
+            extract_regions, build_region_tree, check_region_eligibility,
+            store_region_tree, lookup_region_tree,
+        )
+        from sonata.plan_handle import GuardStatus
+
+        # Step 1: Build IR with mixed regions
+        body = [
+            _make_stmt("Call"),
+            _make_stmt("Call"),
+            _make_stmt("ForStmt"),      # dynamic
+            _make_stmt("Call"),
+            _make_stmt("Call"),
+            _make_stmt("IfStmt"),       # dynamic
+            _make_stmt("Call"),
+        ]
+        node = _make_func(body, name="e2e_graph")
+
+        # Step 2: Extract regions
+        region_map = extract_regions(node)
+        assert len(region_map.regions) == 5  # s0, d1, s2, d3, s4
+
+        # Step 3: Build region tree
+        tree = build_region_tree(region_map)
+        assert tree.root.region.is_static
+
+        # Step 4: Check eligibility
+        result = check_region_eligibility(node)
+        assert result.eligible
+        assert result.metadata['static_region_count'] == 3
+        assert result.metadata['dynamic_region_count'] == 2
+        assert result.metadata['region_statuses']['region_0'] == 'mixed'
+
+        # Step 5: Cache per-region scores
+        cache = ScoreCache()
+        per_region = result.metadata['per_region_scores']
+        mappings = store_region_tree(tree, {}, cache, per_region_scores=per_region)
+
+        # Static subtrees are cached
+        assert len(per_region) >= 2  # at least 2 maximal static subtrees
+        cached_root = lookup_region_tree("root", cache, path_to_fingerprint=mappings)
+        assert cached_root is not None
+        assert cached_root['name'].endswith('region_0')
+
+        # Step 6: Verify fallback reasons have region context
+        dynamic_nodes = tree.dynamic_nodes()
+        for dn in dynamic_nodes:
+            assert dn.region.fallback_reason.region_type == "dynamic"
+            assert dn.region.fallback_reason.control_flow_node in ("ForStmt", "IfStmt")
