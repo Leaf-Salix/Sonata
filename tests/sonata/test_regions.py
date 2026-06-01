@@ -437,8 +437,67 @@ class TestPerRegionEligibility:
         assert isinstance(result.metadata['per_region_scores'], dict)
         assert len(result.metadata['per_region_scores']) > 0
 
+    def test_mixed_graph_eligibility(self):
+        """Test mixed graph: static root with dynamic children is partially eligible."""
+        body = [
+            _make_stmt("Call"),
+            _make_stmt("ForStmt"),   # dynamic
+            _make_stmt("Call"),
+        ]
+        node = _make_func(body, name="mixed_func")
+        result = check_region_eligibility(node)
 
-class TestStoreRegionTree:
+        # Partially eligible: has static regions
+        assert result.eligible
+        assert result.metadata is not None
+
+        # Root (region 0) is static, has dynamic child → mixed
+        statuses = result.metadata['region_statuses']
+        assert statuses['region_0'] == 'mixed'
+        assert statuses['region_1'] == 'dynamic'
+        assert statuses['region_2'] == 'static'
+
+        # Should have per-region scores for static subtrees
+        assert len(result.metadata['per_region_scores']) > 0
+        # Dynamic region should have a fallback reason
+        assert result.metadata['dynamic_region_count'] == 1
+
+
+class TestRegionStatus:
+    """Tests for RegionTreeNode.region_status property."""
+
+    def test_static_leaf(self):
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC))
+        assert node.region_status == "static"
+
+    def test_dynamic_leaf(self):
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_DYNAMIC))
+        assert node.region_status == "dynamic"
+
+    def test_static_with_dynamic_children_is_mixed(self):
+        dyn = RegionTreeNode(region=Region(region_id=1, kind=REGION_DYNAMIC))
+        root = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            children=(dyn,),
+        )
+        assert root.region_status == "mixed"
+
+    def test_static_with_static_children_is_static(self):
+        child = RegionTreeNode(region=Region(region_id=1, kind=REGION_STATIC))
+        root = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            children=(child,),
+        )
+        assert root.region_status == "static"
+
+    def test_static_with_mixed_children_is_mixed(self):
+        dyn = RegionTreeNode(region=Region(region_id=1, kind=REGION_DYNAMIC))
+        sta = RegionTreeNode(region=Region(region_id=2, kind=REGION_STATIC))
+        root = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            children=(dyn, sta),
+        )
+        assert root.region_status == "mixed"
     """Tests for store_region_tree function (Phase 1 C1-C3)."""
     
     def test_fingerprint_mappings(self):

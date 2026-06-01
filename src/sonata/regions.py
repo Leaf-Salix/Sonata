@@ -103,6 +103,19 @@ class RegionTreeNode:
     def is_leaf(self) -> bool:
         """Check if this node has no children."""
         return len(self.children) == 0
+
+    @property
+    def region_status(self) -> str:
+        """Return region classification: 'static', 'dynamic', or 'mixed'.
+
+        A node is 'mixed' when it is static but has at least one dynamic child,
+        meaning the subtree contains both eligible and fallback regions.
+        """
+        if self.region.is_dynamic:
+            return "dynamic"
+        if any(c.region.is_dynamic for c in self.children):
+            return "mixed"
+        return "static"
     
     @property
     def is_static_subtree(self) -> bool:
@@ -518,6 +531,10 @@ def check_region_eligibility(
             'static_subtrees': [
                 f"region_{n.region.region_id}" for n in region_tree.static_subtrees()
             ],
+            'region_statuses': {
+                f"region_{n.region.region_id}": n.region_status
+                for n in region_tree.all_nodes
+            },
         }
         object.__setattr__(result, 'metadata', meta)
         
