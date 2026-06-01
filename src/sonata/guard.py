@@ -409,6 +409,49 @@ class GuardEvaluator:
         
         return all_satisfied, results
 
+    def evaluate_region(
+        self,
+        node: "RegionTreeNode",
+        runtime_values: dict[str, Any],
+    ) -> "GuardStatus":
+        """Evaluate all guards in a region subtree.
+
+        Collects shape assumptions (which are GuardConditions) from the
+        node's Score and all descendant Scores, evaluates them, and returns
+        a GuardStatus.  Short-circuits on the first HARD violation.
+
+        Args:
+            node: RegionTreeNode to evaluate.
+            runtime_values: Runtime values to check guards against.
+
+        Returns:
+            GuardStatus.ALL_SATISFIED, PARTIAL_FAILED, or ALL_FAILED.
+        """
+        from .plan_handle import GuardStatus
+
+        guards: list[GuardCondition] = []
+
+        def _collect(n: "RegionTreeNode") -> None:
+            if n.score is not None:
+                guards.extend(n.score.shape_assumptions)
+            for child in n.children:
+                _collect(child)
+
+        _collect(node)
+
+        if not guards:
+            return GuardStatus.ALL_SATISFIED
+
+        any_failed = False
+        for guard in guards:
+            satisfied, action = self.evaluate(guard, runtime_values)
+            if not satisfied:
+                if action == InvalidateAction.REPLAN:
+                    return GuardStatus.ALL_FAILED
+                any_failed = True
+
+        return GuardStatus.PARTIAL_FAILED if any_failed else GuardStatus.ALL_SATISFIED
+
 
 class GuardInvalidator:
     """Strategy class for handling guard invalidation.

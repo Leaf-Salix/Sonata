@@ -456,3 +456,52 @@ class TestGuardEdgeCases:
         assert InvalidateAction.REPLAN.is_conservative() is True
         assert InvalidateAction.INVALIDATE_HANDLE.is_conservative() is True
         assert InvalidateAction.UPDATE_IN_PLACE.is_conservative() is False
+
+
+class TestEvaluateRegion:
+    """Tests for GuardEvaluator.evaluate_region (v0.11 Phase 1 D1)."""
+
+    def _make_score_with_assumptions(self, assumptions):
+        from sonata.score import Score, RuntimeTarget
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        return Score(name="test", runtime_target=rt, tasks=(),
+                     dependencies=(), shape_assumptions=tuple(assumptions))
+
+    def test_all_satisfied(self):
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        from sonata.plan_handle import GuardStatus
+        evaluator = GuardEvaluator()
+        score = self._make_score_with_assumptions([
+            ShapeAssumption(symbol="x", dims=(32,)),
+        ])
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC), score=score)
+        assert evaluator.evaluate_region(node, {"x": (32,)}) == GuardStatus.ALL_SATISFIED
+
+    def test_hard_violation_returns_all_failed(self):
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        from sonata.plan_handle import GuardStatus
+        evaluator = GuardEvaluator()
+        score = self._make_score_with_assumptions([
+            ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_HARD),
+        ])
+        node = RegionTreeNode(region=Region(region_id=0, kind=REGION_STATIC), score=score)
+        assert evaluator.evaluate_region(node, {"x": (64,)}) == GuardStatus.ALL_FAILED
+
+    def test_descendant_guard_violation(self):
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC
+        from sonata.plan_handle import GuardStatus
+        evaluator = GuardEvaluator()
+        parent_score = self._make_score_with_assumptions([
+            ShapeAssumption(symbol="x", dims=(32,)),
+        ])
+        child_score = self._make_score_with_assumptions([
+            ShapeAssumption(symbol="y", dims=(16,), severity=GUARD_SEVERITY_HARD),
+        ])
+        child = RegionTreeNode(region=Region(region_id=1, kind=REGION_STATIC), score=child_score)
+        parent = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            score=parent_score,
+            children=(child,),
+        )
+        # x satisfied, y violated → ALL_FAILED (hard violation in descendant)
+        assert evaluator.evaluate_region(parent, {"x": (32,), "y": (99,)}) == GuardStatus.ALL_FAILED
