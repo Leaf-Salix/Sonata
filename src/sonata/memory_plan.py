@@ -39,6 +39,9 @@ class MemoryPlan:
 
     allocations: tuple[BufferAllocation, ...] = ()
     peak_memory: int = 0
+    # v0.11 Phase 2 C1-C2: Schema extension
+    solver_type: str = "greedy"
+    conflict_matrix_hash: str | None = None
 
     def total_allocated(self) -> int:
         return sum(a.size for a in self.allocations)
@@ -219,7 +222,7 @@ class GreedySolver(ConstraintSolver):
     ) -> MemoryPlan:
         n = len(sizes)
         if n == 0:
-            return MemoryPlan(allocations=(), peak_memory=0)
+            return MemoryPlan(allocations=(), peak_memory=0, solver_type="greedy")
 
         order = sorted(range(n), key=lambda i: sizes[i], reverse=True)
         offsets: dict[int, int] = {}
@@ -246,7 +249,7 @@ class GreedySolver(ConstraintSolver):
             for i in range(n)
         )
         peak = max((a.offset + a.size for a in allocations), default=0)
-        return MemoryPlan(allocations=allocations, peak_memory=peak)
+        return MemoryPlan(allocations=allocations, peak_memory=peak, solver_type="greedy")
 
 
 class DynamicShapeError(Exception):

@@ -194,5 +194,36 @@ class TestConstraintSolver:
         assert "batch_size" in str(exc_info.value)
 
 
+class TestMemoryPlanSchema:
+    """Tests for MemoryPlan schema extension (v0.11 Phase 2 C1-C3)."""
+
+    def test_solver_type_default(self):
+        """Default solver_type is 'greedy' for backward compatibility."""
+        from sonata.memory_plan import MemoryPlan
+        plan = MemoryPlan()
+        assert plan.solver_type == "greedy"
+
+    def test_solver_type_set_by_greedy(self):
+        """GreedySolver sets solver_type='greedy'."""
+        from sonata.memory_plan import GreedySolver
+        solver = GreedySolver()
+        plan = solver.solve([[False]], [100])
+        assert plan.solver_type == "greedy"
+
+    def test_conflict_matrix_hash(self):
+        """conflict_matrix_hash survives round-trip."""
+        from sonata.memory_plan import MemoryPlan
+        plan = MemoryPlan(conflict_matrix_hash="abc123")
+        assert plan.conflict_matrix_hash == "abc123"
+
+    def test_backward_compat_no_new_fields(self):
+        """Old code without new fields gets defaults."""
+        from sonata.memory_plan import MemoryPlan
+        # Simulate old-style construction (only allocations + peak_memory)
+        plan = MemoryPlan(allocations=(), peak_memory=0)
+        assert plan.solver_type == "greedy"
+        assert plan.conflict_matrix_hash is None
+
+
 def _ranges_overlap(a: BufferAllocation, b: BufferAllocation) -> bool:
     return a.offset < b.end and b.offset < a.end
