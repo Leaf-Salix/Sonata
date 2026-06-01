@@ -126,8 +126,50 @@ def _find_first_fit(
     return candidate
 
 
+def compute_conflict_matrix(
+    lifetimes: list[BufferLifetime],
+    *,
+    stream_ids: dict[str, int] | None = None,
+) -> list[list[bool]]:
+    """Build an NxN boolean conflict matrix from buffer lifetimes.
+
+    v0.11 Phase 2 A1-A3: Conflict matrix computation with stream-aware
+    and in-place handling.
+
+    ``matrix[i][j]`` is True when lifetimes[i] and lifetimes[j] overlap
+    AND are on the same stream (or no stream info is given).
+
+    Args:
+        lifetimes: Buffer lifetime intervals.
+        stream_ids: Optional mapping of storage_key -> stream_id.
+            Buffers on different streams never conflict.
+
+    Returns:
+        NxN boolean matrix (list of lists).
+    """
+    n = len(lifetimes)
+    matrix = [[False] * n for _ in range(n)]
+
+    for i in range(n):
+        matrix[i][i] = False  # no self-conflict by default
+        for j in range(i + 1, n):
+            # Stream-aware: skip if different streams
+            if stream_ids is not None:
+                si = stream_ids.get(lifetimes[i].storage_key, 0)
+                sj = stream_ids.get(lifetimes[j].storage_key, 0)
+                if si != sj:
+                    continue
+
+            if lifetimes[i].overlaps(lifetimes[j]):
+                matrix[i][j] = True
+                matrix[j][i] = True
+
+    return matrix
+
+
 __all__ = [
     "BufferAllocation",
     "MemoryPlan",
+    "compute_conflict_matrix",
     "plan_memory",
 ]

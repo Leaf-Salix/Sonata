@@ -96,5 +96,52 @@ class TestMemoryPlan:
         assert plan.by_key("nonexistent") is None
 
 
+class TestConflictMatrix:
+    """Tests for compute_conflict_matrix (v0.11 Phase 2 A1-A3)."""
+
+    def test_conflict_matrix_basic(self):
+        """Overlapping lifetimes produce True in the matrix."""
+        from sonata.memory_plan import compute_conflict_matrix
+        lifetimes = [
+            BufferLifetime(storage_key="a", birth=0, death=5),
+            BufferLifetime(storage_key="b", birth=3, death=8),   # overlaps a
+            BufferLifetime(storage_key="c", birth=10, death=15), # no overlap
+        ]
+        m = compute_conflict_matrix(lifetimes)
+        assert m[0][1] is True   # a conflicts with b
+        assert m[1][0] is True   # symmetric
+        assert m[0][2] is False  # a doesn't conflict with c
+        assert m[1][2] is False  # b doesn't conflict with c
+        assert all(m[i][i] is False for i in range(3))  # no self-conflict
+
+    def test_stream_aware_conflicts(self):
+        """Buffers on different streams don't conflict even if lifetimes overlap."""
+        from sonata.memory_plan import compute_conflict_matrix
+        lifetimes = [
+            BufferLifetime(storage_key="a", birth=0, death=10),
+            BufferLifetime(storage_key="b", birth=5, death=15),  # overlaps a
+        ]
+        # Same stream → conflict
+        m_same = compute_conflict_matrix(lifetimes, stream_ids={"a": 0, "b": 0})
+        assert m_same[0][1] is True
+
+        # Different streams → no conflict
+        m_diff = compute_conflict_matrix(lifetimes, stream_ids={"a": 0, "b": 1})
+        assert m_diff[0][1] is False
+
+    def test_inplace_handling(self):
+        """Same buffer (self-overlap) is not a conflict by default."""
+        from sonata.memory_plan import compute_conflict_matrix
+        lifetimes = [
+            BufferLifetime(storage_key="a", birth=0, death=5),
+        ]
+        m = compute_conflict_matrix(lifetimes)
+        assert m[0][0] is False  # no self-conflict
+
+    def test_empty(self):
+        from sonata.memory_plan import compute_conflict_matrix
+        assert compute_conflict_matrix([]) == []
+
+
 def _ranges_overlap(a: BufferAllocation, b: BufferAllocation) -> bool:
     return a.offset < b.end and b.offset < a.end
