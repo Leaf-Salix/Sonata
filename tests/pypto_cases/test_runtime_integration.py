@@ -196,3 +196,33 @@ class TestRealIRToHostBuildGraph:
         assert plan.metadata["dynamic_region_count"] == 1
         assert plan.metadata["static_region_count"] == 1
         assert plan.metadata["region_guard_status"]["region_1"] == "partial_failed"
+
+
+class TestSonataPipeline:
+    """Tests for sonata_analyze() — single-call full analysis (Path A)."""
+
+    def test_sonata_analyze_simple_program(self):
+        """sonata_analyze produces complete result on simple program."""
+        from sonata.pipeline import sonata_analyze
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="SimpleAdd")
+
+        assert result.eligible
+        assert result.score is not None
+        assert result.task_count >= 1
+        assert result.has_plan
+        assert result.region_tree is not None
+        assert result.region_eligibility is not None
+        assert result.plan_handle is not None
+        assert "region_0" in result.region_statuses
+
+    def test_sonata_analyze_plan_tasks_match_score(self):
+        """Plan tasks match score tasks 1:1."""
+        from sonata.pipeline import sonata_analyze
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="SimpleAdd")
+
+        assert result.host_build_graph_plan is not None
+        assert result.host_build_graph_plan.task_count() == len(result.score.tasks)
