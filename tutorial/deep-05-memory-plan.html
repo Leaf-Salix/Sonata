@@ -44,6 +44,32 @@
 
 <p>依赖：<code>liveness.py</code>（BufferLifetime、find_conflicts）。</p>
 
+<h2>前置：liveness.py 的 Task.outputs 跟踪（v0.11）</h2>
+
+<p><code>memory_plan.py</code> 依赖 <code>liveness.py</code> 的 <code>compute_lifetimes()</code>。
+v0.11 对 <code>compute_lifetimes</code> 做了增强——除了从 <code>arg_directions</code>
+推断写操作，还会显式跟踪 <code>Task.outputs</code> 中的 buffer：</p>
+
+<pre><code># liveness.py 的 compute_lifetimes 逻辑（简化）
+for task in tasks:
+    # 原有：从 arg_directions 推断
+    for arg, direction in zip(task.args, task.arg_directions):
+        if normalize_direction(direction) in WRITE_DIRECTIONS:
+            births[sk] = task.task_id
+            deaths[sk] = task.task_id
+        if normalize_direction(direction) in READ_DIRECTIONS:
+            deaths[sk] = max(deaths.get(sk, task.task_id), task.task_id)
+
+    # v0.11 新增：显式输出 buffer
+    for out_key in task.outputs:
+        if out_key not in births:
+            births[out_key] = task.task_id
+        deaths[out_key] = max(deaths.get(out_key, task.task_id), task.task_id)</code></pre>
+
+<p>为什么需要 <code>outputs</code>？因为多输出 tuple 场景下（如 topk 返回 values + indices），
+<code>arg_directions</code> 中的 <code>"output"</code> 方向无法区分多个输出 buffer 的 storage key。
+<code>outputs</code> 提供了显式的、精确的声明。</p>
+
 <h2>BufferAllocation — 单个 buffer 的分配</h2>
 
 <pre><code>@dataclass(frozen=True)

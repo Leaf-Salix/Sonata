@@ -48,10 +48,14 @@ PYTHONPATH=src:upstream/pypto/python python -m pytest tests/sonata tests/pypto_c
 
 <pre><code>tests/
 ├── sonata/                           ← 纯 Sonata 测试（不依赖 PyPTO）
+│   ├── test_adapters.py              ← Adapter 注册与能力测试
+│   ├── test_alias.py                 ← 存储别名分析测试
 │   ├── test_audit.py                 ← 审计元数据测试
+│   ├── test_cache.py                 ← ScoreCache 持久化与 guard 感知测试
 │   ├── test_dependencies.py          ← 依赖策略测试
 │   ├── test_dependency_kind.py       ← 依赖类型细分测试
 │   ├── test_deserialization.py       ← 反序列化测试
+│   ├── test_directions.py            ← 参数方向归一化测试
 │   ├── test_eligibility.py           ← Eligibility 提取测试
 │   ├── test_fallback.py              ← FallbackCode 映射测试
 │   ├── test_guard.py                 ← Guard 条件系统测试（v0.10-v0.11）
@@ -60,14 +64,17 @@ PYTHONPATH=src:upstream/pypto/python python -m pytest tests/sonata tests/pypto_c
 │   ├── test_memory_plan.py           ← 内存规划 + 约束求解器测试（v0.11）
 │   ├── test_migration_compatibility.py ← Guard 迁移兼容性测试
 │   ├── test_plan_handle.py           ← PlanHandle 测试
+│   ├── test_pypto_adapter.py         ← PyPTO Adapter 合约测试
 │   ├── test_regions.py               ← Region/RegionTree 测试（v0.4-v0.11）
 │   ├── test_regions_v011.py          ← RegionTree 新增测试（v0.11）
+│   ├── test_runtime_adapter.py       ← HostBuildGraphRuntimeAdapter 测试
 │   ├── test_score.py                 ← Score 数据模型测试
 │   ├── test_serialization.py         ← 序列化与 fingerprint 测试
 │   ├── test_storage.py               ← Storage key 测试
 │   └── test_version.py               ← 版本信息测试
 └── pypto_cases/                      ← 需要 PyPTO 的测试
-    └── test_eligibility.py</code></pre>
+    ├── test_eligibility.py           ← Eligibility 兼容性测试
+    └── test_runtime_integration.py   ← HostBuildGraphPlan 端到端集成测试（v0.11 新增）</code></pre>
 
 <p>测试分两层：<code>tests/sonata/</code> 验证核心逻辑（用 mock 对象模拟 IR）；
 <code>tests/pypto_cases/</code> 验证 adapter contract 和兼容性（用真实 PyPTO IR）。

@@ -113,7 +113,8 @@ class Task:
     args: tuple[Any, ...] = ()
     arg_directions: tuple[str, ...] = ()
     arg_storage_keys: tuple[Any | None, ...] = ()
-    name: str | None = None</code></pre>
+    name: str | None = None
+    outputs: tuple[str, ...] = ()  # v0.11: 显式输出 buffer 的 storage key</code></pre>
 
 <h3>task_id vs func_id 的区别</h3>
 
@@ -168,11 +169,26 @@ Task(task_id=3, func_id=1, name="add")     # add 第 1 次出现（新 func_id�
 
 <p>storage key 传播路径：参数 → tensor.create 分配 → 函数调用写方向参数 → 调用输出（AssignStmt LHS）→ TupleGetItemExpr 元素。详见 <code>storage.py</code>。</p>
 
-<h3>多输出 / TupleGetItem 传播（#12）</h3>
+<h3>多输出 / TupleGetItem 传播</h3>
 
-<div class="callout info">
-  <strong>开放问题：</strong>有些 PyPTO 操作返回 tuple。storage.py 的 <code>_propagate_tuple_get_storage</code> 已处理基本场景：<code>multi_output_func</code> 的写方向参数按顺序映射到 tuple 元素的 storage key。v0.3 做 liveness analysis 时如果精度不够，可能需要 Task 增加 <code>outputs</code> 字段。
-</div>
+<p>有些 PyPTO 操作返回 tuple（如 topk 同时返回 values 和 indices）。
+v0.11 新增 <code>Task.outputs</code> 字段来显式跟踪这些输出 buffer：</p>
+
+<pre><code># 一个返回 tuple 的 task
+Task(
+    task_id=2, func_id=1, core_type="aic",
+    args=("x", "k"), arg_directions=("input", "scalar"),
+    arg_storage_keys=("param:0:x", None),
+    name="topk",
+    outputs=("alloc:values", "alloc:indices"),  # v0.11: 显式声明输出
+)</code></pre>
+
+<p><code>outputs</code> 的作用：</p>
+<ul>
+  <li><strong>Liveness 分析</strong>：<code>compute_lifetimes()</code> 会将 <code>outputs</code> 中的每个 key 视为一次写操作，精确计算 buffer 的 birth/death</li>
+  <li><strong>依赖分析</strong>：下游 task 读取这些 output key 时，能正确建立 RAW 依赖</li>
+  <li><strong>向后兼容</strong>：<code>outputs</code> 默认为空 tuple，不影响现有 task</li>
+</ul>
 
 <h2>Dependency — DAG 的边</h2>
 

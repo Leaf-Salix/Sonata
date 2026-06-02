@@ -90,6 +90,28 @@ Task 3: softmax(a)    → o     # 读 a，写 o</code></pre>
 <p>冲突条件：<code>a.birth &lt;= b.death AND b.birth &lt;= a.death</code>
 （两个 buffer 在某个时间点同时存活）。</p>
 
+<h3>v0.11 新增：Task.outputs 的生命周期跟踪</h3>
+
+<p>有些 task 返回多个输出（如 topk 返回 values 和 indices）。
+v0.11 的 <code>Task.outputs</code> 字段让 <code>compute_lifetimes</code>
+能精确跟踪这些输出 buffer：</p>
+
+<pre><code>Task(
+    task_id=2, func_id=1, core_type="aic",
+    args=("x",), arg_directions=("input",),
+    arg_storage_keys=("param:0:x",),
+    name="topk",
+    outputs=("alloc:values", "alloc:indices"),  # 两个输出
+)
+
+# compute_lifetimes 会将 outputs 视为写操作：
+#   BufferLifetime(storage_key="alloc:values", birth=2, death=2)
+#   BufferLifetime(storage_key="alloc:indices", birth=2, death=2)</code></pre>
+
+<p>没有 <code>outputs</code> 字段时，这些输出 buffer 只能从 <code>arg_directions</code>
+的 <code>"output"</code> 方向推断，但多输出 tuple 场景下精度不够。
+<code>outputs</code> 提供了显式的、精确的声明。</p>
+
 <pre><code>from sonata import compute_lifetimes, find_conflicts
 
 lifetimes = compute_lifetimes(score.tasks)

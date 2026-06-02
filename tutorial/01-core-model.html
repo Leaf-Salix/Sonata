@@ -93,7 +93,8 @@ class Task:
     args: tuple[Any, ...]      # 参数列表，如 ("x", "w", "y")
     arg_directions: tuple[str, ...]      # 每个参数的读写方向
     arg_storage_keys: tuple[Any | None, ...]  # 每个参数的内存位置标识
-    name: str | None = None    # 函数名，如 "matmul"</code></pre>
+    name: str | None = None    # 函数名，如 "matmul"
+    outputs: tuple[str, ...] = ()  # v0.11: 显式输出 buffer（多输出场景）</code></pre>
 
 <table>
   <tr><th>字段</th><th>含义</th><th>类比</th></tr>
@@ -102,6 +103,7 @@ class Task:
   <tr><td><code>core_type</code></td><td>AIC = 昇腾 NPU 矩阵计算单元；AIV = 向量计算单元</td><td>这道菜用烤箱还是灶台</td></tr>
   <tr><td><code>arg_directions</code></td><td><code>input</code>/<code>output</code>/<code>inout</code>/<code>scalar</code>/<code>nodep</code></td><td>哪些材料要加工、哪些是成品</td></tr>
   <tr><td><code>arg_storage_keys</code></td><td><code>param:0:x</code> = 入口参数 x；<code>alloc:y</code> = 分配的中间结果</td><td>"面粉在 A 柜"——两个步骤都从 A 柜取面粉，就有依赖</td></tr>
+  <tr><td><code>outputs</code></td><td>显式声明的输出 buffer storage key（如多输出 tuple）</td><td>v0.11 新增：topk 返回 values + indices 两个输出</td></tr>
 </table>
 
 <h3>Dependency — DAG 的边</h3>
