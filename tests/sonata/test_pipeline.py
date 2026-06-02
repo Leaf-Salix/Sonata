@@ -273,3 +273,43 @@ class TestSchedulingInstructions:
         inst = compute_scheduling_instructions(dispatch, base_block_dim=32)
         assert inst[0].block_dim == 16  # half of base
         assert "conservative" in inst[0].reason
+
+    def test_end_to_end_scheduling(self):
+        """Full pipeline: analyze → dispatch → scheduling instructions."""
+        from sonata.pipeline import sonata_analyze, dispatch_regions, compute_scheduling_instructions
+        from sonata.score import Score, RuntimeTarget, Dependency, DependencyKind
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt,
+            tasks=(), dependencies=(
+                Dependency(producer=0, consumer=1, kind=DependencyKind.DATA),
+            ),
+            shape_assumptions=(),
+        )
+        result = SonataAnalysisResult(
+            eligible=True, score=score,
+            region_statuses={"r0": "static", "r1": "dynamic", "r2": "mixed"},
+        )
+
+        dispatch = dispatch_regions(result)
+        instructions = compute_scheduling_instructions(dispatch, base_block_dim=64)
+
+        assert len(instructions) == 3
+        assert instructions[0].block_dim == 64   # static → base
+        assert instructions[1].block_dim == 1    # dynamic → fallback
+        assert instructions[2].block_dim == 32   # mixed → half
+
+    def test_scheduling_with_custom_dims(self):
+        """Custom base/fallback dims are respected."""
+        from sonata.pipeline import compute_scheduling_instructions, DispatchPlan, RegionDispatchResult
+        dispatch = DispatchPlan(
+            results=(
+                RegionDispatchResult(region_id="r0", status="static", action="optimized"),
+                RegionDispatchResult(region_id="r1", status="dynamic", action="fallback"),
+            ),
+            optimized_count=1, fallback_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, base_block_dim=16, fallback_block_dim=4)
+        assert inst[0].block_dim == 16
+        assert inst[1].block_dim == 4
