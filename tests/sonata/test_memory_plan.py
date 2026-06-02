@@ -229,13 +229,16 @@ class TestMemoryPlanBenchmarks:
     """Benchmarks for v0.11 Phase 2 D1-D3."""
 
     def test_peak_memory_comparison(self):
-        """Conflict-matrix-aware solver uses no more memory than greedy."""
+        """Conflict-matrix solver achieves ≥20% peak memory reduction vs naive.
+
+        Naive approach: sequential allocation (no conflict awareness).
+        Conflict-matrix approach: GreedySolver with conflict-aware placement.
+        """
         from sonata.memory_plan import GreedySolver, compute_conflict_matrix
         from sonata.liveness import BufferLifetime
         import random
 
         random.seed(42)
-        # 50 buffers with random lifetimes
         lifetimes = []
         for i in range(50):
             birth = random.randint(0, 90)
@@ -245,14 +248,22 @@ class TestMemoryPlanBenchmarks:
         matrix = compute_conflict_matrix(lifetimes)
         sizes = [random.randint(64, 4096) for _ in range(50)]
 
+        # Conflict-matrix-aware solver
         solver = GreedySolver()
         plan = solver.solve(matrix, sizes)
+        conflict_peak = plan.peak_memory
 
-        # Peak memory must be finite and positive
-        assert plan.peak_memory > 0
-        assert plan.solver_type == "greedy"
-        # All buffers assigned
+        # Naive: sequential placement (sum of all sizes, no reuse)
+        naive_peak = sum(sizes)
+
+        reduction = (naive_peak - conflict_peak) / naive_peak if naive_peak > 0 else 0
+
+        assert conflict_peak > 0
         assert len(plan.allocations) == 50
+        assert reduction >= 0.2, (
+            f"Expected ≥20% peak memory reduction vs naive, got {reduction:.0%} "
+            f"(conflict={conflict_peak}, naive={naive_peak})"
+        )
 
     def test_solver_performance(self):
         """Solver completes within timeout for N≤100."""
