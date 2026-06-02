@@ -77,9 +77,10 @@ class RuntimeTarget:
 <h2>ShapeAssumption — Guard 条件</h2>
 
 <pre><code>@dataclass(frozen=True)
-class ShapeAssumption:
-    symbol: str          # 参数名
-    dims: tuple[int, ...]  # 形状维度（必须全是正整数）</code></pre>
+class ShapeAssumption(GuardCondition):  # 继承自 GuardCondition (v0.10+)
+    symbol: str
+    dims: tuple[int, ...] = field(default_factory=tuple)
+    severity: GuardSeverity = GUARD_SEVERITY_HARD</code></pre>
 
 <h3>Guard 语义</h3>
 
@@ -97,10 +98,13 @@ class ShapeAssumption:
   v0.11 进一步扩展为区域级 Guard 评估（<code>GuardEvaluator.evaluate_region</code>）。
 </div>
 
-<h3>Over-guarding 问题</h3>
+<h3>Over-guarding 问题（v0.10 已解决）</h3>
 
-<div class="callout warn">
-  <strong>开放问题（#9）：</strong>100 个参数的 PyPTO IR 可能产生 100 个 ShapeAssumption。任何一个参数的任何维度变化都会使 fingerprint 失效——Score 极其"脆弱"。v0.1 先记录 <code>shape_assumptions_count</code> 到 metadata，观察真实数据再决定是否需要筛选。
+<div class="callout success">
+  <strong>已解决（v0.10）：</strong>100 个参数的 PyPTO IR 可能产生 100 个 ShapeAssumption，
+  使 fingerprint 极其脆弱。v0.10 引入 <code>GuardSelector</code>（默认 <code>EntryParamGuardSelector</code>）
+  从所有 Guard 中选出最重要的 Top-K，v0.11 进一步通过 <code>select_region_guards()</code>
+  支持区域级选择和密度检查。
 </div>
 
 <h2>Task — 原子执行单元</h2>
