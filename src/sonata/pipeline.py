@@ -148,9 +148,12 @@ class SonataAnalysisResult:
 def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
     """Load a SonataAnalysisResult from a sonata_plan.json file.
 
+    If *path* is a directory, looks for ``sonata_plan.json`` inside it.
     Returns None if the file does not exist.
     """
     p = Path(path)
+    if p.is_dir():
+        p = p / "sonata_plan.json"
     if not p.exists():
         return None
     data = json.loads(p.read_text())
@@ -289,3 +292,41 @@ def sonata_compile(
         result.save(work_dir / "sonata_plan.json")
 
     return compiled, result
+
+
+def execute_with_sonata(
+    work_dir: str | Path,
+    *args: Any,
+    **kwargs: Any,
+) -> tuple[Any, SonataAnalysisResult | None]:
+    """Execute a compiled program with Sonata plan awareness.
+
+    v0.12 Phase 1 B2: Wrapper around ``pypto.runtime.execute_compiled``
+    that reads the Sonata plan from *work_dir* before execution and
+    returns it alongside the execution result.
+
+    If no ``sonata_plan.json`` exists in *work_dir*, the plan is None
+    and execution proceeds normally (backward compatible).
+
+    Args:
+        work_dir: Compiled artifacts directory (contains ``kernel_config.py``
+            and optionally ``sonata_plan.json``).
+        *args, **kwargs: Forwarded to ``pypto.runtime.execute_compiled``.
+
+    Returns:
+        ``(execute_result, sonata_plan)``.
+    """
+    from pypto.runtime.runner import execute_compiled
+
+    plan = load_sonata_plan(work_dir)
+
+    if plan is not None:
+        import logging
+        log = logging.getLogger("sonata")
+        log.info(
+            "Sonata plan loaded: eligible=%s, tasks=%d, regions=%s",
+            plan.eligible, plan.task_count, list(plan.region_statuses.keys()),
+        )
+
+    execute_compiled(work_dir, *args, **kwargs)
+    return None, plan

@@ -370,3 +370,26 @@ class TestSonataPlanJson:
         assert "program" in sig.parameters
         assert "output_dir" in sig.parameters
         assert "entry_name" in sig.parameters
+
+    def test_load_sonata_plan_from_directory(self):
+        """load_sonata_plan accepts a directory and finds sonata_plan.json."""
+        import tempfile
+        from sonata.pipeline import sonata_analyze, load_sonata_plan
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="SimpleAdd")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result.save(f"{tmpdir}/sonata_plan.json")
+
+            # Load by directory path
+            loaded = load_sonata_plan(tmpdir)
+            assert loaded is not None
+            assert loaded.eligible is True
+
+    def test_execute_with_sonata_function_exists(self):
+        """execute_with_sonata is importable."""
+        from sonata.pipeline import execute_with_sonata
+        import inspect
+        sig = inspect.signature(execute_with_sonata)
+        assert "work_dir" in sig.parameters
