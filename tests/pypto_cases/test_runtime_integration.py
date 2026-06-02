@@ -393,3 +393,53 @@ class TestSonataPlanJson:
         import inspect
         sig = inspect.signature(execute_with_sonata)
         assert "work_dir" in sig.parameters
+
+
+class TestSonataPlanRoundTrip:
+    """C1: Verify sonata_plan.json round-trip fidelity."""
+
+    def test_roundtrip_preserves_eligibility_and_regions(self):
+        """Save → load preserves eligibility and region statuses."""
+        import json
+        import tempfile
+        from sonata.pipeline import sonata_analyze, load_sonata_plan
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        original = sonata_analyze(certified, entry_name="roundtrip_test")
+
+        assert original.eligible
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = original.save(f"{tmpdir}/plan.json")
+
+            # Verify JSON structure
+            data = json.loads(path.read_text())
+            assert data["eligible"] is True
+            assert data["schema_version"] == 1
+            assert "region_0" in data["region_statuses"]
+
+            # Load back
+            loaded = load_sonata_plan(path)
+            assert loaded is not None
+            assert loaded.eligible == original.eligible
+            assert loaded.region_statuses == original.region_statuses
+
+    def test_roundtrip_preserves_plan_tasks(self):
+        """Plan task details survive round-trip."""
+        import json
+        import tempfile
+        from sonata.pipeline import sonata_analyze
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        original = sonata_analyze(certified, entry_name="task_roundtrip")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = original.save(f"{tmpdir}/plan.json")
+            data = json.loads(path.read_text())
+
+            # Verify plan tasks match original
+            plan_tasks = data["host_build_graph_plan"]["tasks"]
+            assert len(plan_tasks) == len(original.score.tasks)
+            for hbg, score_task in zip(plan_tasks, original.score.tasks):
+                assert hbg["task_id"] == score_task.task_id
+                assert hbg["func_id"] == score_task.func_id
