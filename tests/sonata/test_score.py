@@ -412,5 +412,44 @@ class TestTaskMultiOutput:
         assert restored.tasks[0].outputs == ("out_a", "out_b")
 
 
+class TestDependencyKind:
+    """Tests for DependencyKind enum (v0.13 Phase 2 A1-A2)."""
+
+    def test_enum_values(self):
+        from sonata.score import DependencyKind
+        assert DependencyKind.DATA == "data"
+        assert DependencyKind.STORAGE == "storage"
+        assert DependencyKind.WAR == "war"
+        assert DependencyKind.ORDERING == "ordering"
+
+    def test_from_str(self):
+        from sonata.score import DependencyKind
+        assert DependencyKind.from_str("data") == DependencyKind.DATA
+        assert DependencyKind.from_str("STORAGE") == DependencyKind.STORAGE
+        assert DependencyKind.from_str("unknown") == DependencyKind.DATA  # default
+
+    def test_dependency_default_kind(self):
+        from sonata.score import Dependency, DependencyKind
+        d = Dependency(producer=0, consumer=1)
+        assert d.kind == DependencyKind.DATA
+
+    def test_dependency_with_explicit_kind(self):
+        from sonata.score import Dependency, DependencyKind
+        d = Dependency(producer=0, consumer=1, kind=DependencyKind.WAR)
+        assert d.kind == DependencyKind.WAR
+        assert d.kind.value == "war"
+
+    def test_dependency_kind_serialization(self):
+        """kind serializes as string value, not enum repr."""
+        from sonata.score import Dependency, DependencyKind, Score, RuntimeTarget
+        from sonata.serialization import score_to_dict
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+        dep = Dependency(producer=0, consumer=1, kind=DependencyKind.STORAGE)
+        score = Score(name="test", runtime_target=rt, tasks=(),
+                      dependencies=(dep,), shape_assumptions=())
+        data = score_to_dict(score)
+        assert data["dependencies"][0]["kind"] == "storage"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

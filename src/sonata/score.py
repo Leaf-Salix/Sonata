@@ -14,6 +14,7 @@ early analysis and tests can evolve without coupling to C++ bindings.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 import warnings
 
@@ -52,20 +53,41 @@ class Task:
     outputs: tuple[str, ...] = ()
 
 
+class DependencyKind(str, Enum):
+    """Classification of dependency edge semantics.
+
+    v0.13 Phase 2 A1: Typed enum replacing raw strings.
+    Backward compatible — serialized as lowercase string values.
+    """
+
+    DATA = "data"        # RAW: read-after-write data flow
+    STORAGE = "storage"  # WAW: write-after-write storage conflict
+    WAR = "war"          # WAR: write-after-read anti-dependency
+    ORDERING = "ordering"  # Pure ordering constraint, no data flow
+
+    @classmethod
+    def from_str(cls, value: str) -> "DependencyKind":
+        """Parse from string, defaulting to DATA for unknown values."""
+        try:
+            return cls(value.lower())
+        except ValueError:
+            return cls.DATA
+
+
 @dataclass(frozen=True)
 class Dependency:
     """Explicit edge between two precomputed tasks.
 
     ``kind`` classifies the dependency semantics:
-    - ``"data"``: RAW (read-after-write) data flow
-    - ``"storage"``: WAW (write-after-write) storage conflict
-    - ``"war"``: WAR (write-after-read) anti-dependency
-    - ``"ordering"``: pure ordering constraint, no data flow
+    - ``DependencyKind.DATA``: RAW (read-after-write) data flow
+    - ``DependencyKind.STORAGE``: WAW (write-after-write) storage conflict
+    - ``DependencyKind.WAR``: WAR (write-after-read) anti-dependency
+    - ``DependencyKind.ORDERING``: pure ordering constraint, no data flow
     """
 
     producer: int
     consumer: int
-    kind: str = "data"
+    kind: DependencyKind = DependencyKind.DATA
 
 
 @dataclass(frozen=True)

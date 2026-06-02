@@ -101,7 +101,7 @@ def score_to_dict(score: Score) -> dict[str, Any]:
             {
                 "producer": dependency.producer,
                 "consumer": dependency.consumer,
-                "kind": dependency.kind,
+                "kind": getattr(dependency.kind, 'value', dependency.kind),
             }
             for dependency in score.dependencies
         ],

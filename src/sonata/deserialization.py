@@ -27,6 +27,7 @@ from .plan_handle import (
 )
 from .score import (
     Dependency,
+    DependencyKind,
     EligibilityResult,
     FallbackReason,
     RuntimeTarget,
@@ -178,7 +179,7 @@ def _dependencies_from_list(items: Any) -> tuple[Dependency, ...]:
         result.append(Dependency(
             producer=_require_int(item, "producer", f"dependencies[{i}]"),
             consumer=_require_int(item, "consumer", f"dependencies[{i}]"),
-            kind=str(item.get("kind", "data")),
+            kind=DependencyKind.from_str(item.get("kind", "data")),
         ))
     return tuple(result)
 
