@@ -360,3 +360,13 @@ class TestSonataPlanJson:
         """load_sonata_plan returns None for missing file."""
         from sonata.pipeline import load_sonata_plan
         assert load_sonata_plan("/tmp/nonexistent_sonata_plan.json") is None
+
+    def test_sonata_compile_function_exists(self):
+        """sonata_compile is importable and has correct signature."""
+        from sonata.pipeline import sonata_compile
+        import inspect
+
+        sig = inspect.signature(sonata_compile)
+        assert "program" in sig.parameters
+        assert "output_dir" in sig.parameters
+        assert "entry_name" in sig.parameters

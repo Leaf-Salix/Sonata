@@ -233,3 +233,59 @@ def sonata_analyze(
         adapter_result=rt_result,
         region_statuses=region_statuses,
     )
+
+
+def sonata_compile(
+    program: object,
+    output_dir: str | Path | None = None,
+    *,
+    entry_name: str | None = None,
+) -> tuple[Any, SonataAnalysisResult]:
+    """Compile a PyPTO program and run Sonata analysis.
+
+    v0.12 Phase 1 A3: Wrapper that runs ``pypto.compile()`` then
+    ``sonata_analyze()``, writing ``sonata_plan.json`` alongside
+    compiled artifacts.
+
+    Args:
+        program: A ``@pl.program`` class or ``ir.Program``.
+        output_dir: Output directory for compiled artifacts.
+        entry_name: Entry function name for Sonata analysis.
+
+    Returns:
+        ``(compiled_program, sonata_result)``.
+    """
+    from pypto import ir as _ir
+
+    compiled = _ir.compile(program, output_dir=output_dir)
+
+    from pypto.backend import BackendType, is_backend_configured, set_backend_type
+    from pypto.ir.pass_manager import OptimizationStrategy, PassManager
+    from pypto.pypto_core import passes as _core_passes
+
+    if not is_backend_configured():
+        set_backend_type(BackendType.Ascend910B)
+
+    with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+        manager = PassManager.get_strategy(OptimizationStrategy.Default)
+        current = program
+        after_ccg = False
+        certified_ir = None
+        for pname, pobj in zip(manager.pass_names, manager.passes):
+            current = pobj(current)
+            if pname == "CollectCommGroups":
+                after_ccg = True
+            elif after_ccg and pname == "Simplify":
+                certified_ir = current
+                break
+
+    if certified_ir is None:
+        return compiled, SonataAnalysisResult(eligible=False)
+
+    result = sonata_analyze(certified_ir, entry_name=entry_name)
+
+    work_dir = Path(compiled._output_dir) if hasattr(compiled, "_output_dir") else None
+    if work_dir is not None and result.eligible:
+        result.save(work_dir / "sonata_plan.json")
+
+    return compiled, result
