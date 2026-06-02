@@ -28,7 +28,9 @@ Usage::
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .eligibility import check_static_eligibility
@@ -46,6 +48,8 @@ from .runtime_adapter import (
     RuntimeAdapterResult,
 )
 from .score import EligibilityResult, RuntimeTarget, Score
+
+SONATA_PLAN_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -81,6 +85,79 @@ class SonataAnalysisResult:
     @property
     def has_plan(self) -> bool:
         return self.host_build_graph_plan is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dictionary.
+
+        v0.12 Phase 1 A1-A2: sonata_plan.json schema.
+        """
+        from .serialization import plan_handle_to_dict, score_to_dict
+
+        data: dict[str, Any] = {
+            "schema_version": SONATA_PLAN_SCHEMA_VERSION,
+            "eligible": self.eligible,
+            "task_count": self.task_count,
+            "region_statuses": self.region_statuses,
+        }
+
+        if self.score is not None:
+            data["score"] = score_to_dict(self.score)
+
+        if self.plan_handle is not None:
+            data["plan_handle"] = plan_handle_to_dict(self.plan_handle)
+
+        if self.host_build_graph_plan is not None:
+            plan = self.host_build_graph_plan
+            data["host_build_graph_plan"] = {
+                "tasks": [
+                    {"task_id": t.task_id, "func_id": t.func_id,
+                     "core_type": t.core_type, "name": t.name}
+                    for t in plan.tasks
+                ],
+                "edges": [
+                    {"producer": e.producer, "consumer": e.consumer}
+                    for e in plan.edges
+                ],
+                "metadata": plan.metadata,
+            }
+
+        if self.fallback_reasons:
+            data["fallback_reasons"] = [
+                {"code": r.code, "message": r.message, "severity": r.severity}
+                for r in self.fallback_reasons
+                if hasattr(r, "code")
+            ]
+
+        return data
+
+    def save(self, path: str | Path) -> Path:
+        """Write sonata_plan.json to the given path.
+
+        Args:
+            path: Output file path (typically ``<work_dir>/sonata_plan.json``).
+
+        Returns:
+            The resolved Path that was written.
+        """
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True))
+        return p
+
+
+def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
+    """Load a SonataAnalysisResult from a sonata_plan.json file.
+
+    Returns None if the file does not exist.
+    """
+    p = Path(path)
+    if not p.exists():
+        return None
+    data = json.loads(p.read_text())
+    return SonataAnalysisResult(
+        eligible=data.get("eligible", False),
+        region_statuses=data.get("region_statuses", {}),
+    )
 
 
 def sonata_analyze(

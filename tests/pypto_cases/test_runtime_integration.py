@@ -318,3 +318,45 @@ class TestEndToEndRuntime:
             capture_output=True, text=True, timeout=120,
         )
         assert r.returncode == 0, f"st test failed:\n{r.stdout[-2000:]}\n{r.stderr[-500:]}"
+
+
+class TestSonataPlanJson:
+    """Tests for sonata_plan.json serialization (v0.12 Phase 1 A1-A2)."""
+
+    def test_save_and_load_roundtrip(self):
+        """SonataAnalysisResult saves to JSON and loads back."""
+        import json
+        import tempfile
+        from sonata.pipeline import sonata_analyze, load_sonata_plan
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="SimpleAdd")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = result.save(f"{tmpdir}/sonata_plan.json")
+
+            # File exists and is valid JSON
+            assert path.exists()
+            data = json.loads(path.read_text())
+            assert data["schema_version"] == 1
+            assert data["eligible"] is True
+            assert data["task_count"] >= 1
+            assert "region_0" in data["region_statuses"]
+
+            # PlanHandle is serialized
+            assert "plan_handle" in data
+            assert "score_fingerprint" in data["plan_handle"]
+
+            # HostBuildGraphPlan is serialized
+            assert "host_build_graph_plan" in data
+            assert len(data["host_build_graph_plan"]["tasks"]) >= 1
+
+            # load_sonata_plan reads it back
+            loaded = load_sonata_plan(path)
+            assert loaded is not None
+            assert loaded.eligible is True
+
+    def test_load_nonexistent_returns_none(self):
+        """load_sonata_plan returns None for missing file."""
+        from sonata.pipeline import load_sonata_plan
+        assert load_sonata_plan("/tmp/nonexistent_sonata_plan.json") is None
