@@ -18,3 +18,4 @@ venv/
 # Local scratch and generated outputs
 .scratch/
 build_output/
+build/sonata_plans/

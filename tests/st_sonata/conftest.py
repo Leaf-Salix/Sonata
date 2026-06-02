@@ -9,24 +9,23 @@
 
 """Sonata-integrated st test runner.
 
-Runs any upstream ``pypto/tests/st`` test through Sonata analysis before
-execution, without modifying the upstream test files.
+Hooks into the PyPTO st test infrastructure to run Sonata analysis on
+the certified IR dump (after Simplify pass) and write ``sonata_plan.json``
+alongside compiled artifacts — without modifying any upstream test files.
+
+The hook monkeypatches ``compile_program`` so that after the real
+compilation completes, Sonata analysis runs on the same program and
+writes ``sonata_plan.json`` into the compilation work directory.
 
 Usage::
 
-    # Single test with Sonata
-    python -m pytest tests/st/runtime/ops/test_abs.py --with-sonata --platform=a2a3sim -v
-
-    # All ops tests with Sonata
-    python -m pytest tests/st/runtime/ops/ --with-sonata --platform=a2a3sim -v
-
-The ``--with-sonata`` flag is a no-op when Sonata is not installed.
+    python tests/st_sonata/sonata_st_runner.py tests/st/runtime/ops/test_abs.py -- -v
 """
 
 from __future__ import annotations
 
+import functools
 import logging
-import sys
 import warnings
 from pathlib import Path
 from typing import Any
@@ -37,12 +36,11 @@ log = logging.getLogger("sonata.st_runner")
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add --with-sonata flag to pytest."""
     parser.addoption(
         "--with-sonata",
         action="store_true",
         default=False,
-        help="Run Sonata analysis on each st test's certified IR dump before execution.",
+        help="Run Sonata analysis on each st test's certified IR dump and write sonata_plan.json.",
     )
 
 
@@ -53,7 +51,6 @@ def _extract_program_from_module(module: Any) -> Any | None:
         ProgramType = _ir.Program
     except ImportError:
         return None
-
     for name in dir(module):
         obj = getattr(module, name)
         if isinstance(obj, ProgramType):
@@ -86,7 +83,7 @@ def _run_sonata_analysis(program: Any, entry_name: str) -> dict[str, Any] | None
                     break
 
         if certified_ir is None:
-            return {"error": "no certified dump found"}
+            return None
 
         result = sonata_analyze(certified_ir, entry_name=entry_name)
         return {
@@ -94,6 +91,7 @@ def _run_sonata_analysis(program: Any, entry_name: str) -> dict[str, Any] | None
             "task_count": result.task_count,
             "region_statuses": result.region_statuses,
             "has_plan": result.has_plan,
+            "result_obj": result,
         }
     except ImportError:
         return None
@@ -101,12 +99,77 @@ def _run_sonata_analysis(program: Any, entry_name: str) -> dict[str, Any] | None
         return {"error": str(e)}
 
 
+def _make_patched_compile(original_compile):
+    """Wrap compile_program to run Sonata analysis after compilation."""
+    @functools.wraps(original_compile)
+    def patched_compile(program, work_dir, **kwargs):
+        result = original_compile(program, work_dir, **kwargs)
+        log.info("[SONATA] compile_program completed, work_dir=%s", work_dir)
+        try:
+            from sonata.pipeline import sonata_analyze
+            from pypto.backend import BackendType, is_backend_configured, set_backend_type
+            from pypto.ir.pass_manager import OptimizationStrategy, PassManager
+            from pypto.pypto_core import passes as _core_passes
+
+            if not is_backend_configured():
+                set_backend_type(BackendType.Ascend910B)
+
+            with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+                mgr = PassManager.get_strategy(OptimizationStrategy.Default)
+                cur = program
+                after_ccg = False
+                certified_ir = None
+                for pn, po in zip(mgr.pass_names, mgr.passes):
+                    cur = po(cur)
+                    if pn == "CollectCommGroups":
+                        after_ccg = True
+                    elif after_ccg and pn == "Simplify":
+                        certified_ir = cur
+                        break
+
+            if certified_ir is not None:
+                sonata_result = sonata_analyze(certified_ir, entry_name=Path(str(work_dir)).name)
+                if sonata_result.eligible:
+                    plan_path = sonata_result.save(Path(str(work_dir)) / "sonata_plan.json")
+                    log.info("[SONATA] sonata_plan.json written: %s", plan_path)
+                    # Also save to persistent location (temp dirs get cleaned up)
+                    persistent_dir = Path(__file__).resolve().parents[2] / "build" / "sonata_plans"
+                    persistent_dir.mkdir(parents=True, exist_ok=True)
+                    persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
+                    log.info("[SONATA] persistent copy: %s", persistent_path)
+                else:
+                    log.info("[SONATA] analysis: not eligible")
+            else:
+                log.info("[SONATA] no certified IR found in pipeline")
+        except Exception as e:
+            log.warning("[SONATA] compile-time analysis failed: %s", e, exc_info=True)
+
+        return result
+    return patched_compile
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    """Before each test, run Sonata analysis if --with-sonata is set."""
+    """Before each test, monkeypatch compile_program and log analysis."""
     if not item.config.getoption("--with-sonata", default=False):
         return
 
+    # Monkeypatch compile_program in the harness test_runner module
+    # pytest adds tests/st to sys.path during collection, so harness is importable
+    patched_ok = False
+    for mod_name in ("harness.core.test_runner", "tests.st.harness.core.test_runner"):
+        try:
+            tr = __import__(mod_name, fromlist=["compile_program"])
+            from pypto.runtime import compile_program as orig_compile
+            if not getattr(tr.compile_program, "_sonata_patched", False):
+                tr.compile_program = _make_patched_compile(orig_compile)
+                tr.compile_program._sonata_patched = True
+            patched_ok = True
+            break
+        except (ImportError, AttributeError, ValueError):
+            continue
+
+    # Standalone analysis for logging
     module = getattr(item, "module", None)
     if module is None:
         return
@@ -119,24 +182,18 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     verbose = not item.config.getoption("quiet", default=False)
 
     analysis = _run_sonata_analysis(program, entry_name=test_name)
-
-    if analysis is None:
-        return
-
-    if "error" in analysis:
-        if verbose:
-            warnings.warn(f"[SONATA] {test_name}: analysis error: {analysis['error']}", stacklevel=1)
+    if analysis is None or "error" in analysis:
         return
 
     if verbose:
         regions = analysis.get("region_statuses", {})
-        static_count = sum(1 for v in regions.values() if v == "static")
-        dynamic_count = sum(1 for v in regions.values() if v == "dynamic")
+        sc = sum(1 for v in regions.values() if v == "static")
+        dc = sum(1 for v in regions.values() if v == "dynamic")
         msg = (
-            f"[SONATA] {test_name}: eligibility={analysis['eligible']}, "
+            f"[SONATA] {test_name}: eligible={analysis['eligible']}, "
             f"tasks={analysis['task_count']}, "
-            f"regions={len(regions)} ({static_count} static, {dynamic_count} dynamic)"
+            f"regions={len(regions)} ({sc} static, {dc} dynamic)"
         )
         if analysis.get("has_plan"):
-            msg += ", HostBuildGraphPlan=generated"
+            msg += ", plan=generated"
         warnings.warn(msg, stacklevel=1)
