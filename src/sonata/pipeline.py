@@ -39,6 +39,14 @@ from typing import Any
 _certified_ir_cache: dict[int, Any] = {}
 
 
+def _clear_ir_cache() -> None:
+    """Clear the certified IR cache.
+
+    Called on HARD guard violation to force re-analysis on next execution.
+    """
+    _certified_ir_cache.clear()
+
+
 def _extract_certified_ir(program: object) -> Any | None:
     """Extract certified IR (post-Simplify) from a program.
 
@@ -417,8 +425,9 @@ def execute_with_sonata(
             guard_results = check_guards_at_runtime(plan, runtime_values)
             hard_failed = any(gr.guard_status == "all_failed" for gr in guard_results)
             if hard_failed:
+                _clear_ir_cache()
                 _region_log.error(
-                    "[SONATA] HARD guard violation — skipping execution"
+                    "[SONATA] HARD guard violation — cleared IR cache, skipping execution"
                 )
                 return None, plan
 
