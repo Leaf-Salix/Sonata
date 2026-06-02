@@ -7,8 +7,6 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-import warnings
-
 """Guard condition abstraction for Sonata static planning.
 
 This module introduces a unified ``GuardCondition`` abstraction layer that
@@ -59,27 +57,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable, Optional
 import warnings
-
-__all__ = [
-    # Base types
-    "GuardCondition",
-    "GuardSeverity",
-    "GUARD_SEVERITY_SOFT",
-    "GUARD_SEVERITY_HARD",
-    "ShapeAssumption",
-    # Actions
-    "InvalidateAction",
-    # Evaluators/Invalidators
-    "GuardEvaluator",
-    "GuardInvalidator",
-    # Selectors
-    "GuardSelector",
-    "EntryParamGuardSelector",
-    # Utilities
-    "check_guard_density",
-    "shape_assumption_to_guard_condition",
-    "deprecated_shape_assumption",
-]
 
 
 @dataclass(frozen=True)
@@ -772,6 +749,8 @@ def deprecated_shape_assumption(
 __all__ = [
     "GuardCondition",
     "GuardSeverity",
+    "GUARD_SEVERITY_SOFT",
+    "GUARD_SEVERITY_HARD",
     "ShapeAssumption",
     "GUARD_CONDITION_SCHEMA_VERSION",
     "InvalidateAction",

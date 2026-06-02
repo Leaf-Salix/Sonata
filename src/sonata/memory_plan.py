@@ -14,8 +14,11 @@ Buffers are sorted by size descending and placed at the first available
 offset that does not conflict with overlapping lifetimes.
 """
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import time
 from typing import Any
+import warnings
 
 from .liveness import BufferLifetime, find_conflicts
 
@@ -173,10 +176,6 @@ def compute_conflict_matrix(
 # ---------------------------------------------------------------------------
 # v0.11 Phase 2 B: Constraint Solver
 # ---------------------------------------------------------------------------
-
-from abc import ABC, abstractmethod
-import time
-import warnings
 
 
 class ConstraintSolver(ABC):

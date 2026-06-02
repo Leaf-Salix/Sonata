@@ -21,6 +21,8 @@ v0.11 enhancements:
 """
 
 from dataclasses import dataclass, field
+import hashlib
+import json
 from typing import Any, Optional
 
 from .fallback import FallbackCode
@@ -177,9 +179,6 @@ class RegionTreeNode:
         }
         
         # Compute hash using same mechanism as score_fingerprint
-        import hashlib
-        import json
-        
         # Serialize to JSON with sorted keys for determinism
         serialized = json.dumps(fingerprint_payload, sort_keys=True, default=str)
         fp_hash = hashlib.sha256(serialized.encode()).hexdigest()
@@ -228,30 +227,31 @@ class RegionTree:
     @property
     def all_nodes(self) -> list[RegionTreeNode]:
         """BFS traversal of all nodes in the tree.
-        
+
         Each node appears exactly once in the traversal.
         """
         result: list[RegionTreeNode] = []
         visited_ids: set[int] = set()
+        queued_ids: set[int] = set()
         queue = [self.root]
-        
+        queued_ids.add(id(self.root))
+
         while queue:
             node = queue.pop(0)
             node_id = id(node)
-            
-            # Skip if already visited (prevent duplicates from shared references)
+
             if node_id in visited_ids:
                 continue
-            
+
             visited_ids.add(node_id)
             result.append(node)
-            
-            # Add children to queue (check before adding to avoid duplicate queue entries)
+
             for child in node.children:
                 child_id = id(child)
-                if child_id not in visited_ids and child_id not in [id(n) for n in queue]:
+                if child_id not in visited_ids and child_id not in queued_ids:
                     queue.append(child)
-        
+                    queued_ids.add(child_id)
+
         return result
     
     def static_subtrees(self) -> list[RegionTreeNode]:

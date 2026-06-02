@@ -21,7 +21,7 @@ from time import time
 from typing import Any, Callable, TYPE_CHECKING
 
 from .deserialization import score_from_dict as _score_from_dict
-from .plan_handle import GuardStatus, PlanHandle as PH_GuardStatus
+from .plan_handle import GuardStatus
 from .score import Score
 from .serialization import (
     FINGERPRINT_VERSION,
@@ -101,7 +101,7 @@ class ScoreCache:
             created_at=existing.created_at,
             plan_handle_payload=plan_handle_to_dict(plan_handle),
             metadata=existing.metadata,
-            guard_status=getattr(plan_handle, 'guard_status', existing.guard_status),
+            guard_status=plan_handle.guard_status,
         )
         return fp
 
