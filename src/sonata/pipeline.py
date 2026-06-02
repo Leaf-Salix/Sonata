@@ -259,21 +259,23 @@ def sonata_compile(
         ``(compiled_program, sonata_result)``.
     """
     from pypto import ir as _ir
+    from pypto.pypto_core import passes as _core_passes
+    from pypto.ir.pass_manager import OptimizationStrategy, PassManager
 
     compiled = _ir.compile(program, output_dir=output_dir)
 
+    # Re-run pass pipeline to extract certified IR for Sonata analysis.
+    # TODO(v0.13): eliminate this second pipeline run via dump_passes or
+    # PassContext instrument once C++ Pass object exposes its name.
     from pypto.backend import BackendType, is_backend_configured, set_backend_type
-    from pypto.ir.pass_manager import OptimizationStrategy, PassManager
-    from pypto.pypto_core import passes as _core_passes
-
     if not is_backend_configured():
         set_backend_type(BackendType.Ascend910B)
 
+    certified_ir = None
     with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
         manager = PassManager.get_strategy(OptimizationStrategy.Default)
         current = program
         after_ccg = False
-        certified_ir = None
         for pname, pobj in zip(manager.pass_names, manager.passes):
             current = pobj(current)
             if pname == "CollectCommGroups":
