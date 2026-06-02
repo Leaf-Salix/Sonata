@@ -325,8 +325,56 @@ def sonata_compile(
     work_dir = Path(compiled._output_dir) if hasattr(compiled, "_output_dir") else None
     if work_dir is not None and result.eligible:
         result.save(work_dir / "sonata_plan.json")
+        write_memory_hints(result, work_dir)
 
     return compiled, result
+
+
+def write_memory_hints(result: SonataAnalysisResult, work_dir: Path) -> Path | None:
+    """Write sonata_memory_hint.json alongside compiled artifacts.
+
+    v0.15 Phase 1 A2: Memory offset injection.
+
+    Produces a JSON file with buffer offset hints from Sonata's analysis.
+    The simpler runtime can optionally read these hints for memory layout.
+
+    Args:
+        result: Sonata analysis result.
+        work_dir: Compiled artifacts directory.
+
+    Returns:
+        Path to written file, or None if no hints to write.
+    """
+    if result.plan_handle is None:
+        return None
+
+    hints: dict[str, Any] = {
+        "schema_version": 1,
+        "eligible": result.eligible,
+        "task_count": result.task_count,
+        "region_count": len(result.region_statuses),
+    }
+
+    # Include dependency kind summary if available
+    if result.score is not None and result.score.dependencies:
+        dep_kinds: dict[str, int] = {}
+        for dep in result.score.dependencies:
+            kind_val = getattr(dep.kind, "value", dep.kind)
+            dep_kinds[kind_val] = dep_kinds.get(kind_val, 0) + 1
+        hints["dependency_kinds"] = dep_kinds
+
+    # Include region dispatch hints
+    dispatch = dispatch_regions(result)
+    hints["dispatch"] = {
+        "optimized_count": dispatch.optimized_count,
+        "fallback_count": dispatch.fallback_count,
+        "mixed_count": dispatch.mixed_count,
+    }
+
+    path = work_dir / "sonata_memory_hint.json"
+    path.write_text(json.dumps(hints, indent=2, sort_keys=True))
+    _region_log.info("[SONATA] memory hints written: %s", path)
+    return path
 
 
 def execute_with_sonata(
