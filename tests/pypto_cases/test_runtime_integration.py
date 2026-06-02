@@ -168,3 +168,31 @@ class TestRealIRToHostBuildGraph:
         rt_result = rt_adapter.generate(result.score, plan_handle)
         assert rt_result.success
         assert rt_result.plan.task_count() == len(result.score.tasks)
+
+    def test_region_aware_plan_with_guard_status(self):
+        """Region-aware plan includes region statuses and guard status."""
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = check_static_eligibility(
+            certified,
+            runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="test"),
+        )
+        assert result.eligible
+
+        plan_handle = PlanHandle.from_score(result.score, source_adapter=DEFAULT_CERTIFIED_DUMP)
+        from sonata.plan_handle import GuardStatus
+        object.__setattr__(plan_handle, "region_guard_status", {
+            "region_0": GuardStatus.ALL_SATISFIED,
+            "region_1": GuardStatus.PARTIAL_FAILED,
+        })
+
+        rt_adapter = HostBuildGraphRuntimeAdapter()
+        rt_result = rt_adapter.generate_region_aware(
+            result.score,
+            plan_handle,
+            region_statuses={"region_0": "static", "region_1": "dynamic"},
+        )
+        assert rt_result.success
+        plan = rt_result.plan
+        assert plan.metadata["dynamic_region_count"] == 1
+        assert plan.metadata["static_region_count"] == 1
+        assert plan.metadata["region_guard_status"]["region_1"] == "partial_failed"

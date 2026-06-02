@@ -118,6 +118,63 @@ class HostBuildGraphRuntimeAdapter:
             HostBuildGraphPlan(tasks=tasks, edges=edges, metadata=metadata)
         )
 
+    def generate_region_aware(
+        self,
+        score: Score,
+        plan_handle: PlanHandle,
+        *,
+        region_statuses: dict[str, str] | None = None,
+    ) -> RuntimeAdapterResult:
+        """Generate a region-aware HostBuildGraphPlan.
+
+        v0.11 Phase 5 D: For mixed graphs, static regions produce normal
+        tasks while dynamic regions are annotated as fallback in the plan
+        metadata.
+
+        Args:
+            score: Score with tasks and dependencies.
+            plan_handle: PlanHandle with bindings and runtime info.
+            region_statuses: Optional mapping of region_id → status
+                ("static", "dynamic", "mixed"). When provided, dynamic
+                regions are flagged in the plan metadata.
+
+        Returns:
+            RuntimeAdapterResult with region-aware metadata.
+        """
+        base = self.generate(score, plan_handle)
+        if not base.success:
+            return base
+
+        plan = base.plan
+        if plan is None:
+            return base
+
+        # Merge region info into plan metadata
+        extra_meta: dict[str, Any] = {}
+        if region_statuses:
+            dynamic_regions = [k for k, v in region_statuses.items() if v == "dynamic"]
+            mixed_regions = [k for k, v in region_statuses.items() if v == "mixed"]
+            extra_meta["region_statuses"] = region_statuses
+            extra_meta["dynamic_region_count"] = len(dynamic_regions)
+            extra_meta["mixed_region_count"] = len(mixed_regions)
+            extra_meta["static_region_count"] = sum(
+                1 for v in region_statuses.values() if v == "static"
+            )
+
+        # Include plan_handle region_guard_status
+        if plan_handle.region_guard_status:
+            extra_meta["region_guard_status"] = {
+                k: v.value for k, v in plan_handle.region_guard_status.items()
+            }
+
+        if extra_meta:
+            merged_meta = {**plan.metadata, **extra_meta}
+            plan = HostBuildGraphPlan(
+                tasks=plan.tasks, edges=plan.edges, metadata=merged_meta
+            )
+
+        return RuntimeAdapterResult.accept(plan)
+
     def validate(
         self,
         score: Score,
@@ -277,13 +334,19 @@ def _build_metadata(
     score: Score,
     plan_handle: PlanHandle,
 ) -> dict[str, Any]:
-    return {
+    meta: dict[str, Any] = {
         "score_fingerprint": plan_handle.score_fingerprint,
         "source_adapter": plan_handle.source_adapter,
         "runtime_contract_version": plan_handle.runtime_contract_version,
         "runtime_target": plan_handle.runtime_target.runtime,
         "schema_version": plan_handle.schema_version,
     }
+    # v0.11 Phase 5 D: include region guard status when available
+    if plan_handle.region_guard_status:
+        meta["region_guard_status"] = {
+            k: v.value for k, v in plan_handle.region_guard_status.items()
+        }
+    return meta
 
 
 def _reason(code: FallbackCode, message: str) -> FallbackReason:
