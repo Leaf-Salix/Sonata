@@ -546,3 +546,72 @@ class TestRuntimeGuardChecker:
         status = update_region_guard_status(None, results)
         assert status["region_0"] == GuardStatus.ALL_SATISFIED
         assert status["region_1"] == GuardStatus.PARTIAL_FAILED
+
+
+class TestMixedGraphEndToEnd:
+    """C3: Full mixed-graph pipeline — analyze → dispatch → guard check."""
+
+    def test_mixed_graph_full_pipeline(self):
+        """End-to-end: analyze real IR → dispatch → check guards → update status."""
+        from sonata.pipeline import (
+            sonata_analyze, dispatch_regions,
+            check_guards_at_runtime, update_region_guard_status,
+            SonataAnalysisResult,
+        )
+        from sonata.plan_handle import GuardStatus
+
+        # Step 1: Analyze a real program
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="mixed_e2e")
+        assert result.eligible
+        assert result.has_plan
+
+        # Step 2: Dispatch regions
+        dispatch = dispatch_regions(result)
+        assert dispatch.total >= 1
+        assert not dispatch.has_fallbacks  # simple program is all static
+
+        # Step 3: Check guards (empty runtime_values — verifies flow, not values)
+        guard_results = check_guards_at_runtime(result, runtime_values={})
+        assert len(guard_results) >= 1
+
+        # Step 4: Update guard status
+        status = update_region_guard_status(result.plan_handle, guard_results)
+        assert len(status) >= 1
+
+    def test_mixed_graph_with_guard_violation(self):
+        """Guard violation in mixed graph triggers ALL_FAILED."""
+        from sonata.pipeline import (
+            SonataAnalysisResult, dispatch_regions,
+            check_guards_at_runtime, update_region_guard_status,
+        )
+        from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
+        from sonata.score import Score, RuntimeTarget
+        from sonata.plan_handle import GuardStatus
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(), dependencies=(),
+            shape_assumptions=(
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ),
+        )
+        result = SonataAnalysisResult(
+            eligible=True, score=score,
+            region_statuses={"region_0": "static", "region_1": "dynamic"},
+        )
+
+        # Dispatch: static optimized, dynamic fallback
+        dispatch = dispatch_regions(result)
+        assert dispatch.optimized_count == 1
+        assert dispatch.fallback_count == 1
+        assert dispatch.has_fallbacks
+
+        # Guard check with wrong batch size
+        guards = check_guards_at_runtime(result, {"batch": (64,)})
+        assert guards[0].guard_status == "all_failed"
+        assert "batch" in guards[0].violated_guards
+
+        # Update status
+        status = update_region_guard_status(None, guards)
+        assert status["region_0"] == GuardStatus.ALL_FAILED
