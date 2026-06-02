@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sonata End-to-End Pipeline 验证报告</title>
+<style>
+:root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922; --mono: 'SF Mono', 'Fira Code', monospace; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; padding: 2rem; }
+h1 { color: #fff; font-size: 1.8rem; margin-bottom: 0.5rem; }
+h2 { color: var(--accent); font-size: 1.3rem; margin: 2rem 0 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+h3 { color: #e6edf3; font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+.subtitle { color: var(--text); opacity: 0.7; margin-bottom: 2rem; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+.pass { color: var(--green); font-weight: 600; }
+.fail { color: var(--red); font-weight: 600; }
+.warn { color: var(--yellow); }
+code, pre { font-family: var(--mono); font-size: 0.85rem; }
+pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; margin: 0.5rem 0; }
+.cmd { color: var(--green); }
+.comment { color: #8b949e; }
+.step { display: flex; gap: 1rem; margin: 1rem 0; align-items: flex-start; }
+.step-num { background: var(--accent); color: #000; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; flex-shrink: 0; }
+.step-body { flex: 1; }
+.pipeline { display: flex; gap: 0; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
+.pipe-node { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem; text-align: center; }
+.pipe-arrow { color: var(--accent); padding: 0 0.5rem; font-size: 1.2rem; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1rem 0; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; }
+.stat-val { font-size: 2rem; font-weight: 700; color: var(--green); }
+.stat-label { font-size: 0.85rem; opacity: 0.7; }
+table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
+th, td { padding: 0.5rem 0.75rem; border: 1px solid var(--border); text-align: left; font-size: 0.9rem; }
+th { background: var(--card); color: var(--accent); }
+.env-var { color: var(--yellow); font-family: var(--mono); }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Sonata v0.11 End-to-End Pipeline 验证报告</h1>
+<p class="subtitle">2026-06-02 | 545 tests passing | Phase 1/2/5 complete</p>
+
+<div class="stats">
+  <div class="stat"><div class="stat-val">506</div><div class="stat-label">sonata unit tests</div></div>
+  <div class="stat"><div class="stat-val">39</div><div class="stat-label">pypto_cases integration</div></div>
+  <div class="stat"><div class="stat-val">545</div><div class="stat-label">total passing</div></div>
+  <div class="stat"><div class="stat-val">0</div><div class="stat-label">failures</div></div>
+</div>
+
+<h2>1. 端到端流程是什么</h2>
+
+<div class="card">
+<p>Sonata 的端到端流程是：<strong>真实 PyPTO DSL 程序</strong> → <strong>PyPTO 编译流水线</strong> → <strong>Sonata 分析</strong> → <strong>HostBuildGraphPlan</strong> → <strong>simpler runtime 执行</strong></p>
+
+<div class="pipeline">
+  <div class="pipe-node">@pl.program<br><small>PyPTO DSL</small></div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-node">pypto passes<br><small>Simplify etc.</small></div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-node">PostSimplify<br><small>IR dump</small></div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-node">sonata_analyze()<br><small>eligibility + regions</small></div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-node">HostBuildGraph<br><small>Plan</small></div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-node">simpler runtime<br><small>a2a3sim</small></div>
+</div>
+</div>
+
+<h2>2. 端到端验证了什么</h2>
+
+<div class="card">
+<h3>测试层次</h3>
+<table>
+<tr><th>层次</th><th>测试文件</th><th>数量</th><th>验证内容</th></tr>
+<tr><td>Unit (mock)</td><td>tests/sonata/</td><td>506</td><td>Score、eligibility、regions、guard、cache、memory_plan、serialization 全部用 mock 对象验证</td></tr>
+<tr><td>Integration (real IR)</td><td>tests/pypto_cases/test_eligibility.py</td><td>30</td><td>用真实 PyPTO IR dump 验证 eligibility、Score、fingerprint</td></tr>
+<tr><td>Integration (pipeline)</td><td>tests/pypto_cases/test_runtime_integration.py</td><td>9</td><td>真实 IR → sonata_analyze → HostBuildGraphPlan 全链路 + simpler runtime 端到端</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h3>关键端到端测试</h3>
+
+<p><strong>test_full_st_test_infrastructure_works</strong> — 真正的端到端：</p>
+<ol>
+<li>用 <code>@pl.program</code> 定义 tile_abs 算子</li>
+<li>PyPTO 编译流水线生成 C++ 代码</li>
+<li>ptoas 汇编器编译内核</li>
+<li>simpler runtime 在 a2a3sim 模拟器上执行</li>
+<li>验证计算结果正确（golden comparison）</li>
+</ol>
+
+<p><strong>test_sonata_analyze_upstream_ops</strong> — 多算子验证：</p>
+<ul>
+<li>tile_abs（element-wise）→ sonata_analyze → eligible, has plan, tasks ≥ 1</li>
+<li>tile_cast（type conversion）→ sonata_analyze → eligible, has plan, tasks ≥ 1</li>
+</ul>
+</div>
+
+<h2>3. 如何复现</h2>
+
+<div class="card">
+<h3>前置条件</h3>
+<ul>
+<li>Python 3.11+</li>
+<li>PyPTO 已 clone 到 <code>pypto-sonata/upstream/pypto/</code></li>
+<li>PTO-ISA 和 ptoas 已安装</li>
+</ul>
+</div>
+
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <h3>创建并配置 venv</h3>
+<pre><span class="comment"># 创建 venv</span>
+<span class="cmd">python3.11 -m venv .venv-sonata</span>
+
+<span class="comment"># 在 activate 末尾添加（一次性）</span>
+<span class="cmd">echo 'export PTO_ISA_ROOT=/path/to/ptoisa' >> .venv-sonata/bin/activate</span>
+<span class="cmd">echo 'export PTOAS_ROOT=/path/to/ptoas' >> .venv-sonata/bin/activate</span>
+<span class="cmd">echo 'export PATH="$PTOAS_ROOT/bin:$PATH"' >> .venv-sonata/bin/activate</span>
+
+<span class="comment"># 激活</span>
+<span class="cmd">source .venv-sonata/bin/activate</span>
+</pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <h3>安装依赖</h3>
+<pre><span class="comment"># 安装 pypto（编译器层）</span>
+<span class="cmd">cd pypto-sonata/upstream/pypto</span>
+<span class="cmd">pip install scikit-build-core nanobind cmake ninja numpy torch --index-url https://download.pytorch.org/whl/cpu</span>
+<span class="cmd">pip install --no-build-isolation .</span>
+
+<span class="comment"># 安装 simpler（运行时层）— 必须从 runtime/ 目录</span>
+<span class="cmd">cd runtime</span>
+<span class="cmd">pip uninstall simpler -y</span>
+<span class="cmd">pip install --no-build-isolation .</span>
+
+<span class="comment"># 安装测试依赖</span>
+<span class="cmd">pip install pytest pytest-xdist pytest-forked</span>
+</pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <h3>运行 sonata unit tests（不需要 PyPTO）</h3>
+<pre><span class="cmd">cd pypto-sonata</span>
+<span class="cmd">PYTHONPATH=src python -m pytest tests/sonata -q</span>
+<span class="comment"># 预期: 506 passed</span>
+</pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <h3>运行 pypto_cases integration tests（需要 PyPTO）</h3>
+<pre><span class="cmd">cd pypto-sonata</span>
+<span class="cmd">PYTHONPATH=src:upstream/pypto/python python -m pytest tests/pypto_cases -q</span>
+<span class="comment"># 预期: 39 passed, 5 xfailed, 1 xpassed</span>
+<span class="comment"># 包含: 真实 IR → sonata_analyze → HostBuildGraphPlan 全链路</span>
+<span class="comment"># 包含: simpler runtime 在 a2a3sim 上执行（test_full_st_test_infrastructure_works）</span>
+</pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">5</div>
+  <div class="step-body">
+    <h3>单独运行端到端 runtime 测试</h3>
+<pre><span class="cmd">cd pypto-sonata</span>
+<span class="cmd">PYTHONPATH=src:upstream/pypto/python python -m pytest tests/pypto_cases/test_runtime_integration.py::TestEndToEndRuntime -v</span>
+<span class="comment"># 包含 2 个测试:</span>
+<span class="comment"># - test_sonata_plan_matches_compile_structure: Sonata plan 结构一致性</span>
+<span class="comment"># - test_full_st_test_infrastructure_works: simpler runtime 在 a2a3sim 上执行 tile_abs</span>
+</pre>
+  </div>
+</div>
+
+<h2>4. 关键文件说明</h2>
+
+<div class="card">
+<table>
+<tr><th>文件</th><th>作用</th></tr>
+<tr><td><code>src/sonata/pipeline.py</code></td><td><code>sonata_analyze()</code> — 单次调用运行完整 Sonata 分析，返回 <code>SonataAnalysisResult</code></td></tr>
+<tr><td><code>src/sonata/pypto_adapter.py</code></td><td><code>PostSimplifyPyPTOInputAdapter</code> — 从 PyPTO IR dump 提取事实</td></tr>
+<tr><td><code>src/sonata/regions.py</code></td><td>RegionTree 分析：extract → build tree → eligibility → cache → invalidation</td></tr>
+<tr><td><code>src/sonata/plan_handle.py</code></td><td><code>PlanHandle.from_score()</code> — 自动生成 arg_bindings</td></tr>
+<tr><td><code>src/sonata/runtime_adapter.py</code></td><td><code>HostBuildGraphRuntimeAdapter</code> — 生成 HostBuildGraphPlan（含 region-aware 变体）</td></tr>
+<tr><td><code>src/sonata/memory_plan.py</code></td><td>Conflict matrix + ConstraintSolver + GreedySolver</td></tr>
+<tr><td><code>tests/pypto_cases/test_runtime_integration.py</code></td><td>端到端集成测试（9 个测试，覆盖全链路）</td></tr>
+</table>
+</div>
+
+<h2>5. 本次 code review 结果</h2>
+
+<div class="card">
+<table>
+<tr><th>#</th><th>文件</th><th>问题</th><th>严重性</th></tr>
+<tr><td>1</td><td>pipeline.py:42</td><td>未使用 <code>GuardStatus</code> import</td><td><span class="warn">cleanup</span></td></tr>
+<tr><td>2</td><td>pipeline.py:97</td><td><code>check_region_eligibility</code> 内部重复调用 eligibility（性能）</td><td><span class="warn">efficiency</span></td></tr>
+<tr><td>3</td><td>test_runtime_integration.py:307</td><td>硬编码用户路径，CI 不可用</td><td><span class="warn">portability</span></td></tr>
+<tr><td>4</td><td>runtime_adapter.py:334</td><td><code>region_guard_status</code> 写入逻辑重复</td><td><span class="warn">maintainability</span></td></tr>
+<tr><td>5</td><td>test_runtime_integration.py:274</td><td>未使用 <code>import pypto</code></td><td><span class="warn">cleanup</span></td></tr>
+</table>
+<p style="margin-top: 0.5rem;"><span class="pass">0 bugs</span> | 5 cleanup/efficiency findings</p>
+</div>
+
+<h2>6. 环境信息</h2>
+
+<div class="card">
+<table>
+<tr><th>项目</th><th>值</th></tr>
+<tr><td>Python</td><td>3.11.15 (homebrew)</td></tr>
+<tr><td>OS</td><td>macOS Darwin 24.6.0 arm64</td></tr>
+<tr><td>pypto</td><td>0.1.0 (editable, from upstream/pypto)</td></tr>
+<tr><td>simpler</td><td>0.1.0 (non-editable, from upstream/pypto/runtime)</td></tr>
+<tr><td>torch</td><td>2.12.0 (cpu)</td></tr>
+<tr><td>PTO_ISA_ROOT</td><td>/Users/jiayetcs/Desktop/Project/PyPTO/ptoisa</td></tr>
+<tr><td>PTOAS_ROOT</td><td>/Users/jiayetcs/Desktop/Project/PyPTO/ptoas</td></tr>
+</table>
+</div>
+
+</body>
+</html>

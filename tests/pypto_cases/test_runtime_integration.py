@@ -264,7 +264,6 @@ class TestEndToEndRuntime:
     def test_sonata_plan_matches_compile_structure(self):
         """Sonata analysis tasks match what pypto.compile() produces."""
         from sonata.pipeline import sonata_analyze
-        import pypto
 
         certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
         result = sonata_analyze(certified, entry_name="SimpleAdd")
@@ -308,9 +307,9 @@ class TestEndToEndRuntime:
 
         env = os.environ.copy()
         env["PYTHONPATH"] = "tests/st:python"
-        env.setdefault("PTO_ISA_ROOT", "/Users/jiayetcs/Desktop/Project/PyPTO/ptoisa")
-        env.setdefault("PTOAS_ROOT", "/Users/jiayetcs/Desktop/Project/PyPTO/ptoas")
-        env["PATH"] = env.get("PTOAS_ROOT", "") + "/bin:" + env.get("PATH", "")
+        if "PTOAS_ROOT" not in env:
+            pytest.skip("PTOAS_ROOT not set — simpler runtime test requires ptoas")
+        env["PATH"] = env["PTOAS_ROOT"] + "/bin:" + env.get("PATH", "")
         r = subprocess.run(
             [venv_python, "-m", "pytest",
              "tests/st/runtime/ops/test_abs.py::TestAbs::test_tile_abs",

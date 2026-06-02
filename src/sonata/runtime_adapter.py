@@ -341,11 +341,6 @@ def _build_metadata(
         "runtime_target": plan_handle.runtime_target.runtime,
         "schema_version": plan_handle.schema_version,
     }
-    # v0.11 Phase 5 D: include region guard status when available
-    if plan_handle.region_guard_status:
-        meta["region_guard_status"] = {
-            k: v.value for k, v in plan_handle.region_guard_status.items()
-        }
     return meta
 
 

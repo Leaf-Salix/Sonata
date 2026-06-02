@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .eligibility import check_static_eligibility
-from .plan_handle import GuardStatus, PlanHandle
+from .plan_handle import PlanHandle
 from .pypto_adapter import DEFAULT_CERTIFIED_DUMP, PostSimplifyPyPTOInputAdapter
 from .regions import (
     RegionTree,
