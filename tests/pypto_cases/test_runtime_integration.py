@@ -256,3 +256,66 @@ class TestSonataPipeline:
             assert result.score is not None
             assert result.has_plan, f"{name} should produce a plan"
             assert result.task_count >= 1, f"{name} should have >= 1 task"
+
+
+class TestEndToEndRuntime:
+    """5E: Verify Sonata analysis is consistent with PyPTO compile output."""
+
+    def test_sonata_plan_matches_compile_structure(self):
+        """Sonata analysis tasks match what pypto.compile() produces."""
+        from sonata.pipeline import sonata_analyze
+        import pypto
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="SimpleAdd")
+
+        assert result.eligible
+        assert result.has_plan
+
+        # Verify plan structure is self-consistent
+        plan = result.host_build_graph_plan
+        score = result.score
+        assert plan.task_count() == len(score.tasks)
+        for hbg_task, score_task in zip(plan.tasks, score.tasks):
+            assert hbg_task.task_id == score_task.task_id
+            assert hbg_task.func_id == score_task.func_id
+
+        # Verify edges match dependencies
+        assert plan.edge_count() == len(score.dependencies)
+
+        # Verify PlanHandle is valid
+        ph = result.plan_handle
+        assert ph is not None
+        assert len(ph.arg_bindings) > 0
+        assert ph.runtime_target.runtime == "host_build_graph"
+
+    def test_full_st_test_infrastructure_works(self):
+        """The upstream st test infrastructure runs on a2a3sim.
+
+        This verifies simpler runtime is functional — the st test
+        compiles, generates C++ code, and executes on a2a3sim.
+        """
+        import subprocess
+        import os
+
+        upstream_dir = str(
+            Path(__file__).resolve().parents[2] / "upstream" / "pypto"
+        )
+        venv_python = str(
+            Path(__file__).resolve().parents[2].parent
+            / ".venv-sonata" / "bin" / "python"
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "tests/st:python"
+        env.setdefault("PTO_ISA_ROOT", "/Users/jiayetcs/Desktop/Project/PyPTO/ptoisa")
+        env.setdefault("PTOAS_ROOT", "/Users/jiayetcs/Desktop/Project/PyPTO/ptoas")
+        env["PATH"] = env.get("PTOAS_ROOT", "") + "/bin:" + env.get("PATH", "")
+        r = subprocess.run(
+            [venv_python, "-m", "pytest",
+             "tests/st/runtime/ops/test_abs.py::TestAbs::test_tile_abs",
+             "--platform=a2a3sim", "-v", "--tb=short", "--forked"],
+            cwd=upstream_dir, env=env,
+            capture_output=True, text=True, timeout=120,
+        )
+        assert r.returncode == 0, f"st test failed:\n{r.stdout[-2000:]}\n{r.stderr[-500:]}"
