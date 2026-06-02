@@ -35,7 +35,7 @@ from pypto.ir.pass_manager import OptimizationStrategy, PassManager
 from pypto.pypto_core import passes as _core_passes
 
 from sonata import check_static_eligibility, score_fingerprint, RuntimeTarget
-from sonata.plan_handle import PlanHandle, RuntimeArgBinding
+from sonata.plan_handle import PlanHandle
 from sonata.pypto_adapter import PostSimplifyPyPTOInputAdapter, DEFAULT_CERTIFIED_DUMP
 from sonata.runtime_adapter import HostBuildGraphRuntimeAdapter
 
@@ -104,27 +104,13 @@ class TestRealIRToHostBuildGraph:
         assert score is not None
         assert len(score.tasks) >= 1
 
-        # Generate PlanHandle from Score with arg bindings
-        from sonata.serialization import score_fingerprint as _fp
-        from sonata.plan_handle import FuncRegistry
-        arg_bindings = []
-        for task in score.tasks:
-            for i, (arg, sk) in enumerate(zip(task.args, task.arg_storage_keys)):
-                arg_bindings.append(RuntimeArgBinding(
-                    task_id=task.task_id,
-                    arg_index=i,
-                    storage_key=sk,
-                    direction=task.arg_directions[i] if i < len(task.arg_directions) else "Input",
-                    runtime_handle=i,
-                ))
-        plan_handle = PlanHandle(
-            score_fingerprint=_fp(score),
-            runtime_target=score.runtime_target,
+        # Generate PlanHandle from Score (auto-generates arg_bindings)
+        plan_handle = PlanHandle.from_score(
+            score,
             source_adapter=DEFAULT_CERTIFIED_DUMP,
-            func_registry=FuncRegistry.from_score(score),
-            arg_bindings=tuple(arg_bindings),
         )
         assert plan_handle.score_fingerprint == score_fingerprint(score)
+        assert len(plan_handle.arg_bindings) >= 1
 
         # Generate HostBuildGraphPlan
         rt_adapter = HostBuildGraphRuntimeAdapter()

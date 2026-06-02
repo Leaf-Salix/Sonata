@@ -170,19 +170,38 @@ class PlanHandle:
         source_adapter: str = "post_simplify",
         runtime_target: RuntimeTarget | None = None,
     ) -> "PlanHandle":
-        """Build a minimal PlanHandle from a Score.
+        """Build a PlanHandle from a Score.
 
-        Uses ``score_fingerprint()`` for the computation identity and
-        ``FuncRegistry.from_score()`` for the function registry.
+        Uses ``score_fingerprint()`` for the computation identity,
+        ``FuncRegistry.from_score()`` for the function registry, and
+        auto-generates ``RuntimeArgBinding`` entries from each task's
+        ``arg_directions`` and ``arg_storage_keys``.
         """
         from .serialization import score_fingerprint
 
         target = runtime_target or score.runtime_target
+
+        arg_bindings: list[RuntimeArgBinding] = []
+        for task in score.tasks:
+            directions = task.arg_directions or ()
+            storage_keys = task.arg_storage_keys or ()
+            for i in range(len(task.args)):
+                sk = storage_keys[i] if i < len(storage_keys) else None
+                direction = directions[i] if i < len(directions) else "Input"
+                arg_bindings.append(RuntimeArgBinding(
+                    task_id=task.task_id,
+                    arg_index=i,
+                    storage_key=sk,
+                    direction=direction,
+                    runtime_handle=i,
+                ))
+
         return cls(
             score_fingerprint=score_fingerprint(score),
             runtime_target=target,
             source_adapter=source_adapter,
             func_registry=FuncRegistry.from_score(score),
+            arg_bindings=tuple(arg_bindings),
         )
 
 
