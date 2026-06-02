@@ -1,3 +1,6 @@
 [submodule "upstream/pypto"]
 	path = upstream/pypto
 	url = https://github.com/hw-native-sys/pypto.git
+[submodule "upstream/pypto-lib"]
+	path = upstream/pypto-lib
+	url = https://github.com/hw-native-sys/pypto-lib.git
