@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 4 - 序列化与 Fingerprint</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 4 - 序列化与 Fingerprint</h1>
+
+<h2>提问：Score 怎么序列化成 JSON？</h2>
+
+<p><code>score_to_dict</code> 把 Score 转成一个确定性的字典，<code>score_to_json</code> 转成 JSON 字符串：</p>
+
+<pre><code>from sonata import score_to_json
+
+json_str = score_to_json(score, indent=2)</code></pre>
+
+<p>关键：<code>sort_keys=True</code> 保证相同内容的 Score 总是产生相同的 JSON。如果不排序，同一个 Score 在不同时间序列化可能产生不同的 key 顺序，导致 fingerprint 不同但实际内容相同。</p>
+
+<h2>提问：Fingerprint 是什么？解决了什么问题？</h2>
+
+<p>Fingerprint 是 Score 的<strong>计算身份标识</strong>——一个 SHA-256 哈希值。</p>
+
+<pre><code>from sonata import score_fingerprint
+
+fp = score_fingerprint(score)
+print(fp)  # "a1b2c3d4..."</code></pre>
+
+<p><strong>用途</strong>：把 fingerprint 当作 cache key。两个 Score 的 fingerprint 相同 → 计算内容完全一样 → 可以复用编译结果。</p>
+
+<h2>提问：Fingerprint 包含什么、不包含什么？为什么？</h2>
+
+<pre><code>{
+    "fingerprint_version": 1,
+    "identity": {
+        "name": "matmul_bias",
+        "tasks": [...],
+        "dependencies": [...],
+        "shape_assumptions": [...]
+    }
+}</code></pre>
+
+<table>
+  <tr><th>包含</th><th>不包含</th><th>理由</th></tr>
+  <tr>
+    <td>name, tasks, dependencies, shape_assumptions</td>
+    <td>runtime_target, metadata</td>
+    <td>前者决定了"算什么"（计算身份），后者是"怎么跑"（执行身份）</td>
+  </tr>
+</table>
+
+<p>考虑这两个 Score：</p>
+
+<pre><code># 这两个 Score 做的计算完全一样：
+score_a = Score(name="matmul", tasks=(...),
+    runtime_target=RuntimeTarget(function_name="build_matmul_graph"))
+score_b = Score(name="matmul", tasks=(...),
+    runtime_target=RuntimeTarget(function_name="build_matmul_v2_graph"))
+
+# fingerprint 相同！因为 fingerprint 只看"算什么"，不看"怎么跑"
+# 这提高了缓存命中率 — 同一计算不同 runtime 配置共享缓存</code></pre>
+
+<div class="callout success">
+  <strong>四系统共识：</strong>Inductor、XLA、TVM、CUDA Graphs 都区分"计算身份"和"执行身份"。
+  Sonata 跟随这个最佳实践。详见 Tutorial 06 的工业界经验部分。
+</div>
+
+<h2>提问：fingerprint_version 有什么用？</h2>
+
+<pre><code>FINGERPRINT_VERSION = 1</code></pre>
+
+<p>版本号参与 hash 计算。如果将来 hash 的规则变了（比如加了新字段），把版本号改为 2。
+由于版本号本身在 hash payload 里，旧的 fingerprint 值不会再被匹配到——旧缓存自动失效，不需要手动清理。</p>
+
+<h2>提问：shape_assumptions 怎么影响 fingerprint？</h2>
+
+<p>ShapeAssumption 是 fingerprint 的一部分，所以：</p>
+<ul>
+  <li>x 的形状从 [32, 768] 变成 [64, 768] → fingerprint 不同 → 缓存未命中 → 新 Score 被提取</li>
+  <li>这正是 guard 机制的核心——形状变化自动触发重新规划</li>
+</ul>
+
+<p>这也是为什么动态维度（<code>-1</code>、<code>0</code>）不能记录为 ShapeAssumption 的原因——
+如果记录了"假"的静态值，fingerprint 会因为一个不确定的维度而产生，导致缓存可能被错误命中。</p>
+
+<h2>提问：EligibilityResult 也能序列化吗？</h2>
+
+<pre><code>from sonata import eligibility_result_to_dict
+
+result_dict = eligibility_result_to_dict(result)</code></pre>
+
+<p>输出包含 <code>eligible</code>、<code>reasons</code>、<code>reason_details</code>，以及（如果有的话）完整的 <code>score</code> 字典。
+Schema version 也嵌入在输出中（当前 = 1），将来 breaking change 时版本号递增，消费者可检测格式变化。</p>
+
+<h2>提问：Schema Version 有哪些？</h2>
+
+<pre><code>SCORE_SCHEMA_VERSION = 1              # score_to_dict 输出的版本
+ELIGIBILITY_RESULT_SCHEMA_VERSION = 1  # eligibility_result_to_dict 输出的版本
+FINGERPRINT_VERSION = 1               # fingerprint hash payload 的版本</code></pre>
+
+<div class="nav">
+  <a href="03-dependencies.html">&larr; 上一篇：依赖策略</a>
+  &nbsp;|&nbsp;
+  <a href="05-storage-audit.html">下一篇：Storage Keys 与审计 &rarr;</a>
+</div>
+
+</body>
+</html>

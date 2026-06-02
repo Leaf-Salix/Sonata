@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 6 - Fallback、解耦架构与工业界经验</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 6 - Fallback、解耦架构与工业界经验</h1>
+
+<!-- ===== Fallback ===== -->
+
+<h2>提问：为什么需要结构化的 Fallback Reason？</h2>
+
+<p>当一个 IR 节点不能被 Sonata 处理时，需要告诉调用方<strong>为什么</strong>。
+但直接用字符串做路由 key 有问题——如果错误信息改了措辞，下游代码就断了。
+<strong>FallbackCode</strong> 枚举提供稳定的路由 key，不随消息措辞变化。</p>
+
+<pre><code>class FallbackCode(str, Enum):
+    UNSUPPORTED_ROOT_KIND            = "unsupported_root_kind"
+    CONTROL_FLOW_NOT_SUPPORTED       = "control_flow_not_supported"
+    UNSUPPORTED_RUNTIME_SCOPE        = "unsupported_runtime_scope"
+    TENSOR_READ_NOT_SUPPORTED        = "tensor_read_not_supported"
+    ENTRY_FUNCTION_NOT_ORCHESTRATION = "entry_function_not_orchestration"
+    SCORE_VALIDATION_FAILED          = "score_validation_failed"
+    STORAGE_COVERAGE_BELOW_THRESHOLD = "storage_coverage_below_threshold"
+    DATAFLOW_DIRECTIONS_UNAVAILABLE  = "dataflow_directions_unavailable"
+    DATAFLOW_DIRECTIONS_INCOMPLETE   = "dataflow_directions_incomplete"</code></pre>
+
+<h2>提问：FallbackReason 的结构是什么？</h2>
+
+<pre><code>@dataclass(frozen=True)
+class FallbackReason:
+    code: str       # FallbackCode 的值（稳定，可作路由 key）
+    message: str    # 人类可读的说明（可能变化）
+    severity: str   # "error" 或 "warning"</code></pre>
+
+<p><code>EligibilityResult.reject</code> 自动把 reason 字符串映射到 FallbackCode：</p>
+
+<pre><code>result = EligibilityResult.reject(
+    "ForStmt is not supported by initial Sonata eligibility",
+)
+# result.reason_details[0].code     == "control_flow_not_supported"
+# result.reason_details[0].severity == "error"</code></pre>
+
+<p>映射方式：<code>code_for_reason</code> 用<strong>子串匹配</strong>，顺序重要——更具体的模式必须排在前面。
+当消息没有匹配到任何已知 code 时，用 <code>_reason_code</code> 生成一个 slug 兜底（不稳定，不建议作路由 key）。</p>
+
+<h2>提问：severity 的区别是什么？</h2>
+
+<ul>
+  <li><strong>error</strong>：Score 不合法，不能使用。对应 <code>reject()</code></li>
+  <li><strong>warning</strong>：Score 合法，但有降级信息。对应 <code>accept_with_warnings()</code></li>
+</ul>
+<p>警告场景：Storage coverage 低于阈值（但 &gt; 0）、Dataflow 降级到 Sequential。</p>
+
+<!-- ===== 解耦架构 ===== -->
+
+<h2>提问：Sonata 的解耦架构是什么样的？</h2>
+
+<p>Sonata 的一个关键设计原则是<strong>输入和输出都不绑定到特定的 PyPTO pass 阶段或运行时</strong>：</p>
+
+<pre><code>Sonata 解耦架构：
+  PyPTO IR（经 pass pipeline 后的 certified dump）
+    │
+    ▼
+  PyPTOInputAdapter（薄层，集中所有 PyPTO IR 字段访问）
+    │                    ↕ 可替换
+    ▼
+  NormalizedTaskFacts（Sonata 内部表示）
+    │
+    ▼
+  Score / eligibility / fingerprint
+    │
+    ▼
+  RuntimeAdapter（薄层，映射到特定运行时 API）
+    │                    ↕ 可替换
+    ▼
+  PlanHandle → 运行时执行</code></pre>
+
+<p><strong>术语说明</strong>：</p>
+<ul>
+  <li><strong>pass pipeline</strong>：PyPTO 编译器对 IR 进行的一系列变换步骤。每一步（pass）做一件事，例如推导调用方向（<code>DeriveCallDirections</code>）、生成运行时作用域（<code>MaterializeRuntimeScopes</code>）</li>
+  <li><strong>certified dump</strong>：某个特定 pass 之后的 IR 快照。v0.1 默认绑定到 <code>CollectCommGroups</code> 之后、<code>MaterializeRuntimeScopes</code> 之前的 <code>Simplify</code> dump</li>
+  <li><strong>NormalizedTaskFacts</strong>：Sonata 内部的任务事实表示（纯 Python dataclass），是 adapter 输出、Score 输入的中间格式</li>
+  <li><strong>PlanHandle</strong>（v0.2 引入）：承载运行时执行所需的元数据。Score 管"算什么"，PlanHandle 管"怎么跑"</li>
+</ul>
+
+<div class="callout success">
+  <strong>为什么这样设计：</strong>如果 PyPTO 改了 IR 字段名或插入了新 pass，只改输入 adapter；
+  如果运行时目标从 <code>host_build_graph</code> 切换到 <code>tensormap_and_ringbuffer</code>，只换输出 adapter。
+  Sonata core 不变。
+</div>
+
+<p><strong>输入侧选择 pre-materialize</strong>：接在 <code>DeriveCallDirections</code> 之后、<code>MaterializeRuntimeScopes</code> 之前——
+<code>DeriveCallDirections</code> 产生 <code>arg_directions</code>（dataflow 依赖分析的前置条件），
+而 <code>MaterializeRuntimeScopes</code> 会引入 AUTO scope 包裹，Sonata 不需要处理。</p>
+
+<p><strong>输出侧选择 host_build_graph</strong>：PyPTO 最简单的静态运行时——<code>add_task()</code> 加任务、<code>add_successor()</code> 加依赖边，与 Score 模型天然接近。<code>tensormap_and_ringbuffer</code> 更复杂，留到 v0.3。</p>
+
+<!-- ===== 工业界经验 ===== -->
+
+<h2>提问：其他系统是怎么做的？</h2>
+
+<p>上述设计不是凭空想的。在设计 Sonata 的过程中，系统调研了四个成熟系统：</p>
+
+<table>
+  <tr><th>系统</th><th>Sonata 学到的核心经验</th></tr>
+  <tr>
+    <td><strong>TorchInductor</strong></td>
+    <td>
+      Guard 是"激活条件"，不是元数据——变了就要重新编译。<br>
+      Graph break：遇到不支持的操作就切回 eager 模式。<br>
+      Fingerprint 只覆盖计算身份，不覆盖执行元数据。
+    </td>
+  </tr>
+  <tr>
+    <td><strong>XLA / StableHLO</strong></td>
+    <td>
+      严格的计算 vs 执行分离：<code>HloModule</code>（计算）vs <code>Executable</code>（执行）。<br>
+      形状合约：在模块入口验证，per-dimension 的 static/dynamic 区分。<br>
+      Side-effect token 模型：用 token 对象强制安排没有数据依赖但有执行顺序要求的操作。
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Apache TVM</strong></td>
+    <td>
+      Compute/Schedule 分离：定义"算什么"和"怎么调度"是两件事。<br>
+      两级内存规划：图级 liveness + 内核级 buffer 合并。<br>
+      <code>Any</code> shape 类型 = per-dimension 的动态标记。
+    </td>
+  </tr>
+  <tr>
+    <td><strong>CUDA Graphs</strong></td>
+    <td>
+      录制前检查前提条件，回放时再检查——条件变了就回放失败。<br>
+      两级失效：参数变了可以原地更新（便宜），拓扑变了必须重新录制（昂贵）。<br>
+      编译时冻结内存计划，运行时不重新分配。
+    </td>
+  </tr>
+</table>
+
+<div class="callout success">
+  <strong>四系统共识：</strong>
+  <ul>
+    <li><strong>计算 ≠ 调度</strong> — 所有系统都把"算什么"和"怎么跑"分开</li>
+    <li><strong>Fingerprint = 计算身份</strong> — 缓存键只看计算结构，不看运行时配置</li>
+    <li><strong>Guard = 有效性域</strong> — 每个 guard 条件定义了计划有效的前提</li>
+    <li><strong>Fallback 是显式的</strong> — 每个系统都有明确的 fallback 路径</li>
+    <li><strong>内存计划是编译时的</strong> — 运行时不重新做内存规划</li>
+  </ul>
+</div>
+
+<div class="nav">
+  <a href="05-storage-audit.html">&larr; 上一篇：Storage Keys 与审计</a>
+  &nbsp;|&nbsp;
+  <a href="07-running-tests.html">下一篇：运行测试与当前状态 &rarr;</a>
+</div>
+
+</body>
+</html>

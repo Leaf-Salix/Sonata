@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 7 - 运行测试与当前状态</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .badge { display: inline-block; padding: .1em .5em; border-radius: 10px; font-size: .8em; font-weight: 600; }
+  .badge.done { background: #d1fae5; color: #059669; }
+  .badge.wip { background: #fef3c7; color: #d97706; }
+  .badge.pending { background: #f3f4f6; color: #6b7280; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 7 - 运行测试与当前状态</h1>
+
+<!-- ===== 测试 ===== -->
+
+<h2>提问：怎么跑测试？</h2>
+
+<p>纯 Sonata 测试（不需要 PyPTO）：</p>
+<pre><code>cd pypto-sonata
+PYTHONPATH=src python -m pytest tests/sonata</code></pre>
+<p>包含 PyPTO 兼容性测试：</p>
+<pre><code>cd pypto-sonata
+PYTHONPATH=src:upstream/pypto/python python -m pytest tests/sonata tests/pypto_cases</code></pre>
+
+<h2>提问：测试目录结构是什么？</h2>
+
+<pre><code>tests/
+├── sonata/                           ← 纯 Sonata 测试（不依赖 PyPTO）
+│   ├── test_audit.py                 ← 审计元数据测试
+│   ├── test_dependencies.py          ← 依赖策略测试
+│   ├── test_dependency_kind.py       ← 依赖类型细分测试
+│   ├── test_deserialization.py       ← 反序列化测试
+│   ├── test_eligibility.py           ← Eligibility 提取测试
+│   ├── test_fallback.py              ← FallbackCode 映射测试
+│   ├── test_guard.py                 ← Guard 条件系统测试（v0.10-v0.11）
+│   ├── test_integration.py           ← 集成测试
+│   ├── test_liveness.py              ← Buffer 生命周期测试
+│   ├── test_memory_plan.py           ← 内存规划 + 约束求解器测试（v0.11）
+│   ├── test_migration_compatibility.py ← Guard 迁移兼容性测试
+│   ├── test_plan_handle.py           ← PlanHandle 测试
+│   ├── test_regions.py               ← Region/RegionTree 测试（v0.4-v0.11）
+│   ├── test_regions_v011.py          ← RegionTree 新增测试（v0.11）
+│   ├── test_score.py                 ← Score 数据模型测试
+│   ├── test_serialization.py         ← 序列化与 fingerprint 测试
+│   ├── test_storage.py               ← Storage key 测试
+│   └── test_version.py               ← 版本信息测试
+└── pypto_cases/                      ← 需要 PyPTO 的测试
+    └── test_eligibility.py</code></pre>
+
+<p>测试分两层：<code>tests/sonata/</code> 验证核心逻辑（用 mock 对象模拟 IR）；
+<code>tests/pypto_cases/</code> 验证 adapter contract 和兼容性（用真实 PyPTO IR）。
+v0.11 新增了 <code>test_guard.py</code>、<code>test_memory_plan.py</code>、
+<code>test_regions_v011.py</code>、<code>test_migration_compatibility.py</code>
+覆盖 Guard 系统、内存规划和 RegionTree 层次化管理。</p>
+
+<h2>提问：纯 Sonata 测试怎么模拟 IR 节点？</h2>
+
+<p>用简单的 dataclass 模拟 IR，刚好有 Sonata 需要的字段：</p>
+
+<pre><code>@dataclass
+class Function:
+    name: str
+    body: Any
+
+@dataclass
+class Call:
+    op: str
+    args: tuple[Any, ...] = ()
+    arg_directions: tuple[Any, ...] = ()
+
+@dataclass(frozen=True)
+class Var:
+    name_hint: str
+    type: Any | None = None
+
+@dataclass(frozen=True)
+class TensorType:
+    shape: tuple[Any, ...]</code></pre>
+
+<h2>提问：怎么写一个 Score 验证测试？</h2>
+
+<pre><code>from sonata import Score, Task, Dependency, RuntimeTarget
+
+def test_score_validate_rejects_unknown_dependency_target():
+    score = Score(
+        name="invalid",
+        runtime_target=RuntimeTarget(
+            runtime="host_build_graph",
+            function_name="build_invalid_graph",
+        ),
+        tasks=(Task(task_id=0, func_id=0, core_type="aiv"),),
+        dependencies=(Dependency(producer=0, consumer=2),),  # 2 不存在
+    )
+    result = score.validate()
+    assert not result.eligible
+    assert result.reasons == ("dependency consumer is unknown: 2",)
+    assert result.reason_details[0].code == "score_validation_failed"</code></pre>
+
+<!-- ===== 当前状态 ===== -->
+
+<h2>提问：当前有什么限制？</h2>
+
+<div class="callout warn">
+  <strong>坦诚说明：</strong>以下列出当前 Sonata 的主要限制，帮助你评估项目成熟度。
+</div>
+
+<h3>功能限制</h3>
+
+<table>
+  <tr><th>限制</th><th>影响</th><th>缓解/计划</th></tr>
+  <tr>
+    <td>无端到端性能数据</td>
+    <td>虽有 benchmark 基线，但未在真实 NPU 上跑端到端</td>
+    <td>v0.12+ 真机 benchmark</td>
+  </tr>
+  <tr>
+    <td>ILP/CP 求解器未接入</td>
+    <td>内存规划只有贪心策略，对大图不是最优</td>
+    <td>ConstraintSolver 接口已预留，v0.12+ 接入</td>
+  </tr>
+  <tr>
+    <td>Group/Spmd 不支持</td>
+    <td>PyPTO 的 Group/Spmd 函数会展开成多个 task，Sonata 只按 Call 提取一个</td>
+    <td>后续版本扩展</td>
+  </tr>
+  <tr>
+    <td>per-region Score 提取为 placeholder</td>
+    <td>check_region_eligibility 中的 per-region Score 目前是空占位</td>
+    <td>v0.12+ 接入真实提取</td>
+  </tr>
+</table>
+
+<h3>架构风险</h3>
+
+<ul>
+  <li><strong>PyPTO pass stage 耦合</strong>：Sonata 用 <code>getattr()</code> 访问 PyPTO IR 字段。如果 PyPTO 改了字段名或 pipeline 顺序，Sonata 会静默降级。通过 adapter contract test 缓解。</li>
+  <li><strong>RuntimeTarget 数据流未打通</strong>：Sonata 准备好了 Score，但 PyPTO 的配置生成系统还没有"读取计划"的接口。</li>
+</ul>
+
+<!-- ===== v0.1 进度 ===== -->
+
+<h2>提问：v0.1 的具体进度？</h2>
+
+<table>
+  <tr><th>Feature</th><th>状态</th><th>说明</th></tr>
+  <tr><td>A1-A5. Guard 语义 + Shape Assumption</td><td><span class="badge done">已完成</span></td><td>v0.1-v0.10</td></tr>
+  <tr><td>B1-B3. FallbackCode + severity + 测试</td><td><span class="badge done">已完成</span></td><td>v0.1</td></tr>
+  <tr><td>C1-C3. Storage Coverage</td><td><span class="badge done">已完成</span></td><td>v0.1</td></tr>
+  <tr><td>D1-D2. Dataflow 依赖策略</td><td><span class="badge done">已完成</span></td><td>v0.3</td></tr>
+  <tr><td>E2. Eligibility 一致性</td><td><span class="badge done">已完成</span></td><td>v0.1</td></tr>
+  <tr><td>F1-F3. 序列化 + fingerprint</td><td><span class="badge done">已完成</span></td><td>v0.1-v0.2</td></tr>
+  <tr><td>G1-G2. PyPTO Adapter + smoke</td><td><span class="badge done">已完成</span></td><td>v0.6</td></tr>
+  <tr><td>Region 级 eligibility (RegionMap)</td><td><span class="badge done">已完成</span></td><td>v0.4</td></tr>
+  <tr><td>Score 缓存 (ScoreCache)</td><td><span class="badge done">已完成</span></td><td>v0.5</td></tr>
+  <tr><td>GuardCondition ABC + severity 分级</td><td><span class="badge done">已完成</span></td><td>v0.10</td></tr>
+  <tr><td>RegionTree 层次化区域管理</td><td><span class="badge done">已完成</span></td><td>v0.11</td></tr>
+  <tr><td>GuardEvaluator 区域级评估</td><td><span class="badge done">已完成</span></td><td>v0.11</td></tr>
+  <tr><td>内存约束求解器 (ConstraintSolver)</td><td><span class="badge done">已完成</span></td><td>v0.11</td></tr>
+</table>
+
+<!-- ===== 你可以做什么 ===== -->
+
+<h2>提问：我现在能做什么？</h2>
+
+<table>
+  <tr><th>如果你想...</th><th>建议的下一步</th></tr>
+  <tr>
+    <td>快速了解 Score 输出</td>
+    <td><code>PYTHONPATH=src python -m pytest tests/sonata -v</code></td>
+  </tr>
+  <tr>
+    <td>了解 Sonata 如何处理真实 PyPTO IR</td>
+    <td>阅读 <code>tests/pypto_cases/test_eligibility.py</code></td>
+  </tr>
+  <tr>
+    <td>试用 API</td>
+    <td><code>from sonata import check_static_eligibility, score_to_json</code></td>
+  </tr>
+  <tr>
+    <td>查看设计决策历史</td>
+    <td>阅读 <code>reports/roadmap_history.md</code></td>
+  </tr>
+</table>
+
+<h3>技术栈速查</h3>
+
+<table>
+  <tr><th>组件</th><th>说明</th></tr>
+  <tr><td>语言</td><td>Python 3.10+，纯 Python，零外部依赖</td></tr>
+  <tr><td>测试框架</td><td>pytest</td></tr>
+  <tr><td>代码量</td><td>src/sonata/: ~3500 行 | tests/: ~6000 行 | 500+ 测试全部通过</td></tr>
+</table>
+
+<div class="callout info">
+  <strong>总结：</strong>Sonata v0.0-v0.11 已完成完整的静态计划体系——Score 数据模型、Guard 条件系统、
+  RegionTree 层次化区域管理、内存约束求解、Score 缓存。500+ 测试全部通过。
+  下一步是端到端 benchmark 和 PyPTO 主线合入。
+  继续阅读 <a href="08-region-tree.html">Tutorial 8: RegionTree</a>、
+  <a href="09-guards.html">Tutorial 9: Guard 系统</a>、
+  <a href="10-memory-planning.html">Tutorial 10: 内存规划</a> 了解 v0.11 新功能。
+</div>
+
+<div class="nav">
+  <a href="06-fallback.html">&larr; 上一篇：Fallback、解耦架构与工业界经验</a>
+  &nbsp;|&nbsp;
+  <a href="08-region-tree.html">下一篇：Region Tree &rarr;</a>
+</div>
+
+</body>
+</html>

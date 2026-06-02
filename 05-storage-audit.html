@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 5 - Storage Keys 与审计元数据</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 5 - Storage Keys 与审计元数据</h1>
+
+<h2>提问：Storage Key 解决什么问题？</h2>
+
+<p>在 IR 里，同一个内存位置可能有不同的变量名：</p>
+
+<pre><code>x = tensor.create(...)    # 分配了一块内存
+y = foo(x)                # y 可能就是 x 的别名
+z = bar(y)                # z 也可能是同一块内存</code></pre>
+
+<p>如果只看变量名，Sonata 会以为 <code>x</code>、<code>y</code>、<code>z</code> 是三个独立的内存位置。
+实际上它们可能指向同一块物理内存。如果不知道一个 task 的参数存在哪块内存，就无法判断两个 task 是否访问同一块内存——即无法做 dataflow 依赖分析。</p>
+
+<p><strong>Storage Key</strong> 就是用来追踪"哪个变量名对应哪块物理内存"的机制。</p>
+
+<h2>提问：Storage Key 是怎么收集的？</h2>
+
+<p><code>collect_storage_keys</code> 遍历 IR 节点，建立 <code>var_identity → storage_key</code> 的映射：</p>
+
+<table>
+  <tr><th>来源</th><th>storage_key 格式</th><th>例子</th></tr>
+  <tr><td>函数参数（param）</td><td><code>param:&lt;unique_id&gt;:&lt;name&gt;</code> 或 <code>param:&lt;name&gt;</code></td><td><code>param:0:x</code></td></tr>
+  <tr><td><code>tensor.create</code> 分配</td><td><code>alloc:&lt;unique_id&gt;:&lt;name&gt;</code> 或 <code>alloc:&lt;name&gt;</code></td><td><code>alloc:y</code></td></tr>
+  <tr><td>函数调用的输出</td><td>继承自写方向参数的 storage key</td><td>同写入参数</td></tr>
+</table>
+
+<p>回到 matmul_bias 的例子：</p>
+
+<pre><code># task 0: matmul(x, w, y)
+#   arg_storage_keys: ["param:0:x", "param:1:w", "alloc:y"]
+#   → x 和 w 是入口参数，y 是中间分配
+
+# task 1: add(y, b, z)
+#   arg_storage_keys: ["alloc:y", "param:2:b", "param:3:z"]
+#   → y 的 storage key 是 "alloc:y"，与 task 0 输出的 y 相同
+#   → dataflow 分析发现：task 0 写 "alloc:y"，task 1 读 "alloc:y" → RAW 依赖</code></pre>
+
+<h2>提问：TupleGetItem 是怎么处理的？</h2>
+
+<p>有些函数返回一个 tuple，然后通过 <code>TupleGetItemExpr</code> 取其中的元素：</p>
+
+<pre><code>result = multi_output_func(a, b)   # 返回 tuple
+x = result[0]                      # TupleGetItemExpr
+y = result[1]                      # TupleGetItemExpr</code></pre>
+
+<p>处理方式：</p>
+<ol>
+  <li><code>multi_output_func</code> 的每个写方向参数都有一个 storage key</li>
+  <li>这些 key 按顺序存在 <code>tuple_element_keys</code> 里</li>
+  <li>当遇到 <code>result[0]</code> 时，取第 0 个 key 给 <code>x</code></li>
+  <li>当遇到 <code>result[1]</code> 时，取第 1 个 key 给 <code>y</code></li>
+</ol>
+
+<h2>提问：Memory Storage Coverage 是什么？</h2>
+
+<p>Audit 元数据里有两个覆盖率指标：</p>
+
+<pre><code>"storage_key_coverage":           // 所有参数
+    {"known": 6, "unknown": 0, "total": 6}
+"memory_storage_key_coverage":    // 只有内存方向的参数（input/output/inout）
+    {"known": 4, "unknown": 0, "total": 4}</code></pre>
+
+<p>eligibility 检查使用的是 <code>memory_storage_key_coverage</code>，因为只有内存参数影响依赖分析。上例中 6 个参数里有 4 个是内存方向，另外 2 个是 scalar/nodep 方向，不参与内存分析。</p>
+
+<pre><code># 覆盖率 = 100% → dataflow 依赖分析完全可信
+
+# 如果覆盖率低：
+storage_key_coverage = {
+    "known": 1,     # 只知道 1 个
+    "unknown": 2,   # 2 个不知道
+    "total": 3
+}
+# 覆盖率 = 33% → dataflow 分析不可靠，降级为 sequential
+# 记录 warning，但不拒绝整个 Score（v0.1 阶段）</code></pre>
+
+<p>阈值：</p>
+<ul>
+  <li><code>STORAGE_COVERAGE_WARN_THRESHOLD = 0.5</code>（50%）——低于此值产生 warning</li>
+  <li><code>STORAGE_COVERAGE_REJECT_THRESHOLD = 0.0</code>（0%）——目前不自动拒绝，只警告</li>
+</ul>
+
+<h2>提问：Audit Metadata 还记录了什么？</h2>
+
+<p><code>build_score_metadata</code> 生成的 metadata：</p>
+
+<pre><code>{
+    "extractor": "structural_v0",
+    "dependency_policy": "sequential_v0",    // 实际使用的策略（可能与请求的不同）
+    "storage_key_coverage": {...},
+    "memory_storage_key_coverage": {...},
+    "entry_name": "my_function"
+}</code></pre>
+
+<p>如果发生了 dataflow 降级，额外字段：</p>
+
+<pre><code>{
+    "requested_dependency_policy": "dataflow_v0",
+    "dependency_policy_fallback_reason": "dataflow_directions_unavailable"
+}</code></pre>
+
+<p>如果有 <code>nodep</code> 方向的参数（不参与依赖计算的），也会被记录在 <code>nodep_args</code> 里，方便审计。</p>
+
+<div class="nav">
+  <a href="04-serialization.html">&larr; 上一篇：序列化与 Fingerprint</a>
+  &nbsp;|&nbsp;
+  <a href="06-fallback.html">下一篇：Fallback Reason 与工业界经验 &rarr;</a>
+</div>
+
+</body>
+</html>

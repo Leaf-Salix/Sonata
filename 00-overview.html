@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 0 - Sonata 是什么？</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 0 - Sonata 是什么？</h1>
+
+<h2>提问：Sonata 要解决什么问题？</h2>
+
+<p>先说上下文。PyPTO 是一个面向昇腾 NPU 的深度学习编译框架。在 PyPTO 的世界里，
+一个模型在执行前需要被编译成硬件能理解的指令。当前的调度方式是<strong>AICPU 动态调度</strong>。</p>
+
+<p><strong>AICPU</strong>（AI CPU）是昇腾 NPU 片上负责运行时图调度的 CPU 核心。它在运行时做三件事：</p>
+<ul>
+  <li>逐节点分析依赖关系</li>
+  <li>动态决定执行顺序</li>
+  <li>分配和管理内存</li>
+</ul>
+
+<p>问题是：<strong>每次推理都要重复这些工作</strong>。对于静态形状场景，这些工作完全可以提前到编译时完成。</p>
+
+<div class="callout info">
+  <strong>类比：</strong>一个快递站有 100 个包裹，99 个地址清楚，1 个地址不清。
+  当前的做法是把 100 个包裹都按"地址不清"处理，全部人工派送。
+  Sonata 的做法是：先把 99 个地址清楚的包裹规划好最优路线直接派送，那 1 个地址不清的单独处理。
+</div>
+
+<p>这个问题来自 PyPTO 的 <a href="https://github.com/hw-native-sys/pypto/issues/1494">Issue #1494</a>：</p>
+<blockquote style="border-left:3px solid #ccc; padding:.3em .8em; color:#555; font-size:.93em;">
+  <em>"The current scheduling approach in PyPTO is AICPU-based dynamic scheduling. For static-shape cases,
+  I would prefer not to use AICPU scheduling, but instead compile the scheduling directly on the host side."</em>
+</blockquote>
+
+<p>Sonata 的目标就是实现这个 "host-side compiled calendar scheduling"——在宿主端提前编排好任务执行顺序，运行时直接按顺序执行。</p>
+
+<h2>提问：Score 是什么？</h2>
+
+<p><strong>Score</strong> 是 Sonata 的核心产物——一个编译时提取的静态执行计划。它是纯 Python 数据结构，包含：</p>
+
+<table>
+  <tr><th>字段</th><th>含义</th><th>类比</th></tr>
+  <tr><td><code>name</code></td><td>计划名称</td><td>菜谱名字</td></tr>
+  <tr><td><code>runtime_target</code></td><td>目标运行时配置</td><td>用哪个厨房</td></tr>
+  <tr><td><code>tasks</code></td><td>预计算的运行时任务</td><td>菜谱里的每一个步骤</td></tr>
+  <tr><td><code>dependencies</code></td><td>任务之间的依赖（DAG 的边）</td><td>"必须先和面才能擀面皮"</td></tr>
+  <tr><td><code>shape_assumptions</code></td><td>输入张量的形状假设</td><td>"用 32 寸烤盘"——换了烤盘大小要重新规划</td></tr>
+  <tr><td><code>metadata</code></td><td>审计/调试元数据</td><td>—</td></tr>
+</table>
+
+<h2>提问：Sonata 和 PyPTO 的关系是什么？</h2>
+
+<pre><code>Sonata（本仓库）
+  ├─ src/sonata/        ← Sonata 核心代码（纯 Python，不依赖 PyPTO）
+  ├─ tests/sonata/      ← 纯 Sonata 测试（不需要 PyPTO）
+  ├─ tests/pypto_cases/ ← 需要 PyPTO 的兼容性测试
+  ├─ patches/pypto/     ← 给 PyPTO 的补丁
+  └─ upstream/pypto/    ← PyPTO 上游（git submodule）</code></pre>
+
+<p>关键原则：<strong>Sonata 核心代码不 import PyPTO</strong>。
+PyPTO 被当作"参考实现"和"测试用例来源"，而不是 Sonata 的内部组件。</p>
+
+<h2>提问：现在和未来是什么流程？</h2>
+
+<pre><code>当前路径（AICPU 动态调度）：
+  PyPTO IR → AICPU 运行时 → 逐节点分析依赖 → 动态分配内存 → 执行
+                 ↑                                                        │
+                 └──────── 每次推理都重复以上步骤 ─────────────────────────┘
+
+Sonata 路径（编译时静态计划）：
+  PyPTO IR → Sonata 提取 → Score (JSON) → Fingerprint → 缓存
+              （编译时一次）                                  │
+                                                             ▼
+                                                 运行时直接消费 Score → 执行
+                                                 （命中缓存则跳过提取）</code></pre>
+
+<h2>提问：现在的进展到哪了？</h2>
+
+<table>
+  <tr><th>版本</th><th>状态</th><th>内容</th><th>与 #1494 的关系</th></tr>
+  <tr><td><strong>v0.0</strong></td><td>已完成</td><td>基线：Score 模型、eligibility、序列化、依赖分析、存储别名、审计元数据、测试套件</td><td>建立数据模型基础</td></tr>
+  <tr><td><strong>v0.1-v0.3</strong></td><td>已完成</td><td>Guard 语义、PlanHandle、HostBuildGraphRuntimeAdapter、依赖策略（RAW/WAW/WAR）、内存规划（greedy first-fit）、序列化</td><td>打通 Score → 运行时路径</td></tr>
+  <tr><td><strong>v0.4-v0.6</strong></td><td>已完成</td><td>Region 级 eligibility（RegionMap）、Score 缓存（ScoreCache + fingerprint）、PyPTO Adapter</td><td>支持混合图、缓存复用</td></tr>
+  <tr><td><strong>v0.7-v0.9</strong></td><td>已完成</td><td>Runtime Contract 稳定、fingerprint 可信、benchmark 基线、500+ 测试</td><td>达到可交付状态</td></tr>
+  <tr><td><strong>v0.10</strong></td><td>已完成</td><td>GuardCondition ABC 抽象层、severity 分级（soft/hard）、GuardSelector 防 over-guarding</td><td>guard 系统可扩展</td></tr>
+  <tr><td><strong>v0.11</strong></td><td>已完成</td><td>RegionTree 层次化区域管理、per-region 缓存、GuardEvaluator 区域级评估、内存约束求解器（ConstraintSolver/GreedySolver）、冲突矩阵</td><td>支持复杂 IR 的精细规划</td></tr>
+  <tr><td><strong>v0.12+</strong></td><td>规划中</td><td>ILP/CP 高级求解器、端到端 benchmark、PyPTO 主线合入</td><td>最终目标</td></tr>
+</table>
+
+<div class="callout success">
+  <strong>v0.0-v0.11 全部完成：</strong>Sonata 已建立完整的静态计划体系——
+  Score 数据模型、Guard 条件系统、RegionTree 层次化区域管理、内存规划、Score 缓存。
+  500+ 测试全部通过。下一步是端到端 benchmark 和 PyPTO 主线合入。
+</div>
+
+<div class="nav">
+  <span class="arrow">&larr;</span> 上一篇：（无）
+  &nbsp;|&nbsp;
+  <a href="01-core-model.html">下一篇：Score 数据模型 &rarr;</a>
+</div>
+
+</body>
+</html>
