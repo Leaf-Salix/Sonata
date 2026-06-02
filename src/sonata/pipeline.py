@@ -545,3 +545,54 @@ def update_region_guard_status(
             status_map[gr.region_id] = GuardStatus.ALL_FAILED
 
     return {k: v for k, v in status_map.items()}
+
+
+def invalidate_on_guard_violation(
+    guard_results: tuple[GuardCheckResult, ...],
+    region_tree: Any,
+    cache: Any,
+    *,
+    path_to_fingerprint: dict[str, str] | None = None,
+) -> int:
+    """Invalidate cache entries for regions with guard violations.
+
+    v0.12 Phase 2 B1: Connects guard checking to actual cache invalidation.
+    For each region with ALL_FAILED or PARTIAL_FAILED guard status,
+    invalidates that region and all its descendants in the cache.
+
+    Args:
+        guard_results: Results from check_guards_at_runtime().
+        region_tree: RegionTree for path resolution.
+        cache: ScoreCache instance.
+        path_to_fingerprint: Path → fingerprint mapping from store_region_tree.
+
+    Returns:
+        Total number of cache entries invalidated.
+    """
+    from .regions import invalidate_region_tree
+
+    total_invalidated = 0
+    for gr in guard_results:
+        if gr.guard_status == "all_satisfied":
+            continue
+
+        # Find the matching node in the region tree
+        target_node = None
+        for node in region_tree.all_nodes:
+            if f"region_{node.region.region_id}" == gr.region_id:
+                target_node = node
+                break
+
+        if target_node is not None and path_to_fingerprint is not None:
+            count = invalidate_region_tree(
+                region_tree, target_node, cache,
+                path_to_fingerprint=path_to_fingerprint,
+            )
+            total_invalidated += count
+
+            _region_log.warning(
+                "[INVALIDATE] %s: %s — invalidated %d cache entries (violated: %s)",
+                gr.region_id, gr.guard_status, count, gr.violated_guards,
+            )
+
+    return total_invalidated

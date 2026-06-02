@@ -615,3 +615,61 @@ class TestMixedGraphEndToEnd:
         # Update status
         status = update_region_guard_status(None, guards)
         assert status["region_0"] == GuardStatus.ALL_FAILED
+
+    def test_guard_cache_invalidation(self):
+        """Guard violation invalidates affected cache entries."""
+        from sonata.pipeline import (
+            SonataAnalysisResult, check_guards_at_runtime,
+            invalidate_on_guard_violation,
+        )
+        from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
+        from sonata.score import Score, RuntimeTarget
+        from sonata.cache import ScoreCache
+        from sonata.regions import (
+            Region, RegionTreeNode, RegionTree, REGION_STATIC,
+            store_region_tree,
+        )
+        from sonata.serialization import score_fingerprint
+
+        # Build a simple tree with 2 static regions
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(), dependencies=(),
+            shape_assumptions=(
+                ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ),
+        )
+        child = RegionTreeNode(region=Region(region_id=1, kind=REGION_STATIC))
+        root = RegionTreeNode(
+            region=Region(region_id=0, kind=REGION_STATIC),
+            children=(child,),
+        )
+        tree = RegionTree(root=root)
+
+        # Store in cache
+        cache = ScoreCache()
+        mappings = store_region_tree(tree, {}, cache, per_region_scores={
+            "region_0": score, "region_1": score,
+        })
+
+        # Verify cached
+        from sonata.regions import lookup_region_tree
+        assert lookup_region_tree("root", cache, path_to_fingerprint=mappings) is not None
+        assert lookup_region_tree("root.child[0]", cache, path_to_fingerprint=mappings) is not None
+
+        # Guard violation on region_0
+        sr = SonataAnalysisResult(
+            eligible=True, score=score,
+            region_statuses={"region_0": "static", "region_1": "static"},
+        )
+        guard_results = check_guards_at_runtime(sr, {"x": (64,)})  # wrong size
+
+        # Invalidate on violation
+        invalidated = invalidate_on_guard_violation(
+            guard_results, tree, cache, path_to_fingerprint=mappings,
+        )
+        assert invalidated >= 1
+
+        # region_0 and its child (region_1) should be invalidated
+        assert lookup_region_tree("root", cache, path_to_fingerprint=mappings) is None
+        assert lookup_region_tree("root.child[0]", cache, path_to_fingerprint=mappings) is None
