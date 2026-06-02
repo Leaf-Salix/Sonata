@@ -707,3 +707,108 @@ class TestMemoryHints:
         result = SonataAnalysisResult(eligible=False)
         path = write_memory_hints(result, Path("/tmp"))
         assert path is None
+
+
+class TestV015Integration:
+    """Phase 4: End-to-end integration tests for v0.15 runtime features."""
+
+    def test_full_pipeline_with_scheduling(self):
+        """Full pipeline: analyze → dispatch → scheduling → memory hints."""
+        import json
+        import tempfile
+        from sonata.pipeline import (
+            sonata_analyze, dispatch_regions, compute_scheduling_instructions,
+            write_memory_hints,
+        )
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="integration_test")
+        assert result.eligible
+
+        # Dispatch
+        dispatch = dispatch_regions(result)
+        assert dispatch.total >= 1
+
+        # Scheduling
+        instructions = compute_scheduling_instructions(dispatch)
+        assert len(instructions) >= 1
+        assert instructions[0].block_dim > 0
+
+        # Memory hints
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hint_path = write_memory_hints(result, Path(tmpdir))
+            assert hint_path is not None
+            data = json.loads(hint_path.read_text())
+            assert data["task_count"] >= 1
+            assert "dispatch" in data
+
+    def test_guard_check_then_schedule(self):
+        """Guard check → scheduling → execution decision."""
+        from sonata.pipeline import (
+            SonataAnalysisResult, check_guards_at_runtime,
+            dispatch_regions, compute_scheduling_instructions,
+            update_region_guard_status,
+        )
+        from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
+        from sonata.score import Score, RuntimeTarget
+        from sonata.plan_handle import GuardStatus
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(), dependencies=(),
+            shape_assumptions=(
+                ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ),
+        )
+        result = SonataAnalysisResult(
+            eligible=True, score=score,
+            region_statuses={"r0": "static", "r1": "dynamic"},
+        )
+
+        # Check guards — x matches
+        guards = check_guards_at_runtime(result, {"x": (32,)})
+        assert all(g.guard_status == "all_satisfied" for g in guards)
+
+        # Dispatch
+        dispatch = dispatch_regions(result)
+        assert dispatch.optimized_count == 1
+        assert dispatch.fallback_count == 1
+
+        # Schedule
+        instructions = compute_scheduling_instructions(dispatch)
+        assert instructions[0].block_dim == 32  # static → base
+        assert instructions[1].block_dim == 1   # dynamic → fallback
+
+        # Update guard status
+        status = update_region_guard_status(None, guards)
+        assert all(v == GuardStatus.ALL_SATISFIED for v in status.values())
+
+    def test_guard_violation_blocks_execution(self):
+        """HARD guard violation → execution blocked, cache cleared."""
+        from sonata.pipeline import (
+            SonataAnalysisResult, check_guards_at_runtime,
+            _certified_ir_cache, _clear_ir_cache,
+        )
+        from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
+        from sonata.score import Score, RuntimeTarget
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(), dependencies=(),
+            shape_assumptions=(
+                ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ),
+        )
+        result = SonataAnalysisResult(
+            eligible=True, score=score,
+            region_statuses={"r0": "static"},
+        )
+
+        # Guard violation
+        guards = check_guards_at_runtime(result, {"x": (99,)})
+        assert guards[0].guard_status == "all_failed"
+
+        # Cache should be cleared on HARD violation
+        _certified_ir_cache["fake_key"] = "fake_value"
+        _clear_ir_cache()
+        assert len(_certified_ir_cache) == 0
