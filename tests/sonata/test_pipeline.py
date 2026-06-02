@@ -239,3 +239,37 @@ class TestDependencyKindIntegration:
                       dependencies=(dep,), shape_assumptions=())
         data = score_to_dict(score)
         assert data["dependencies"][0]["kind"] == "storage"
+
+
+# --- compute_scheduling_instructions ---
+
+class TestSchedulingInstructions:
+    def test_static_region_optimized(self):
+        from sonata.pipeline import compute_scheduling_instructions, DispatchPlan, RegionDispatchResult
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="static", action="optimized"),),
+            optimized_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, base_block_dim=32)
+        assert inst[0].block_dim == 32
+        assert "optimized" in inst[0].reason
+
+    def test_dynamic_region_fallback(self):
+        from sonata.pipeline import compute_scheduling_instructions, DispatchPlan, RegionDispatchResult
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="dynamic", action="fallback"),),
+            fallback_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, fallback_block_dim=1)
+        assert inst[0].block_dim == 1
+        assert "fallback" in inst[0].reason
+
+    def test_mixed_region_conservative(self):
+        from sonata.pipeline import compute_scheduling_instructions, DispatchPlan, RegionDispatchResult
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="mixed", action="mixed"),),
+            mixed_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, base_block_dim=32)
+        assert inst[0].block_dim == 16  # half of base
+        assert "conservative" in inst[0].reason

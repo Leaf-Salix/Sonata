@@ -557,6 +557,56 @@ def dispatch_regions(
 
 
 @dataclass(frozen=True)
+class SchedulingInstruction:
+    """Scheduling hint derived from region dispatch."""
+
+    region_id: str
+    block_dim: int
+    reason: str
+
+
+def compute_scheduling_instructions(
+    dispatch: DispatchPlan,
+    *,
+    base_block_dim: int = 32,
+    fallback_block_dim: int = 1,
+) -> tuple[SchedulingInstruction, ...]:
+    """Generate scheduling instructions from dispatch results.
+
+    v0.15 Phase 2 A1: Region-aware scheduling.
+
+    - static regions → base_block_dim (optimized)
+    - dynamic regions → fallback_block_dim (conservative)
+    - mixed regions → half of base_block_dim
+
+    Args:
+        dispatch: DispatchPlan from dispatch_regions().
+        base_block_dim: Block dim for optimized static regions.
+        fallback_block_dim: Block dim for dynamic fallback regions.
+
+    Returns:
+        Tuple of SchedulingInstruction, one per region.
+    """
+    instructions: list[SchedulingInstruction] = []
+    for result in dispatch.results:
+        if result.action == "optimized":
+            bd = base_block_dim
+            reason = "static region — optimized"
+        elif result.action == "fallback":
+            bd = fallback_block_dim
+            reason = "dynamic region — fallback"
+        else:
+            bd = max(base_block_dim // 2, 1)
+            reason = "mixed region — conservative"
+        instructions.append(SchedulingInstruction(
+            region_id=result.region_id,
+            block_dim=bd,
+            reason=reason,
+        ))
+    return tuple(instructions)
+
+
+@dataclass(frozen=True)
 class GuardCheckResult:
     """Result of runtime guard checking."""
 
