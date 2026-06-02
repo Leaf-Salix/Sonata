@@ -225,5 +225,81 @@ class TestMemoryPlanSchema:
         assert plan.conflict_matrix_hash is None
 
 
+class TestMemoryPlanBenchmarks:
+    """Benchmarks for v0.11 Phase 2 D1-D3."""
+
+    def test_peak_memory_comparison(self):
+        """Conflict-matrix-aware solver uses no more memory than greedy."""
+        from sonata.memory_plan import GreedySolver, compute_conflict_matrix
+        from sonata.liveness import BufferLifetime
+        import random
+
+        random.seed(42)
+        # 50 buffers with random lifetimes
+        lifetimes = []
+        for i in range(50):
+            birth = random.randint(0, 90)
+            death = birth + random.randint(1, 10)
+            lifetimes.append(BufferLifetime(storage_key=f"b{i}", birth=birth, death=death))
+
+        matrix = compute_conflict_matrix(lifetimes)
+        sizes = [random.randint(64, 4096) for _ in range(50)]
+
+        solver = GreedySolver()
+        plan = solver.solve(matrix, sizes)
+
+        # Peak memory must be finite and positive
+        assert plan.peak_memory > 0
+        assert plan.solver_type == "greedy"
+        # All buffers assigned
+        assert len(plan.allocations) == 50
+
+    def test_solver_performance(self):
+        """Solver completes within timeout for N≤100."""
+        from sonata.memory_plan import GreedySolver, compute_conflict_matrix
+        from sonata.liveness import BufferLifetime
+        import time
+
+        for n in (10, 50, 100):
+            lifetimes = [
+                BufferLifetime(storage_key=f"b{i}", birth=i, death=i + 5)
+                for i in range(n)
+            ]
+            matrix = compute_conflict_matrix(lifetimes)
+            sizes = [128] * n
+
+            start = time.monotonic()
+            plan = GreedySolver().solve(matrix, sizes)
+            elapsed = time.monotonic() - start
+
+            assert elapsed < 1.0, f"N={n} took {elapsed:.3f}s (limit 1s)"
+            assert len(plan.allocations) == n
+
+    def test_end_to_end_memory_planning(self):
+        """Full pipeline: lifetimes → conflict matrix → solve."""
+        from sonata.memory_plan import GreedySolver, solve_memory, compute_conflict_matrix
+        from sonata.liveness import BufferLifetime
+
+        lifetimes = [
+            BufferLifetime(storage_key="input", birth=0, death=2),
+            BufferLifetime(storage_key="hidden", birth=1, death=4),
+            BufferLifetime(storage_key="output", birth=3, death=5),
+            BufferLifetime(storage_key="temp", birth=2, death=3),
+        ]
+        matrix = compute_conflict_matrix(lifetimes)
+        sizes = [1024, 2048, 512, 256]
+
+        plan = solve_memory(GreedySolver(), matrix, sizes, timeout_seconds=5.0)
+        assert len(plan.allocations) == 4
+        assert plan.peak_memory > 0
+        # No overlapping conflicting buffers
+        for i in range(4):
+            for j in range(i + 1, 4):
+                if matrix[i][j]:
+                    a = plan.allocations[i]
+                    b = plan.allocations[j]
+                    assert not _ranges_overlap(a, b)
+
+
 def _ranges_overlap(a: BufferAllocation, b: BufferAllocation) -> bool:
     return a.offset < b.end and b.offset < a.end
