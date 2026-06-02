@@ -337,14 +337,14 @@ def execute_with_sonata(
 ) -> tuple[Any, SonataAnalysisResult | None]:
     """Execute a compiled program with Sonata plan awareness.
 
-    Before execution:
-    1. Reads sonata_plan.json from work_dir
-    2. Runs guard checks against runtime_values (if provided)
-    3. Runs region dispatch to determine execution strategy
-    4. Logs decisions
-    5. Executes via pypto.runtime.execute_compiled
+    Uses Sonata analysis to influence simpler runtime behavior:
+    - Computes suggested block_dim from task count (Sonata-informed)
+    - Runs guard checks before execution
+    - Logs dispatch decisions
+    - On ALL_FAILED guard: skips execution
 
-    Does NOT modify simpler runtime code. All analysis is pre-execution.
+    Does NOT modify simpler runtime code. All influence is via
+    execute_compiled's public parameters (block_dim, aicpu_thread_num).
 
     Args:
         work_dir: Compiled artifacts directory.
@@ -367,19 +367,27 @@ def execute_with_sonata(
         # Pre-execution: guard check
         if runtime_values and plan.score is not None:
             guard_results = check_guards_at_runtime(plan, runtime_values)
-            for gr in guard_results:
-                if gr.guard_status != "all_satisfied":
-                    _region_log.warning(
-                        "[SONATA] Guard violation: %s — %s (violated: %s)",
-                        gr.region_id, gr.guard_status, gr.violated_guards,
-                    )
+            hard_failed = any(gr.guard_status == "all_failed" for gr in guard_results)
+            if hard_failed:
+                _region_log.error(
+                    "[SONATA] HARD guard violation — skipping execution"
+                )
+                return None, plan
 
         # Pre-execution: region dispatch
         dispatch = dispatch_regions(plan)
-        if dispatch.has_fallbacks:
+        _region_log.info(
+            "[SONATA] Dispatch: %d optimized, %d fallback, %d mixed",
+            dispatch.optimized_count, dispatch.fallback_count, dispatch.mixed_count,
+        )
+
+        # Influence runtime parameters based on analysis
+        if plan.task_count > 0 and "block_dim" not in kwargs:
+            suggested_block_dim = min(plan.task_count, 32)
+            kwargs["block_dim"] = suggested_block_dim
             _region_log.info(
-                "[SONATA] Dispatch: %d optimized, %d fallback, %d mixed",
-                dispatch.optimized_count, dispatch.fallback_count, dispatch.mixed_count,
+                "[SONATA] Setting block_dim=%d (from %d tasks)",
+                suggested_block_dim, plan.task_count,
             )
 
     execute_compiled(work_dir, *args, **kwargs)

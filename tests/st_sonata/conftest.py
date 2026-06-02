@@ -173,6 +173,27 @@ def _make_patched_compile(original_compile):
     return patched_compile
 
 
+def _make_patched_execute(original_execute):
+    """Wrap execute_compiled to inject Sonata-informed block_dim."""
+    @functools.wraps(original_execute)
+    def patched_execute(work_dir, *args, **kwargs):
+        # Read sonata_plan.json from work_dir
+        plan_path = Path(str(work_dir)) / "sonata_plan.json"
+        if plan_path.exists():
+            try:
+                import json
+                plan_data = json.loads(plan_path.read_text())
+                task_count = plan_data.get("task_count", 0)
+                if task_count > 0 and "block_dim" not in kwargs:
+                    suggested = min(task_count, 32)
+                    kwargs["block_dim"] = suggested
+                    log.info("[SONATA] Setting block_dim=%d for execution (from %d tasks)", suggested, task_count)
+            except Exception:
+                pass
+        return original_execute(work_dir, *args, **kwargs)
+    return patched_execute
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Before each test, monkeypatch compile_program and log analysis."""
@@ -193,6 +214,15 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             break
         except (ImportError, AttributeError, ValueError):
             continue
+
+    # Monkeypatch execute_compiled to inject Sonata block_dim
+    try:
+        from pypto.runtime import runner as runner_mod
+        if not getattr(runner_mod.execute_compiled, "_sonata_patched", False):
+            runner_mod.execute_compiled = _make_patched_execute(runner_mod.execute_compiled)
+            runner_mod.execute_compiled._sonata_patched = True
+    except (ImportError, AttributeError):
+        pass
 
     # Standalone analysis for logging
     module = getattr(item, "module", None)
