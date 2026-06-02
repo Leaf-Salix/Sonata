@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Dive 5 - memory_plan.py 完整解析</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .callout.red { background: #fee2e2; border: 1px solid #fca5a5; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Deep Dive 5 - memory_plan.py 完整解析</h1>
+
+<p>本文件深入 <code>src/sonata/memory_plan.py</code>（约 320 行）的每一个类和函数。
+配合 <code>tests/sonata/test_memory_plan.py</code> 阅读效果最佳。</p>
+
+<h2>模块总览</h2>
+
+<p><code>memory_plan.py</code> 分为两个时代：</p>
+<ul>
+  <li><strong>v0.3 基础</strong>（~130 行）：BufferAllocation、MemoryPlan、plan_memory、_find_first_fit</li>
+  <li><strong>v0.11 扩展</strong>（~190 行）：compute_conflict_matrix、ConstraintSolver ABC、GreedySolver、DynamicShapeError、solve_memory</li>
+</ul>
+
+<p>依赖：<code>liveness.py</code>（BufferLifetime、find_conflicts）。</p>
+
+<h2>BufferAllocation — 单个 buffer 的分配</h2>
+
+<pre><code>@dataclass(frozen=True)
+class BufferAllocation:
+    storage_key: str  # buffer 标识（如 "param:0:x"）
+    offset: int       # 起始偏移（字节）
+    size: int         # 字节大小
+
+    @property
+    def end(self) -> int:
+        return self.offset + self.size</code></pre>
+
+<h2>MemoryPlan — 内存布局计划</h2>
+
+<pre><code>@dataclass(frozen=True)
+class MemoryPlan:
+    allocations: tuple[BufferAllocation, ...] = ()
+    peak_memory: int = 0
+    solver_type: str = "greedy"              # v0.11: 求解器标识
+    conflict_matrix_hash: str | None = None  # v0.11: 可选的矩阵哈希</code></pre>
+
+<h3>total_allocated</h3>
+
+<pre><code>def total_allocated(self) -> int:
+    return sum(a.size for a in self.allocations)</code></pre>
+
+<p><strong>注意：</strong>这是所有 buffer 大小之和，不是峰值内存。
+峰值内存 <code>peak_memory</code> 考虑了复用——两个不冲突的 buffer 共用同一块内存。</p>
+
+<h3>by_key</h3>
+
+<pre><code>def by_key(self, storage_key: str) -> BufferAllocation | None:
+    for alloc in self.allocations:
+        if alloc.storage_key == storage_key:
+            return alloc
+    return None</code></pre>
+
+<p>线性查找。对于小规模 buffer 数量（通常 &lt;100）足够快。</p>
+
+<h2>plan_memory — v0.3 贪心首次适配</h2>
+
+<pre><code>def plan_memory(lifetimes, buffer_sizes) -> MemoryPlan:</code></pre>
+
+<h3>算法详解</h3>
+
+<pre><code>def plan_memory(lifetimes, buffer_sizes):
+    if not lifetimes:
+        return MemoryPlan()  # 空输入 → 空计划
+
+    # 1. 构建冲突对集合
+    conflicts = find_conflicts(lifetimes)
+    conflict_pairs = set()
+    for c in conflicts:
+        conflict_pairs.add((c.key_a, c.key_b))
+        conflict_pairs.add((c.key_b, c.key_a))  # 双向
+
+    # 2. 按 size 降序排列
+    sorted_lifetimes = sorted(lifetimes,
+        key=lambda lt: buffer_sizes.get(lt.storage_key, 0), reverse=True)
+
+    # 3. 逐个分配
+    allocations = []
+    for lt in sorted_lifetimes:
+        size = buffer_sizes.get(lt.storage_key, 0)
+        offset = _find_first_fit(size, lt, allocations, lifetimes, conflict_pairs)
+        allocations.append(BufferAllocation(
+            storage_key=lt.storage_key, offset=offset, size=size))
+
+    # 4. 计算峰值
+    peak = max((a.end for a in allocations), default=0)
+    return MemoryPlan(
+        allocations=tuple(sorted(allocations, key=lambda a: a.storage_key)),
+        peak_memory=peak)</code></pre>
+
+<h3>_find_first_fit — 首次适配算法</h3>
+
+<pre><code>def _find_first_fit(size, lifetime, existing, all_lifetimes, conflict_pairs):
+    if size == 0:
+        return 0
+
+    lifetime_map = {lt.storage_key: lt for lt in all_lifetimes}
+
+    # 找出与当前 buffer 冲突的已分配 buffer
+    conflicting = []
+    for alloc in existing:
+        other_lt = lifetime_map.get(alloc.storage_key)
+        if other_lt is not None and lifetime.overlaps(other_lt):
+            conflicting.append(alloc)
+
+    if not conflicting:
+        return 0  # 没有冲突 → offset=0
+
+    # 按 offset 排序，找第一个能放下的位置
+    conflicting.sort(key=lambda a: a.offset)
+    candidate = 0
+    for alloc in conflicting:
+        if candidate + size <= alloc.offset:
+            break  # 找到间隙！
+        if candidate < alloc.end:
+            candidate = alloc.end  # 跳过这个冲突 buffer
+
+    return candidate</code></pre>
+
+<div class="callout info">
+  <strong>注意：</strong><code>_find_first_fit</code> 同时使用 <code>conflict_pairs</code>
+  和 <code>lifetime.overlaps()</code>。实际上 <code>conflict_pairs</code>
+  在当前实现中没有被使用——冲突检测完全依赖 <code>overlaps()</code>。
+  <code>conflict_pairs</code> 是历史遗留参数。
+</div>
+
+<h2>compute_conflict_matrix — 冲突矩阵（v0.11）</h2>
+
+<pre><code>def compute_conflict_matrix(
+    lifetimes: list[BufferLifetime],
+    *,
+    stream_ids: dict[str, int] | None = None,
+) -> list[list[bool]]:</code></pre>
+
+<h3>算法</h3>
+
+<pre><code>def compute_conflict_matrix(lifetimes, *, stream_ids=None):
+    n = len(lifetimes)
+    matrix = [[False] * n for _ in range(n)]
+
+    for i in range(n):
+        matrix[i][i] = False  # 自身不冲突
+        for j in range(i + 1, n):
+            # Stream 感知：不同 stream 不冲突
+            if stream_ids is not None:
+                si = stream_ids.get(lifetimes[i].storage_key, 0)
+                sj = stream_ids.get(lifetimes[j].storage_key, 0)
+                if si != sj:
+                    continue
+
+            if lifetimes[i].overlaps(lifetimes[j]):
+                matrix[i][j] = True
+                matrix[j][i] = True  # 对称
+
+    return matrix</code></pre>
+
+<h3>Stream 感知</h3>
+
+<p>昇腾 NPU 有多个计算 stream。不同 stream 上的 buffer 物理上并行执行，
+内存独立。通过 <code>stream_ids</code> 参数标记每个 buffer 所属的 stream，
+不同 stream 的 buffer 对永远不会冲突。</p>
+
+<div class="diagram">stream_ids = {"buf_a": 0, "buf_b": 1, "buf_c": 0}
+
+buf_a 和 buf_b 生命周期重叠，但 stream 不同 → 不冲突
+buf_a 和 buf_c 生命周期重叠，stream 相同 → 冲突</code></pre>
+
+<h3>时间复杂度</h3>
+
+<p>O(n²)——需要检查所有 buffer 对。对于 n &lt; 1000 的典型场景足够快。</p>
+
+<h2>ConstraintSolver — 求解器 ABC（v0.11）</h2>
+
+<pre><code>class ConstraintSolver(ABC):
+    @abstractmethod
+    def solve(
+        self,
+        conflict_matrix: list[list[bool]],
+        sizes: list[int],
+        device_memory_limit: int | None = None,
+    ) -> MemoryPlan: ...</code></pre>
+
+<p>接口设计要点：</p>
+<ul>
+  <li>输入是冲突矩阵（NxN 布尔），不是 BufferLifetime——解耦了 liveness 分析</li>
+  <li><code>device_memory_limit</code>：可选的设备内存上限，求解器可以据此调整策略</li>
+  <li>返回 <code>MemoryPlan</code>——包含 <code>solver_type</code> 标识</li>
+</ul>
+
+<h2>GreedySolver — 贪心首次适配递减（v0.11）</h2>
+
+<pre><code>class GreedySolver(ConstraintSolver):
+    def solve(self, conflict_matrix, sizes, device_memory_limit=None):
+        n = len(sizes)
+        if n == 0:
+            return MemoryPlan(allocations=(), peak_memory=0, solver_type="greedy")
+
+        # 1. 按 size 降序排列
+        order = sorted(range(n), key=lambda i: sizes[i], reverse=True)
+        offsets = {}
+
+        # 2. 逐个分配
+        for idx in order:
+            size = sizes[idx]
+            offset = 0
+            placed = False
+            while not placed:
+                conflict = False
+                for other_idx, other_offset in offsets.items():
+                    if conflict_matrix[idx][other_idx]:  # 冲突检查
+                        other_size = sizes[other_idx]
+                        # 重叠检查：两个区间 [offset, offset+size) 和 [other_offset, other_offset+other_size)
+                        if offset < other_offset + other_size and other_offset < offset + size:
+                            offset = other_offset + other_size  # 跳到这个 buffer 之后
+                            conflict = True
+                            break
+                if not conflict:
+                    offsets[idx] = offset
+                    placed = True
+
+        # 3. 构建结果
+        allocations = tuple(
+            BufferAllocation(storage_key=f"buf_{i}", offset=offsets[i], size=sizes[i])
+            for i in range(n)
+        )
+        peak = max((a.offset + a.size for a in allocations), default=0)
+        return MemoryPlan(allocations=allocations, peak_memory=peak, solver_type="greedy")</code></pre>
+
+<h3>与 plan_memory 的算法区别</h3>
+
+<table>
+  <tr><th></th><th><code>plan_memory</code></th><th><code>GreedySolver</code></th></tr>
+  <tr><td>冲突检测</td><td><code>BufferLifetime.overlaps()</code></td><td><code>conflict_matrix[i][j]</code></td></tr>
+  <tr><td>首次适配</td><td>扫描冲突 buffer 的 offset 间隙</td><td>while 循环逐个跳过冲突 buffer</td></tr>
+  <tr><td>storage_key</td><td>使用真实 key</td><td>使用 <code>f"buf_{i}"</code>（丢失原始 key）</td></tr>
+  <tr><td>Stream 感知</td><td>无</td><td>通过冲突矩阵（上游处理）</td></tr>
+</table>
+
+<div class="callout warn">
+  <strong>已知限制：</strong>GreedySolver 使用 <code>f"buf_{i}"</code> 作为 storage_key，
+  丢失了原始 buffer 的标识。如果需要按 key 查找分配结果，
+  调用方需要自己维护 index → key 的映射。
+</div>
+
+<h3>GreedySolver 的时间复杂度</h3>
+
+<p>最坏情况 O(n² × m)，其中 n = buffer 数量，m = 冲突 buffer 数量。
+实际中 m &lt;&lt;n（大部分 buffer 不冲突），所以接近 O(n²)。</p>
+
+<h2>DynamicShapeError — 动态形状异常</h2>
+
+<pre><code>class DynamicShapeError(Exception):
+    def __init__(self, symbols: list[str]):
+        self.symbols = symbols
+        super().__init__(
+            f"Dynamic shape symbols {symbols} are not supported by the memory planner. "
+            "Consider using static shapes or enabling runtime shape inference."
+        )</code></pre>
+
+<p>当 buffer 大小依赖运行时符号时抛出。当前代码中未被使用（预留）。</p>
+
+<h2>solve_memory — 带超时的求解入口（v0.11）</h2>
+
+<pre><code>def solve_memory(
+    solver, conflict_matrix, sizes, device_memory_limit=None, *,
+    timeout_seconds=1.0, fallback=None,
+) -> MemoryPlan:</code></pre>
+
+<h3>执行流程</h3>
+
+<pre><code>def solve_memory(solver, conflict_matrix, sizes, device_memory_limit=None, *,
+                 timeout_seconds=1.0, fallback=None):
+    if fallback is None:
+        fallback = GreedySolver()
+
+    start = time.monotonic()
+    try:
+        result = solver.solve(conflict_matrix, sizes, device_memory_limit)
+        elapsed = time.monotonic() - start
+        if elapsed > timeout_seconds:
+            warnings.warn(
+                f"Primary solver took {elapsed:.2f}s (>{timeout_seconds}s). "
+                "Consider using GreedySolver for large graphs.",
+                UserWarning, stacklevel=2,
+            )
+        return result
+    except Exception:
+        warnings.warn(
+            "Primary solver failed, falling back to GreedySolver.",
+            UserWarning, stacklevel=2,
+        )
+        return fallback.solve(conflict_matrix, sizes, device_memory_limit)</code></pre>
+
+<h3>超时是事后检查</h3>
+
+<div class="callout warn">
+  <strong>关键限制：</strong>超时不会中断求解器。如果主求解器需要 10 秒，
+  它会完整执行 10 秒，然后发出警告。不会在 1 秒时中断。
+  这是因为 Python 的 <code>time.monotonic()</code> 只能测量时间，不能中断执行。
+  真正的超时需要求解器自身支持（例如传入 callback 或使用多进程）。
+</div>
+
+<h3>fallback 的触发条件</h3>
+
+<table>
+  <tr><th>场景</th><th>行为</th></tr>
+  <tr><td>主求解器成功，未超时</td><td>返回主求解器结果</td></tr>
+  <tr><td>主求解器成功，超时</td><td>返回主求解器结果 + UserWarning</td></tr>
+  <tr><td>主求解器抛异常</td><td>返回 GreedySolver 结果 + UserWarning</td></tr>
+</table>
+
+<p><strong>注意：</strong>超时<strong>不触发 fallback</strong>——只发出警告。
+只有异常才触发 fallback。这是因为超时的求解器可能已经给出了正确结果
+（只是慢了点），而异常意味着求解器根本没完成。</p>
+
+<h2>__all__ 导出</h2>
+
+<pre><code>__all__ = [
+    "BufferAllocation",
+    "ConstraintSolver",
+    "DynamicShapeError",
+    "GreedySolver",
+    "MemoryPlan",
+    "compute_conflict_matrix",
+    "plan_memory",
+    "solve_memory",
+]</code></pre>
+
+<div class="nav">
+  <a href="deep-04-guard.html"><span class="arrow">&larr;</span> 上一篇：guard.py 完整解析</a>
+  &nbsp;|&nbsp;
+  <a href="deep-01-score-model.html">回到 Deep Dive 总览 &rarr;</a>
+</div>
+
+</body>
+</html>

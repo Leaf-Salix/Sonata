@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Dive 3 - regions.py 完整解析</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .callout.red { background: #fee2e2; border: 1px solid #fca5a5; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Deep Dive 3 - regions.py 完整解析</h1>
+
+<p>本文件深入 <code>src/sonata/regions.py</code>（约 750 行）的每一个类、每一个函数、每一个边界条件。
+配合 <code>tests/sonata/test_regions.py</code> 和 <code>tests/sonata/test_regions_v011.py</code> 阅读效果最佳。</p>
+
+<h2>模块总览</h2>
+
+<p><code>regions.py</code> 分为两个时代：</p>
+<ul>
+  <li><strong>v0.4 基础</strong>（~200 行）：Region、RegionMap、extract_regions、check_region_eligibility</li>
+  <li><strong>v0.11 扩展</strong>（~550 行）：RegionTreeNode、RegionTree、build_region_tree、per-region cache（store/lookup/invalidate）</li>
+</ul>
+
+<p>模块的唯一 Sonata 内部依赖是 <code>fallback.py</code>（FallbackCode）和 <code>score.py</code>（Score、EligibilityResult）。</p>
+
+<h2>Region — 单个区域</h2>
+
+<pre><code>@dataclass(frozen=True)
+class Region:
+    region_id: int                                    # 唯一编号
+    kind: str                                         # "static" 或 "dynamic"
+    nodes: tuple[Any, ...] = ()                       # 该区域内的 IR 节点
+    control_flow_kind: str | None = None              # dynamic 时：ForStmt/IfStmt/WhileStmt
+    fallback_reason: FallbackReason | None = None     # dynamic 时：结构化拒绝原因</code></pre>
+
+<h3>控制流识别常量</h3>
+
+<pre><code>_CONTROL_FLOW_KINDS = {"ForStmt", "IfStmt", "WhileStmt"}</code></pre>
+
+<p>只有这三种节点会被标记为 dynamic。<code>RuntimeScopeStmt</code> 也标记为 dynamic，
+但走不同的 fallback code（<code>UNSUPPORTED_RUNTIME_SCOPE</code> 而不是
+<code>CONTROL_FLOW_NOT_SUPPORTED</code>）。</p>
+
+<h3>两个便捷属性</h3>
+
+<pre><code>region.is_static   # region.kind == "static"
+region.is_dynamic  # region.kind == "dynamic"</code></pre>
+
+<h2>RegionMap — 扁平区域集合</h2>
+
+<pre><code>@dataclass(frozen=True)
+class RegionMap:
+    regions: tuple[Region, ...] = ()</code></pre>
+
+<p>提供 5 个查询方法：</p>
+<table>
+  <tr><th>方法</th><th>返回</th><th>实现</th></tr>
+  <tr><td><code>static_regions()</code></td><td>tuple[Region]</td><td>filter is_static</td></tr>
+  <tr><td><code>dynamic_regions()</code></td><td>tuple[Region]</td><td>filter is_dynamic</td></tr>
+  <tr><td><code>static_ratio()</code></td><td>float</td><td>len(static) / len(all)，空集合返回 0.0</td></tr>
+  <tr><td><code>all_static()</code></td><td>bool</td><td>all(r.is_static for r in regions)</td></tr>
+  <tr><td><code>all_dynamic()</code></td><td>bool</td><td>all(r.is_dynamic for r in regions)</td></tr>
+</table>
+
+<h2>extract_regions — 区域提取算法</h2>
+
+<pre><code>def extract_regions(node: Any) -> RegionMap:</code></pre>
+
+<p>核心算法是一个单遍扫描，维护一个 <code>static_buffer</code>：</p>
+
+<div class="diagram">输入 IR body: [matmul, add, ForStmt, relu, IfStmt, softmax]
+
+扫描过程:
+  stmt=matmul  → kind="Call" → 加入 static_buffer
+  stmt=add     → kind="Call" → 加入 static_buffer
+  stmt=ForStmt → kind="ForStmt" → 切:
+    1. static_buffer 非空 → flush 为 Region 0 (static, [matmul, add])
+    2. 创建 Region 1 (dynamic, [ForStmt])
+    3. static_buffer 清空
+  stmt=relu    → kind="Call" → 加入 static_buffer
+  stmt=IfStmt  → kind="IfStmt" → 切:
+    1. static_buffer 非空 → flush 为 Region 2 (static, [relu])
+    2. 创建 Region 3 (dynamic, [IfStmt])
+    3. static_buffer 清空
+  stmt=softmax → kind="Call" → 加入 static_buffer
+
+扫描结束:
+  static_buffer 非空 → flush 为 Region 4 (static, [softmax])
+
+结果: RegionMap([R0(static), R1(dynamic), R2(static), R3(dynamic), R4(static)])</code></pre>
+
+<h3>RuntimeScopeStmt 特殊处理</h3>
+
+<p><code>RuntimeScopeStmt</code>（PyPTO 的 <code>MaterializeRuntimeScopes</code> pass 插入的）
+走单独的分支，使用 <code>UNSUPPORTED_RUNTIME_SCOPE</code> fallback code。</p>
+
+<h3>空 body 处理</h3>
+
+<p>如果 <code>_get_body(node)</code> 返回 None（节点没有 body/stmts/statements/seq 字段），
+调用 <code>_classify_node()</code> 对单个节点分类。</p>
+
+<h3>_get_body 的字段探测</h3>
+
+<pre><code>def _get_body(node: Any) -> list | tuple | None:
+    for field_name in ("body", "stmts", "statements", "seq"):
+        body = getattr(node, field_name, None)
+        if isinstance(body, (list, tuple)) and body:
+            return body
+    return None</code></pre>
+
+<p>按 <code>body → stmts → statements → seq</code> 顺序探测，返回第一个非空的。
+这兼容了 PyPTO IR 的不同表示方式。</p>
+
+<h2>RegionTreeNode — 树节点（v0.11）</h2>
+
+<pre><code>@dataclass(frozen=True)
+class RegionTreeNode:
+    region: Region
+    children: tuple["RegionTreeNode", ...] = ()
+    score: Optional[Score] = None
+    _fingerprint_cache: Optional[str] = field(default=None, compare=False, repr=False)</code></pre>
+
+<h3>region_status 三态逻辑</h3>
+
+<pre><code>@property
+def region_status(self) -> str:
+    if self.region.is_dynamic:
+        return "dynamic"
+    if any(c.region.is_dynamic for c in self.children):
+        return "mixed"
+    return "static"</code></pre>
+
+<p><strong>注意：</strong>只看直接子节点，不递归。如果孙节点是 dynamic 但子节点是 static，
+region_status 仍然是 <code>"static"</code>（子节点会是 <code>"mixed"</code>）。</p>
+
+<h3>is_static_subtree — 递归检查</h3>
+
+<pre><code>@property
+def is_static_subtree(self) -> bool:
+    if self.region.is_dynamic:
+        return False
+    return all(child.is_static_subtree for child in self.children)</code></pre>
+
+<p>与 <code>region_status</code> 不同，这是<strong>递归</strong>检查整棵子树。</p>
+
+<h3>__post_init__ — 指纹缓存初始化</h3>
+
+<pre><code>def __post_init__(self):
+    if self._fingerprint_cache is None and self.score is not None:
+        object.__setattr__(self, '_fingerprint_cache', self._compute_fingerprint())</code></pre>
+
+<p>因为是 frozen dataclass，必须用 <code>object.__setattr__</code> 修改。
+只有在 score 非 None 时才计算指纹——没有 Score 的节点不需要指纹。</p>
+
+<h3>_compute_fingerprint — 指纹计算算法</h3>
+
+<pre><code>def _compute_fingerprint(self) -> str:
+    base_identity = {
+        "region_id": self.region.region_id,
+        "region_kind": self.region.kind,
+        "node_count": self.region.node_count,
+    }
+    if self.score is not None:
+        base_identity.update({
+            "score_name": self.score.name,
+            "task_count": len(self.score.tasks),
+            "dep_count": len(self.score.dependencies),
+            "guard_count": len(self.score.shape_assumptions),
+        })
+    if self.children:
+        base_identity["children"] = [child._compute_fingerprint() for child in self.children]
+
+    payload = {
+        "fingerprint_version": 1,
+        "identity": {"type": "region_tree_node", **base_identity},
+    }
+    serialized = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode()).hexdigest()</code></pre>
+
+<h4>设计决策：为什么用独立的指纹函数而不是 score_fingerprint？</h4>
+
+<div class="callout info">
+  <strong>原因：</strong><code>score_fingerprint()</code> 只计算 Score 的身份
+  （tasks、dependencies、shape_assumptions），不包含 region 元数据。
+  RegionTreeNode 的指纹需要包含 region_id、region_kind、node_count
+  以及子节点的递归指纹，所以必须用独立的计算逻辑。
+</div>
+
+<h4>注意：update_score 的指纹不一致</h4>
+
+<div class="callout warn">
+  <strong>已知问题：</strong><code>update_score()</code> 使用
+  <code>score_fingerprint(new_score)</code> 作为指纹，而
+  <code>_compute_fingerprint()</code> 计算的是包含 region 元数据的完整指纹。
+  两者不一致。目前 <code>update_score</code> 用于将节点绑定到特定 Score 的指纹，
+  但语义上应该用 <code>_compute_fingerprint()</code>。
+</div>
+
+<h3>update_score / update_children — 不可变更新</h3>
+
+<pre><code>def update_score(self, new_score: Score) -> "RegionTreeNode":
+    new_fp = score_fingerprint(new_score)
+    return RegionTreeNode(
+        region=self.region, children=self.children,
+        score=new_score, _fingerprint_cache=new_fp,
+    )
+
+def update_children(self, new_children: tuple) -> "RegionTreeNode":
+    return RegionTreeNode(
+        region=self.region, children=new_children,
+        score=self.score, _fingerprint_cache=self._compute_fingerprint(),
+    )</code></pre>
+
+<p>返回新实例，旧实例不变。<code>update_children</code> 会重新计算整个子树指纹。</p>
+
+<h2>RegionTree — 树容器（v0.11）</h2>
+
+<pre><code>@dataclass(frozen=True)
+class RegionTree:
+    root: RegionTreeNode</code></pre>
+
+<h3>all_nodes — BFS 遍历</h3>
+
+<pre><code>@property
+def all_nodes(self) -> list[RegionTreeNode]:
+    result, visited, queued = [], set(), set()
+    queue = [self.root]
+    queued.add(id(self.root))
+    while queue:
+        node = queue.pop(0)
+        nid = id(node)
+        if nid in visited: continue
+        visited.add(nid)
+        result.append(node)
+        for child in node.children:
+            cid = id(child)
+            if cid not in visited and cid not in queued:
+                queue.append(child)
+                queued.add(cid)
+    return result</code></pre>
+
+<p>使用 <code>visited</code> + <code>queued</code> 两个集合防止重复。
+时间复杂度 O(n)（n = 节点总数）。</p>
+
+<h3>static_subtrees — 最大静态子树</h3>
+
+<pre><code>def static_subtrees(self) -> list[RegionTreeNode]:
+    return [
+        node for node in self.all_nodes
+        if node.region.is_static and (
+            not node.children or any(c.region.is_dynamic for c in node.children)
+        )
+    ]</code></pre>
+
+<p>"最大静态子树"的定义：一个 static 节点，要么是叶子（无子节点），
+要么有至少一个 dynamic 子节点（static 血统在此中断）。</p>
+
+<div class="diagram">例子:
+  root (static)
+    ├─ child[0] (static)
+    │    ├─ grandchild[0] (static)  ← 最大静态子树的根
+    │    └─ grandchild[1] (dynamic)
+    └─ child[1] (dynamic)
+
+static_subtrees() = [grandchild[0], root]
+  grandchild[0]: static 叶子
+  root: static 但有 dynamic 子节点 child[1]</code></pre>
+
+<h2>build_region_tree — 构建算法（v0.11）</h2>
+
+<pre><code>def build_region_tree(region_map: RegionMap) -> RegionTree:</code></pre>
+
+<p>算法分三步：</p>
+
+<h3>Step 1：创建叶子节点</h3>
+
+<pre><code>leaf_nodes = [RegionTreeNode(region=r) for r in region_map.regions]</code></pre>
+
+<h3>Step 2：分组——动态归入静态</h3>
+
+<div class="diagram">输入: [S0, D1, D2, S3, D4, S5]
+
+扫描:
+  i=0: S0 是 static → 找连续 dynamic: D1, D2 → grouped.append(S0.children=[D1,D2])
+  i=3: S3 是 static → 找连续 dynamic: D4 → grouped.append(S3.children=[D4])
+  i=5: S5 是 static → 无连续 dynamic → grouped.append(S5)
+
+grouped = [S0{D1,D2}, S3{D4}, S5]</code></pre>
+
+<h3>Step 3：合并为树</h3>
+
+<div class="diagram">grouped[0] = S0{D1,D2} 是 static 且 len(grouped) > 1
+
+root = S0
+existing_children = [D1, D2]
+subsequent = [S3{D4}, S5]
+all_children = [D1, D2, S3{D4}, S5]
+
+最终 RegionTree:
+  root = S0
+    ├─ D1
+    ├─ D2
+    ├─ S3
+    │    └─ D4
+    └─ S5</code></pre>
+
+<div class="callout warn">
+  <strong>算法特点：</strong>所有非第一个区域都成为 root 的子孙。
+  这意味着树的深度最多为 2（root → grouped_node → children）。
+  如果需要更深的层次（比如嵌套控制流），当前算法不会产生更深的树。
+</div>
+
+<h2>check_region_eligibility — 区域级 eligibility（v0.4 + v0.11）</h2>
+
+<pre><code>def check_region_eligibility(node, *, entry_name=None) -> EligibilityResult:</code></pre>
+
+<h3>执行流程</h3>
+
+<pre><code>1. extract_regions(node) → region_map
+
+2. if all_dynamic → reject（收集所有 dynamic 区域的 FallbackReason）
+
+3. build_region_tree(region_map) → region_tree
+
+4. if 无 static 节点 → fallback 到 check_static_eligibility
+
+5. 遍历 static_subtrees():
+   - 为每个 static subtree 创建 placeholder Score
+   - 存入 per_region_scores dict
+
+6. 遍历 dynamic_nodes():
+   - 收集 FallbackReason（补充 region_type 和 control_flow_node）
+
+7. EligibilityResult.accept(score=None)
+   - 通过 object.__setattr__ 注入 metadata:
+     region_tree, per_region_scores, region_count,
+     static_region_count, dynamic_region_count,
+     static_ratio, static_subtrees, region_statuses</code></pre>
+
+<h3>per_region_scores 是 placeholder</h3>
+
+<div class="callout warn">
+  <strong>当前限制：</strong>per_region_scores 中的 Score 是空的
+  （tasks=(), dependencies=(), shape_assumptions=()）。
+  真正的 per-region Score 提取需要从 IR 的子图中独立提取，
+  这在当前版本尚未实现。metadata 结构已就绪，等待后续版本填充。
+</div>
+
+<h2>Per-Region Cache 函数（v0.11 Phase 1 C）</h2>
+
+<h3>store_region_tree</h3>
+
+<pre><code>def store_region_tree(
+    region_tree, plan_handle_payload, cache, *,
+    guard_status="all_satisfied", per_region_scores=None,
+) -> dict[str, str]:</code></pre>
+
+<p>递归遍历树，为每个节点计算指纹并存入 cache。返回 <code>{path: fingerprint}</code> 映射。
+路径格式：<code>"root"</code>、<code>"root.child[0]"</code>、<code>"root.child[0].child[1]"</code>。</p>
+
+<h3>lookup_region_tree</h3>
+
+<pre><code>def lookup_region_tree(
+    region_path, cache, *, path_to_fingerprint=None,
+) -> dict | None:</code></pre>
+
+<p>按路径查找缓存。如果 <code>path_to_fingerprint</code> 提供了，先映射路径到指纹，
+再用指纹查 cache。返回 Score payload dict 或 None。</p>
+
+<h3>invalidate_region_tree</h3>
+
+<pre><code>def invalidate_region_tree(
+    region_tree, violated_node, cache, *, path_to_fingerprint=None,
+) -> int:</code></pre>
+
+<p>找到 <code>violated_node</code> 在树中的位置，收集该节点及所有子孙的指纹，
+调用 <code>cache.invalidate(*fingerprints)</code>。返回删除的条目数。</p>
+
+<div class="diagram">失效过程示意:
+
+  RegionTree:
+    root (fp=aaa)        ← 保留（祖先不失效）
+      ├─ child[0] (fp=bbb)  ← violated！清除
+      │    └─ gc[0] (fp=ccc)  ← 孙子，也清除
+      └─ child[1] (fp=ddd)  ← 兄弟，保留
+
+  invalidate_region_tree(tree, child[0], cache, ...)
+  → cache.invalidate("bbb", "ccc")
+  → 返回 2</code></pre>
+
+<div class="callout info">
+  <strong>保守策略：</strong>只清除受影响的子树。祖先保留（它们可能包含其他有效子树的聚合信息）。
+  如果需要整棵树重算，直接调用 <code>cache.invalidate_all()</code>。
+</div>
+
+<div class="nav">
+  <a href="deep-02-eligibility.html"><span class="arrow">&larr;</span> 上一篇：eligibility.py 完整解析</a>
+  &nbsp;|&nbsp;
+  <a href="deep-04-guard.html">下一篇：guard.py 完整解析 &rarr;</a>
+</div>
+
+</body>
+</html>

@@ -19,6 +19,7 @@
   .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
   .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
   .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
   .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
   .nav a { color: #2563eb; text-decoration: none; }
   .nav a:hover { text-decoration: underline; }
@@ -31,83 +32,200 @@
 
 <h2>提问：为什么需要 RegionTree？</h2>
 
-<p>v0.4 的 <code>RegionMap</code> 是一个<strong>扁平的区域列表</strong>：一个 IR 图被切成若干段，
-每段标记为 static 或 dynamic。这在大多数情况下够用，但遇到复杂 IR 时有两个问题：</p>
+<p>考虑一个 PyPTO IR 函数，它的 body 有 5 条语句：</p>
 
-<ol>
-  <li><strong>无法表达层次关系</strong>：一个 static 区域可能包含多个子区域（例如嵌套的函数调用），
-  但扁平结构看不到这种父子关系。</li>
-  <li><strong>无法独立管理缓存</strong>：如果图的某一部分变化了（比如某个 guard 失效），
-  扁平结构只能整个失效或不失效，无法精确到"只失效受影响的子树"。</li>
-</ol>
+<pre><code>def my_graph(x, w, b):
+    y = matmul(x, w)       # ← static
+    z = add(y, b)          # ← static
+    for i in range(10):    # ← dynamic (控制流)
+        z = relu(z)
+    o = softmax(z)         # ← static
+    return o</code></pre>
+
+<p>v0.4 的 <code>extract_regions()</code> 会把它切成 3 个扁平区域：</p>
+
+<pre><code>RegionMap:
+  Region 0: static   — [matmul, add]
+  Region 1: dynamic  — [ForStmt]          ← fallback 到 AICPU
+  Region 2: static   — [softmax]</code></pre>
+
+<p>问题来了：Region 0 和 Region 2 是独立的 static 区域，但它们之间有一个 dynamic 区域。
+扁平结构看不出这种"static → dynamic → static"的<strong>交替关系</strong>。
+如果 Region 0 的某个 guard 失效了，你只能全部重算——无法精确知道哪些区域受影响。</p>
 
 <div class="callout info">
   <strong>类比：</strong>RegionMap 像一张<strong>清单</strong>——列出所有区域，不分层次。
-  RegionTree 像一棵<strong>文件系统目录树</strong>——每个文件夹（节点）可以有子文件夹，
+  RegionTree 像一棵<strong>文件系统目录树</strong>——每个文件夹可以有子文件夹，
   你可以单独删除某个子文件夹而不影响其他部分。
 </div>
 
-<h2>提问：RegionTree 的数据结构是什么？</h2>
+<h2>提问：RegionTree 从 RegionMap 构建时发生了什么？</h2>
 
-<p>RegionTree 由两类节点组成：</p>
+<p>用 <code>build_region_tree()</code> 把上面的 RegionMap 变成树：</p>
 
-<table>
-  <tr><th>类型</th><th>角色</th><th>特点</th></tr>
-  <tr><td><code>RegionTreeNode</code></td><td>树的一个节点</td><td>包含一个 Region、可选的 Score、子节点列表、子树指纹</td></tr>
-  <tr><td><code>RegionTree</code></td><td>整棵树的容器</td><td>持有 root 节点，提供遍历和查询方法</td></tr>
-</table>
+<pre><code>from sonata.regions import build_region_tree
+
+tree = build_region_tree(region_map)</code></pre>
+
+<p>构建算法的核心逻辑：</p>
+<ol>
+  <li>为每个 Region 创建一个叶子节点</li>
+  <li>找到<strong>连续的 dynamic 区域</strong>，归入其前面的 static 区域作为子节点</li>
+  <li>第一个 static 区域成为 root，后续节点成为 root 的子树</li>
+</ol>
+
+<p>对上面的例子，结果是：</p>
+
+<div class="diagram">RegionTree:
+  root = Region 0 (static: [matmul, add])
+    ├─ child[0] = Region 1 (dynamic: [ForStmt])
+    └─ child[1] = Region 2 (static: [softmax])
+
+  region_status:
+    root       → "mixed"  （static 但有 dynamic 子节点）
+    child[0]   → "dynamic"
+    child[1]   → "static" （叶子节点，无子节点）
+
+  static_subtrees():
+    root        ← 最大静态子树的根（因为有 dynamic 子节点）
+    child[1]    ← 纯静态叶子</div>
+
+<p>root 的 <code>region_status</code> 是 <code>"mixed"</code>——它是 static 节点，
+但它的子树包含 dynamic 区域。这意味着 root 的 Score 不能直接使用，
+需要和子节点的 fallback 策略配合。</p>
+
+<h2>提问：如果 IR 全是 static 会怎样？</h2>
+
+<pre><code>def pure_static(x, w):
+    y = matmul(x, w)
+    z = relu(y)
+    return z</code></pre>
+
+<div class="diagram">extract_regions → RegionMap:
+  Region 0: static — [matmul, relu]
+
+build_region_tree → RegionTree:
+  root = Region 0 (static: [matmul, relu])    ← 单节点，无子节点
+
+  region_status: root → "static"
+  static_subtrees(): [root]                    ← 整棵树就是一个静态子树</div>
+
+<h2>提问：如果 IR 全是 dynamic 会怎样？</h2>
+
+<pre><code>def all_dynamic(x):
+    for i in range(10):
+        x = relu(x)
+    while x.sum() > 0:
+        x = x - 1
+    return x</code></pre>
+
+<div class="diagram">extract_regions → RegionMap:
+  Region 0: dynamic — [ForStmt]
+  Region 1: dynamic — [WhileStmt]
+
+build_region_tree → RegionTree:
+  root = Region 0 (dynamic)        ← 第一个区域就是 dynamic，standalone
+    └─ child[0] = Region 1 (dynamic)
+
+check_region_eligibility → reject
+  原因: "all regions are dynamic, no static region available"</div>
+
+<h2>提问：RegionTreeNode 的数据结构是什么？</h2>
 
 <pre><code>@dataclass(frozen=True)
 class RegionTreeNode:
     region: Region                           # 区域类型（static/dynamic）
-    children: tuple[RegionTreeNode, ...]     # 子节点
+    children: tuple[RegionTreeNode, ...] = ()# 子节点
     score: Optional[Score] = None            # 该区域的 Score（静态区域才有）
     _fingerprint_cache: Optional[str] = None # 子树指纹缓存</code></pre>
 
-<p>每个节点是 <code>frozen=True</code> 的不可变数据类——修改时必须创建新实例。
-这保证了指纹的一致性：同一个节点在任何时刻都有相同的指纹。</p>
+<p>每个节点是 <code>frozen=True</code> 的不可变数据类。"更新"就是创建新实例：</p>
 
-<h2>提问：怎么从 RegionMap 构建 RegionTree？</h2>
+<pre><code># 更新节点的 Score → 返回新节点，旧节点不变
+new_node = node.update_score(new_score)
 
-<p>使用 <code>build_region_tree()</code> 函数：</p>
+# 更新子节点 → 返回新节点，子树指纹重新计算
+new_node = node.update_children((child1, child2))</code></pre>
 
-<pre><code>from sonata import extract_regions, RegionTree
-from sonata.regions import build_region_tree
-
-# 1. 先提取扁平区域
-region_map = extract_regions(ir_node)
-
-# 2. 构建层次化树
-tree = build_region_tree(region_map)</code></pre>
-
-<p>构建算法的核心逻辑：</p>
-
-<ol>
-  <li>为每个 Region 创建一个叶子节点</li>
-  <li>将<strong>连续的 dynamic 区域</strong>归入其前面的 static 区域作为子节点</li>
-  <li>第一个 static 区域成为整棵树的 root</li>
-</ol>
-
-<div class="callout warn">
-  <strong>注意：</strong>当前算法采用"静态 parent + 动态 children"策略。
-  如果 IR 的第一个区域就是 dynamic 的，它会成为 root（standalone）。
+<div class="callout info">
+  <strong>不变性的好处：</strong>旧节点和新节点可以同时存在。
+  缓存系统用旧指纹找到旧条目，用新指纹存储新条目，不会互相干扰。
 </div>
 
-<h2>提问：RegionTreeNode 有哪些查询方法？</h2>
+<h2>提问：子树指纹是怎么工作的？</h2>
 
-<pre><code>node = tree.root
+<p>每个节点的 <code>fingerprint</code> 是整个子树的 SHA-256 哈希值。计算时包含：</p>
 
-# 节点属性
+<table>
+  <tr><th>层级</th><th>包含的字段</th></tr>
+  <tr><td>节点自身</td><td>region_id, region_kind, node_count</td></tr>
+  <tr><td>Score（如有）</td><td>score_name, task_count, dep_count, guard_count</td></tr>
+  <tr><td>子节点</td><td>每个子节点的 fingerprint（递归）</td></tr>
+</table>
+
+<p>关键特性：<strong>局部变化不影响全局</strong>。</p>
+
+<div class="diagram">假设 RegionTree:
+  root (fp=abc123)
+    ├─ child[0] (fp=def456)   ← 如果这个节点的 Score 变了
+    └─ child[1] (fp=ghi789)
+
+结果:
+  root.fingerprint → 变了（因为 child[0] 的指纹变了）
+  child[1].finger  → 不变（兄弟子树不受影响）
+
+→ 只需要重新缓存 root 和 child[0]，child[1] 的缓存仍然有效</div>
+
+<h2>提问：缓存怎么和 RegionTree 配合？</h2>
+
+<p>v0.11 添加了三个函数管理 RegionTree 的缓存。用一个完整例子演示：</p>
+
+<pre><code>from sonata.regions import (
+    store_region_tree, lookup_region_tree, invalidate_region_tree,
+)
+from sonata import ScoreCache
+
+cache = ScoreCache()
+
+# 第一步：存储 —— 遍历树，为每个节点计算指纹并存入缓存
+path_map = store_region_tree(tree, plan_handle_payload, cache)
+# path_map 结果:
+#   "root"         → "abc123..."
+#   "root.child[0]" → "def456..."
+#   "root.child[1]" → "ghi789..."
+
+# 第二步：查询 —— 按路径查找某个区域的缓存
+payload = lookup_region_tree("root.child[1]", cache, path_to_fingerprint=path_map)
+if payload is not None:
+    print("Region 2 命中缓存")  # ← 命中！
+
+# 第三步：失效 —— 假设 ForStmt 的 guard 失效了
+violated = tree.root.children[0]  # Region 1 (dynamic)
+removed = invalidate_region_tree(tree, violated, cache, path_to_fingerprint=path_map)
+# removed = 1（只清除了 child[0] 的缓存）
+# root 和 child[1] 的缓存仍然有效</code></pre>
+
+<div class="callout warn">
+  <strong>失效策略是保守的：</strong>只清除受影响节点及其子孙。祖先节点的缓存保留。
+  如果需要整棵树重算，调用 <code>cache.invalidate_all()</code>。
+</div>
+
+<h2>提问：RegionTree 有哪些查询方法？</h2>
+
+<pre><code>tree = build_region_tree(region_map)
+
+# 树级查询
+tree.all_nodes         # BFS 遍历所有节点（返回 list）
+tree.static_subtrees() # 所有"最大静态子树"的根节点
+tree.dynamic_nodes()   # 所有 dynamic 节点
+tree.static_ratio      # 静态节点占比（float）
+
+# 节点级查询
+node = tree.root
 node.is_leaf           # True if 无子节点
 node.region_status     # "static" / "dynamic" / "mixed"
 node.is_static_subtree # True if 整个子树都是 static
-node.fingerprint       # 子树的 SHA-256 指纹
-
-# 树级查询
-tree.all_nodes         # BFS 遍历所有节点
-tree.static_subtrees() # 所有"最大静态子树"的根节点
-tree.dynamic_nodes()   # 所有 dynamic 节点
-tree.static_ratio      # 静态节点占比</code></pre>
+node.fingerprint       # 子树的 SHA-256 指纹</code></pre>
 
 <h3>region_status 三态</h3>
 
@@ -118,94 +236,31 @@ tree.static_ratio      # 静态节点占比</code></pre>
   <tr><td><code>"mixed"</code></td><td>节点是 static，但有 dynamic 子节点</td><td>部分可用，需要混合策略</td></tr>
 </table>
 
-<h2>提问：子树指纹是怎么计算的？</h2>
+<h2>提问：check_region_eligibility 返回什么？</h2>
 
-<p>每个 <code>RegionTreeNode</code> 的指纹是整个子树的哈希值，包含：</p>
-
-<ul>
-  <li>节点自身的 region_id、kind、node_count</li>
-  <li>节点的 Score（如果有）的 task_count、dep_count、guard_count</li>
-  <li>所有子节点的递归指纹</li>
-</ul>
-
-<pre><code># 指纹计算伪代码
-fingerprint_payload = {
-    "fingerprint_version": 1,
-    "identity": {
-        "type": "region_tree_node",
-        "region_id": self.region.region_id,
-        "region_kind": self.region.kind,
-        "node_count": self.region.node_count,
-        # ... score identity if present ...
-        "children": [child.fingerprint for child in self.children],
-    },
-}
-fingerprint = sha256(json.dumps(fingerprint_payload))</code></pre>
-
-<p>这意味着：如果子树中任何一个节点变化（比如 Score 更新），整棵子树的指纹都会变化。
-而兄弟子树的指纹不受影响——这就是层次化管理的核心价值。</p>
-
-<h2>提问：怎么更新节点？</h2>
-
-<p>因为节点是 frozen 的，"更新"实际上是创建新实例：</p>
-
-<pre><code># 更新节点的 Score
-new_node = node.update_score(new_score)
-# → 新节点有新的 fingerprint（基于 score_fingerprint）
-
-# 更新子节点
-new_node = node.update_children(new_children_tuple)
-# → 新节点有新的 fingerprint（基于新的子树指纹）</code></pre>
-
-<div class="callout info">
-  <strong>不变性的好处：</strong>旧节点和新节点可以同时存在。
-  缓存系统可以用旧指纹找到旧条目，用新指纹存储新条目，不会互相干扰。
-</div>
-
-<h2>提问：缓存怎么和 RegionTree 配合？</h2>
-
-<p>v0.11 添加了三个函数来管理 RegionTree 的缓存：</p>
-
-<pre><code>from sonata.regions import (
-    store_region_tree,
-    lookup_region_tree,
-    invalidate_region_tree,
-)
-
-# 存储：遍历树，为每个节点计算指纹并存入缓存
-path_map = store_region_tree(tree, plan_handle_payload, cache)
-# path_map: {"root" → fingerprint, "root.child[0]" → fingerprint, ...}
-
-# 查询：按路径查找某个区域的缓存
-payload = lookup_region_tree("root.child[0]", cache, path_to_fingerprint=path_map)
-
-# 失效：当某个节点的 guard 失效，清除该节点及所有子孙的缓存
-removed = invalidate_region_tree(tree, violated_node, cache, path_to_fingerprint=path_map)</code></pre>
-
-<p>失效策略是<strong>保守的</strong>：只清除受影响的子树，祖先节点的缓存保留。
-这避免了"一个 guard 失效导致整棵树重算"的问题。</p>
-
-<h2>提问：怎么在代码中使用？</h2>
-
-<pre><code>from sonata import extract_regions, check_region_eligibility
-from sonata.regions import build_region_tree
-
-# 完整的区域级 eligibility 检查
-result = check_region_eligibility(ir_node, entry_name="my_graph")
+<pre><code>result = check_region_eligibility(ir_node, entry_name="my_graph")
 
 if result.eligible:
     meta = result.metadata
-    print(f"Regions: {meta['region_count']}")
-    print(f"Static: {meta['static_region_count']}")
-    print(f"Dynamic: {meta['dynamic_region_count']}")
-    print(f"Static ratio: {meta.get('static_ratio', 0):.0%}")
+    print(f"Regions: {meta['region_count']}")        # 3
+    print(f"Static: {meta['static_region_count']}")  # 2
+    print(f"Dynamic: {meta['dynamic_region_count']}") # 1
+    print(f"Static ratio: {meta['static_ratio']:.0%}") # 67%
 
     # 访问 RegionTree
-    region_tree = meta.get('region_tree')
-    if region_tree:
-        for node in region_tree.static_subtrees():
-            print(f"Static subtree: region_{node.region.region_id} "
-                  f"({node.region_status})")</code></pre>
+    rt = meta['region_tree']
+    for node in rt.static_subtrees():
+        print(f"Static subtree root: region_{node.region.region_id} "
+              f"({node.region_status})")
+
+    # 访问每个区域的 Score（目前是 placeholder）
+    for key, score in meta['per_region_scores'].items():
+        print(f"{key}: {score.name}")</code></pre>
+
+<div class="callout warn">
+  <strong>注意：</strong><code>per_region_scores</code> 中的 Score 目前是 placeholder
+  （空的 tasks/dependencies）。真正的 per-region Score 提取将在后续版本实现。
+</div>
 
 <div class="nav">
   <a href="07-running-tests.html"><span class="arrow">&larr;</span> 上一篇：运行测试与当前状态</a>

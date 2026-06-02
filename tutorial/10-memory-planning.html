@@ -19,6 +19,7 @@
   .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
   .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
   .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
   .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
   .nav a { color: #2563eb; text-decoration: none; }
   .nav a:hover { text-decoration: underline; }
@@ -31,191 +32,243 @@
 
 <h2>提问：内存规划要解决什么问题？</h2>
 
-<p>Score 里的每个 Task 都有输入/输出 buffer。这些 buffer 在时间上有<strong>重叠</strong>——
-同时活跃的 buffer 不能共享同一块内存。但如果两个 buffer 的生命周期不重叠，
-它们就可以复用同一块内存空间。</p>
+<p>考虑一个 4 个 Task 的 Score：</p>
+
+<pre><code>Task 0: matmul(x, w)  → y     # 写 y
+Task 1: add(y, b)     → z     # 读 y，写 z
+Task 2: relu(z)       → a     # 读 z，写 a
+Task 3: softmax(a)    → o     # 读 a，写 o</code></pre>
+
+<p>每个 Task 的输入/输出都是 buffer。这些 buffer 的<strong>生命周期</strong>不同：
+<code>y</code> 在 Task 0 写入、Task 1 读取后就不再需要了。
+<code>z</code> 在 Task 1 写入、Task 2 读取后就不再需要了。</p>
+
+<p>如果 <code>y</code> 和 <code>z</code> 的生命周期不重叠，它们可以<strong>复用同一块内存</strong>。
+内存规划就是找出这种复用关系，减少 NPU 的内存占用。</p>
 
 <div class="callout info">
   <strong>类比：</strong>一个会议室（内存），不同时间段有不同的会议（buffer）。
-  如果两个会议时间不重叠，它们可以用同一个会议室。
-  内存规划就是安排哪些 buffer 共用哪块内存，使得总内存需求最小。
+  两个会议如果时间不重叠，可以用同一个会议室。
+  内存规划就是安排哪些会议共用哪个会议室，使得需要的会议室总面积最小。
 </div>
 
-<h2>提问：BufferLifetime 是什么？</h2>
+<h2>提问：BufferLifetime 长什么样？</h2>
 
-<p>每个 buffer 的生命周期由 <code>BufferLifetime</code> 描述：</p>
+<p>用上面 4 个 Task 的例子：</p>
 
-<pre><code>@dataclass(frozen=True)
-class BufferLifetime:
-    storage_key: str   # buffer 唯一标识
-    start: int         # 生命起始（task 顺序编号）
-    end: int           # 生命结束</code></pre>
+<div class="diagram">compute_lifetimes(score) 的结果:
 
-<p>两个 buffer 冲突的条件：<code>a.start &lt; b.end AND b.start &lt; a.end</code>。</p>
+  BufferLifetime(storage_key="y", birth=0, death=1)
+    └─ Task 0 写入，Task 1 读取 → 生命期 [0, 1]
+
+  BufferLifetime(storage_key="z", birth=1, death=2)
+    └─ Task 1 写入，Task 2 读取 → 生命期 [1, 2]
+
+  BufferLifetime(storage_key="a", birth=2, death=3)
+    └─ Task 2 写入，Task 3 读取 → 生命期 [2, 3]
+
+  BufferLifetime(storage_key="x", birth=0, death=0)
+    └─ Task 0 读取（输入参数） → 生命期 [0, 0]
+
+  BufferLifetime(storage_key="w", birth=0, death=0)
+    └─ Task 0 读取（输入参数） → 生命期 [0, 0]
+
+  BufferLifetime(storage_key="b", birth=1, death=1)
+    └─ Task 1 读取（输入参数） → 生命期 [1, 1]
+
+时间线可视化:
+  Task:  0         1         2         3
+         │         │         │         │
+  x:     ■
+  w:     ■
+  y:     ■─────────■
+  b:               ■
+  z:               ■─────────■
+  a:                         ■─────────■
+  o:                                   ■</code></pre>
+
+<p>冲突条件：<code>a.birth &lt;= b.death AND b.birth &lt;= a.death</code>
+（两个 buffer 在某个时间点同时存活）。</p>
 
 <pre><code>from sonata import compute_lifetimes, find_conflicts
 
-# 从 Score 计算 buffer 生命周期
-lifetimes = compute_lifetimes(score)
-
-# 找出所有冲突对
+lifetimes = compute_lifetimes(score.tasks)
 conflicts = find_conflicts(lifetimes)
 for c in conflicts:
-    print(f"{c.key_a} 与 {c.key_b} 生命周期重叠")</code></pre>
+    print(f"{c.key_a} 与 {c.key_b} 生命周期重叠")
+# y 与 x 重叠（都在 Task 0 活跃）
+# y 与 w 重叠
+# z 与 y 重叠（都在 Task 1 活跃）
+# z 与 b 重叠
+# a 与 z 重叠（都在 Task 2 活跃）</code></pre>
 
-<h2>提问：plan_memory 是什么？</h2>
+<h2>提问：冲突矩阵是什么样的？</h2>
 
-<p><code>plan_memory()</code> 是 v0.3 的基础内存规划器，使用<strong>贪心首次适配</strong>策略：</p>
+<p>冲突矩阵是一个 NxN 的布尔矩阵，<code>matrix[i][j] = True</code> 表示
+buffer i 和 buffer j 不能共享内存：</p>
 
-<pre><code>from sonata import plan_memory
+<div class="diagram">buffer 顺序: [x, w, y, b, z, a, o]
 
-# buffer_sizes: 每个 buffer 的字节大小
-buffer_sizes = {"buf_a": 1024, "buf_b": 2048, "buf_c": 512}
+冲突矩阵（True = 不能共享内存）:
 
-plan = plan_memory(lifetimes, buffer_sizes)
-print(f"峰值内存: {plan.peak_memory} bytes")
-print(f"总分配: {plan.total_allocated()} bytes")
+       x      w      y      b      z      a      o
+  x  [False, False, True,  False, False, False, False]
+  w  [False, False, True,  False, False, False, False]
+  y  [True,  True,  False, True,  True,  False, False]
+  b  [False, False, True,  False, True,  False, False]
+  z  [False, False, True,  True,  False, True,  False]
+  a  [False, False, False, False, True,  False, False]
+  o  [False, False, False, False, False, False, False]
 
-# 查看某个 buffer 的分配
-alloc = plan.by_key("buf_a")
-print(f"buf_a: offset={alloc.offset}, size={alloc.size}")</code></pre>
-
-<p>算法流程：</p>
-<ol>
-  <li>按 size 降序排列所有 buffer</li>
-  <li>对每个 buffer，找到第一个不与已分配 buffer 冲突的 offset</li>
-  <li>记录分配结果</li>
-</ol>
-
-<h2>提问：v0.11 新增了什么？</h2>
-
-<p>v0.11 在基础 <code>plan_memory()</code> 之上增加了三个新能力：</p>
-
-<table>
-  <tr><th>功能</th><th>模块</th><th>说明</th></tr>
-  <tr><td><strong>冲突矩阵</strong></td><td><code>compute_conflict_matrix()</code></td><td>NxN 布尔矩阵，支持 stream 感知</td></tr>
-  <tr><td><strong>约束求解器接口</strong></td><td><code>ConstraintSolver</code> ABC</td><td>可插拔的求解器架构</td></tr>
-  <tr><td><strong>带超时的求解</strong></td><td><code>solve_memory()</code></td><td>超时自动 fallback 到贪心策略</td></tr>
-</table>
-
-<h2>提问：冲突矩阵是什么？</h2>
+解读:
+  y 与 x, w, b, z 冲突 → y 不能和这 4 个共用内存
+  o 与谁都**不**冲突   → o 可以和任意 buffer 共用内存（它只在最后一个 Task 出现）</code></pre>
 
 <pre><code>from sonata.memory_plan import compute_conflict_matrix
 
-# 基础用法（不考虑 stream）
 matrix = compute_conflict_matrix(lifetimes)
-# matrix[i][j] = True 表示 buffer i 和 buffer j 生命周期重叠
+# len(matrix) = 7, 每行 7 个布尔值
 
 # stream 感知：不同 stream 的 buffer 不冲突
-stream_ids = {"buf_a": 0, "buf_b": 1, "buf_c": 0}
+stream_ids = {"x": 0, "w": 0, "y": 0, "b": 0, "z": 1, "a": 1, "o": 1}
 matrix = compute_conflict_matrix(lifetimes, stream_ids=stream_ids)
-# buf_a (stream 0) 和 buf_b (stream 1) 即使生命周期重叠也不冲突</code></pre>
+# z (stream 1) 和 y (stream 0) 不再冲突！
+# 因为它们在不同 stream 上物理并行执行，内存独立</code></pre>
 
-<div class="callout info">
-  <strong>Stream 感知的意义：</strong>昇腾 NPU 有多个计算 stream。
-  不同 stream 上的 buffer 物理上并行执行，但各自独立。
-  把它们标记为不冲突，可以更充分地复用内存。
-</div>
+<h2>提问：plan_memory 怎么分配内存？</h2>
 
-<h2>提问：ConstraintSolver 是什么？</h2>
+<p><code>plan_memory()</code> 使用<strong>贪心首次适配</strong>策略，用上面的例子逐步演示：</p>
 
-<p><code>ConstraintSolver</code> 是一个抽象基类，定义了内存求解器的标准接口：</p>
+<div class="diagram">buffer_sizes = {"x": 100, "w": 200, "y": 300, "b": 50, "z": 300, "a": 200, "o": 100}
 
-<pre><code>from abc import ABC, abstractmethod
+Step 1: 按 size 降序排列
+  [y:300, z:300, w:200, a:200, x:100, o:100, b:50]
 
-class ConstraintSolver(ABC):
-    @abstractmethod
-    def solve(
-        self,
-        conflict_matrix: list[list[bool]],
-        sizes: list[int],
-        device_memory_limit: int | None = None,
-    ) -> MemoryPlan:
-        """为每个 buffer 分配不冲突的 offset。"""
-        ...</code></pre>
+Step 2: 逐个分配（找第一个不冲突的 offset）
 
-<p>v0.11 内置了一个实现：<code>GreedySolver</code>——首次适配递减策略。</p>
+  y (300): 没有已分配的 → offset=0
+    内存: [y:0-300]
 
-<pre><code>from sonata.memory_plan import GreedySolver, solve_memory
+  z (300): 与 y 冲突 → 不能从 0 开始 → offset=300
+    内存: [y:0-300] [z:300-600]
 
+  w (200): 与 y 冲突 → 不能从 0 开始 → offset=300
+           与 z 冲突 → 不能从 300 开始 → offset=600
+    内存: [y:0-300] [z:300-600] [w:600-800]
+
+  a (200): 与 z 冲突 → 不能从 300 开始
+           与 y 不冲突 → offset=0 可以！
+    内存: [a:0-200] [y:0-300] [z:300-600] [w:600-800]
+    （a 和 y 重叠区域 0-200，但 a 不与 y 冲突 ← 等等，a 和 y 确实不冲突！）
+
+  修正: a 只与 z 冲突。offset=0 不与 z 冲突（z 在 300-600）→ offset=0 可以
+    内存: [a:0-200, y:0-300] [z:300-600] [w:600-800]
+
+  x (100): 与 y 冲突 → offset=300
+           与 z 冲突 → offset=600
+           与 w 冲突 → offset=800
+    内存: [a+y:0-300] [z:300-600] [w:600-800] [x:800-900]
+
+  o (100): 与谁都**不**冲突 → offset=0（复用 a 的空间！）
+    内存: [o+a:0-200, y:0-300] [z:300-600] [w:600-800] [x:800-900]
+
+  b (50):  与 y 冲突 → offset=300
+           与 z 冲突 → offset=600
+           与 w 不冲突 → offset=600 不行（与 w 重叠？w 在 600-800）
+           → offset=800 不与 w 冲突
+           与 x 冲突 → offset=900
+    内存: [o+a:0-200, y:0-300] [z:300-600] [w:600-800] [x+b:800-900]
+
+最终结果:
+  peak_memory = 900 bytes
+  复用: o 和 a 共用 [0-200]，x 和 b 共用 [800-900]</code></pre>
+
+<pre><code>from sonata import plan_memory
+
+buffer_sizes = {"x": 100, "w": 200, "y": 300, "b": 50, "z": 300, "a": 200, "o": 100}
+plan = plan_memory(lifetimes, buffer_sizes)
+print(f"Peak: {plan.peak_memory}")  # 900
+
+# 查看每个 buffer 的分配
+for alloc in sorted(plan.allocations, key=lambda a: a.offset):
+    print(f"  {alloc.storage_key}: [{alloc.offset}, {alloc.end})")</code></pre>
+
+<h2>提问：ConstraintSolver 和 GreedySolver 是什么？</h2>
+
+<p>v0.11 引入了可插拔的求解器架构。<code>ConstraintSolver</code> 是抽象接口，
+<code>GreedySolver</code> 是内置实现（和 <code>plan_memory</code> 同样的策略，
+但接口不同——接受冲突矩阵而不是 lifetimes）：</p>
+
+<pre><code>from sonata.memory_plan import ConstraintSolver, GreedySolver, solve_memory
+
+# GreedySolver 的接口
 solver = GreedySolver()
-plan = solver.solve(conflict_matrix, sizes)
-print(f"Peak: {plan.peak_memory}, solver: {plan.solver_type}")  # "greedy"</code></pre>
+plan = solver.solve(
+    conflict_matrix=matrix,  # NxN 布尔矩阵
+    sizes=[100, 200, 300, 50, 300, 200, 100],  # buffer 大小列表
+)
+print(plan.solver_type)  # "greedy"
+
+# 自定义求解器（例如 ILP）
+class ILPSolver(ConstraintSolver):
+    def solve(self, conflict_matrix, sizes, device_memory_limit=None):
+        # 用整数线性规划求解最优布局
+        # ...
+        return MemoryPlan(allocations=..., peak_memory=..., solver_type="ilp")</code></pre>
 
 <h2>提问：solve_memory 的超时和 fallback 是怎么回事？</h2>
 
-<p>如果你使用一个更复杂的求解器（比如 ILP 或 CP 求解器），它可能在大图上超时。
-<code>solve_memory()</code> 提供了超时保护：</p>
-
-<pre><code>from sonata.memory_plan import solve_memory, GreedySolver
-
-# 假设你有一个复杂的求解器
-complex_solver = MyILPSolver()
+<pre><code># 复杂求解器可能在大图上超时
+ilp_solver = ILPSolver()
 
 plan = solve_memory(
-    solver=complex_solver,           # 先尝试复杂求解器
+    solver=ilp_solver,               # 先尝试 ILP
     conflict_matrix=matrix,
     sizes=sizes,
     device_memory_limit=1024 * 1024,  # 1MB 设备内存限制
     timeout_seconds=2.0,              # 超过 2 秒发警告
-    fallback=GreedySolver(),          # 失败时用贪心
-)
-# 如果 complex_solver 超时或抛异常，自动切换到 GreedySolver</code></pre>
+    fallback=GreedySolver(),          # 异常时用贪心
+)</code></pre>
+
+<div class="diagram">solve_memory 执行流程:
+
+  ┌─ 开始 ─┐
+  │        │
+  │  try:  │  ← 执行 ilp_solver.solve()
+  │        │
+  ├─ 成功 ─┤  elapsed > timeout? → 警告
+  │        │  return result
+  │        │
+  ├─ 异常 ─┤  → 警告 "Primary solver failed"
+  │        │  → GreedySolver().solve()
+  │        │  return fallback result
+  └────────┘</code></pre>
 
 <div class="callout warn">
   <strong>注意：</strong>当前的超时是<strong>事后检查</strong>——求解器会完整执行，
-  超时只是发出警告。真正的中断式超时需要求解器自身支持。
+  超时只发出警告，不会中断。真正的中断式超时需要求解器自身支持。
 </div>
 
-<h2>提问：MemoryPlan 有哪些字段？</h2>
+<h2>提问：plan_memory 和 solve_memory 有什么区别？</h2>
 
-<pre><code>@dataclass(frozen=True)
-class MemoryPlan:
-    allocations: tuple[BufferAllocation, ...]  # 每个 buffer 的分配
-    peak_memory: int                           # 峰值内存（bytes）
-    solver_type: str = "greedy"                # 求解器类型标识
-    conflict_matrix_hash: str | None = None    # 冲突矩阵哈希（可选）
-
-@dataclass(frozen=True)
-class BufferAllocation:
-    storage_key: str  # buffer 标识
-    offset: int       # 起始偏移
-    size: int         # 字节大小</code></pre>
-
-<pre><code># 遍历分配结果
-for alloc in plan.allocations:
-    print(f"{alloc.storage_key}: [{alloc.offset}, {alloc.end})")
-
-# 按 key 查找
-alloc = plan.by_key("buf_a")
-if alloc:
-    print(f"buf_a 在 offset {alloc.offset}")</code></pre>
-
-<h2>提问：DynamicShapeError 是什么？</h2>
-
-<p>当 buffer 的大小依赖于运行时符号（如动态 batch_size）时，
-内存规划无法确定 buffer 大小，会抛出 <code>DynamicShapeError</code>：</p>
-
-<pre><code>from sonata.memory_plan import DynamicShapeError
-
-try:
-    plan = plan_memory(lifetimes, buffer_sizes)
-except DynamicShapeError as e:
-    print(f"动态形状符号: {e.symbols}")
-    print("需要静态形状或运行时形状推理")</code></pre>
+<table>
+  <tr><th></th><th><code>plan_memory</code></th><th><code>solve_memory</code></th></tr>
+  <tr><td>输入</td><td>BufferLifetime 列表 + buffer_sizes 字典</td><td>冲突矩阵 + sizes 列表 + ConstraintSolver</td></tr>
+  <tr><td>策略</td><td>固定的贪心首次适配</td><td>可插拔（任何 ConstraintSolver）</td></tr>
+  <tr><td>超时</td><td>无</td><td>有（事后检查 + fallback）</td></tr>
+  <tr><td>Stream 感知</td><td>无</td><td>通过冲突矩阵（compute_conflict_matrix）</td></tr>
+  <tr><td>使用场景</td><td>简单场景，快速原型</td><td>生产环境，需要高级求解器</td></tr>
+</table>
 
 <h2>提问：完整的内存规划流程是什么？</h2>
 
-<pre><code>from sonata import (
-    compute_lifetimes, find_conflicts, plan_memory,
-    BufferLifetime,
-)
+<pre><code>from sonata import compute_lifetimes, find_conflicts, Score
 from sonata.memory_plan import (
     compute_conflict_matrix, GreedySolver, solve_memory,
 )
 
 # 1. 计算 buffer 生命周期
-lifetimes = compute_lifetimes(score)
+lifetimes = compute_lifetimes(score.tasks)
 
 # 2. 检查冲突
 conflicts = find_conflicts(lifetimes)
@@ -224,21 +277,24 @@ print(f"冲突对数: {len(conflicts)}")
 # 3. 构建冲突矩阵（可选 stream 感知）
 matrix = compute_conflict_matrix(lifetimes)
 
-# 4. 计算 buffer 大小（需要从 score 或外部获取）
-buffer_sizes = {lt.storage_key: get_size(lt) for lt in lifetimes}
+# 4. 构建 sizes 列表（与 lifetimes 顺序对应）
+sizes = [buffer_sizes[lt.storage_key] for lt in lifetimes]
 
 # 5. 执行内存规划
 plan = solve_memory(
     solver=GreedySolver(),
     conflict_matrix=matrix,
-    sizes=[buffer_sizes[lt.storage_key] for lt in lifetimes],
+    sizes=sizes,
 )
-print(f"峰值内存: {plan.peak_memory} bytes")</code></pre>
+print(f"峰值内存: {plan.peak_memory} bytes")
+for alloc in plan.allocations:
+    print(f"  {alloc.storage_key}: offset={alloc.offset}")</code></pre>
 
 <div class="callout success">
-  <strong>总结：</strong>内存规划的目标是让静态形状的 buffer 复用内存，
-  减少 NPU 的内存占用。v0.11 的约束求解器架构为未来接入更高级的
-  ILP/CP 求解器预留了接口，同时保证贪心策略作为可靠的 fallback。
+  <strong>总结：</strong>内存规划的目标是让 buffer 复用内存，减少 NPU 内存占用。
+  <code>plan_memory</code> 是简单场景的快捷方式；
+  <code>solve_memory</code> + <code>ConstraintSolver</code> 是生产环境的可插拔架构。
+  贪心策略是可靠的 fallback，未来可接入 ILP/CP 求解器获得更优布局。
 </div>
 
 <div class="nav">

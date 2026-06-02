@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Dive 4 - guard.py 完整解析</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .callout.red { background: #fee2e2; border: 1px solid #fca5a5; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Deep Dive 4 - guard.py 完整解析</h1>
+
+<p>本文件深入 <code>src/sonata/guard.py</code>（约 760 行）的每一个类、每一个方法。
+配合 <code>tests/sonata/test_guard.py</code> 阅读效果最佳。</p>
+
+<h2>模块总览</h2>
+
+<p><code>guard.py</code> 定义了 Sonata 的 Guard 条件系统，分为四个阶段：</p>
+<table>
+  <tr><th>阶段</th><th>内容</th><th>代码行</th></tr>
+  <tr><td>v0.10 基础</td><td>GuardCondition ABC、GuardSeverity、ShapeAssumption、InvalidateAction</td><td>~320</td></tr>
+  <tr><td>v0.10 评估</td><td>GuardEvaluator、GuardInvalidator</td><td>~150</td></tr>
+  <tr><td>v0.10 防过度</td><td>GuardSelector、EntryParamGuardSelector、check_guard_density</td><td>~120</td></tr>
+  <tr><td>v0.11 迁移</td><td>shape_assumption_to_guard_condition、deprecated_shape_assumption</td><td>~90</td></tr>
+</table>
+
+<p>唯一依赖：<code>score.py</code>（ShapeAssumption 类型，用于 from_dict 和迁移工具）。</p>
+
+<h2>GuardSeverity — 严重程度</h2>
+
+<pre><code>@dataclass(frozen=True)
+class GuardSeverity:
+    value: str  # "soft" 或 "hard"
+
+    @property
+    def requires_replan(self) -> bool:
+        return self.value == "hard"
+
+GUARD_SEVERITY_SOFT = GuardSeverity("soft")
+GUARD_SEVERITY_HARD = GuardSeverity("hard")</code></pre>
+
+<p><strong>为什么用 dataclass 而不是 Enum？</strong>因为 severity 需要作为 frozen dataclass 的字段值，
+而 Enum 在某些序列化场景下行为不可预测。两个预定义实例 <code>GUARD_SEVERITY_SOFT</code>
+和 <code>GUARD_SEVERITY_HARD</code> 是模块级常量。</p>
+
+<h2>GuardCondition — 抽象基类</h2>
+
+<pre><code>@dataclass(frozen=True)
+class GuardCondition(ABC):
+    symbol: str
+    severity: GuardSeverity
+
+    @abstractmethod
+    def evaluate(self, runtime_values: dict[str, Any]) -> bool: ...
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"symbol": self.symbol, "severity": self.severity.value}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "GuardCondition":
+        # 默认 fallback 到 ShapeAssumption
+        severity = GuardSeverity(data["severity"])
+        return ShapeAssumption(symbol=data["symbol"], dims=(), severity=severity)</code></pre>
+
+<h3>__eq__ 和 __hash__ 的设计</h3>
+
+<pre><code>def __eq__(self, other):
+    if not isinstance(other, GuardCondition): return False
+    return self.symbol == other.symbol and self.severity == other.severity
+
+def __hash__(self):
+    return hash((self.symbol, self.severity))</code></pre>
+
+<p><strong>只比较 symbol 和 severity</strong>，不比较子类特有字段。
+这意味着两个不同子类、相同 symbol 和 severity 的 Guard 被视为相等。
+这是有意的设计——Guard 的身份由 symbol 决定，severity 决定失效行为。</p>
+
+<h3>from_dict 的默认行为</h3>
+
+<div class="callout warn">
+  <strong>设计决策：</strong><code>GuardCondition.from_dict()</code> 默认创建
+  <code>ShapeAssumption(symbol=..., dims=(), severity=...)。</code>
+  子类应该覆盖 <code>from_dict</code> 来提供正确的反序列化。
+  <code>to_dict</code> 返回的 <code>{"type": "ShapeAssumption", ...}</code>
+  中的 <code>type</code> 字段由子类添加，基类不处理。
+</div>
+
+<h2>ShapeAssumption — 向后兼容的 Guard</h2>
+
+<pre><code>@dataclass(frozen=True)
+class ShapeAssumption(GuardCondition):
+    symbol: str
+    dims: tuple[int, ...] = field(default_factory=tuple)
+    severity: GuardSeverity = GUARD_SEVERITY_HARD
+    _warning_emitted: bool = field(default=False, repr=False, init=False, compare=False, hash=False)</code></pre>
+
+<h3>__post_init__ 的 deprecation 逻辑</h3>
+
+<pre><code>def __post_init__(self):
+    if not self._warning_emitted:
+        object.__setattr__(self, '_warning_emitted', True)
+        warnings.warn(
+            "ShapeAssumption is deprecated since v0.10 ...",
+            DeprecationWarning, stacklevel=2
+        )</code></pre>
+
+<p><strong>每次创建都会发出警告</strong>——因为 <code>_warning_emitted</code>
+是 <code>init=False</code>，每个新实例都从 False 开始。
+这不是"全局只警告一次"，而是"每次实例化都警告"。</p>
+
+<h3>evaluate 的逻辑</h3>
+
+<pre><code>def evaluate(self, runtime_values: dict) -> bool:
+    runtime_shape = runtime_values.get(self.symbol)
+    if runtime_shape is None:
+        return False  # 缺少该符号 → 不满足
+    if isinstance(runtime_shape, list):
+        runtime_shape = tuple(runtime_shape)
+    return runtime_shape == self.dims</code></pre>
+
+<p>精确匹配：<code>(32,) != (32, 64)</code>，<code>(32, 64) != (64, 32)</code>。
+不支持部分匹配或范围匹配。</p>
+
+<h3>to_dict / from_dict</h3>
+
+<pre><code>def to_dict(self) -> dict:
+    base = super().to_dict()
+    base["type"] = "ShapeAssumption"
+    base["dims"] = self.dims
+    return base
+
+@classmethod
+def from_dict(cls, data: dict) -> "ShapeAssumption":
+    return cls(
+        symbol=data["symbol"],
+        dims=tuple(data.get("dims", [])),
+        severity=GuardSeverity(data.get("severity", "hard")),
+    )</code></pre>
+
+<h2>InvalidateAction — 失效动作枚举</h2>
+
+<pre><code>class InvalidateAction(Enum):
+    REPLAN = "replan"                    # Score + PlanHandle 都失效
+    INVALIDATE_HANDLE = "invalidate_handle"  # 只失效 PlanHandle
+    UPDATE_IN_PLACE = "update_in_place"  # 预留，当前未使用</code></pre>
+
+<p>两个便捷方法：</p>
+<pre><code>action.requires_full_replan()  # == REPLAN
+action.is_conservative()       # == REPLAN or INVALIDATE_HANDLE</code></pre>
+
+<h2>GuardEvaluator — 运行时评估器</h2>
+
+<h3>evaluate — 单个 Guard 评估</h3>
+
+<pre><code>def evaluate(self, guard, runtime_values) -> tuple[bool, InvalidateAction]:
+    try:
+        satisfied = guard.evaluate(runtime_values)
+        action = InvalidateAction.REPLAN if guard.severity.requires_replan \
+                 else InvalidateAction.INVALIDATE_HANDLE
+        return satisfied, action
+    except Exception as e:
+        return False, InvalidateAction.REPLAN  # 异常 → 保守处理</code></pre>
+
+<p><strong>关键设计：</strong>即使 Guard 满足（satisfied=True），返回的 action 仍然是
+该 severity 对应的最坏动作。action 代表"如果这个 Guard 失效了会怎样"，
+而不是"当前需要执行什么"。</p>
+
+<h3>evaluate_all — 批量评估</h3>
+
+<pre><code>def evaluate_all(self, guards, runtime_values) -> tuple[bool, list]:
+    results = []
+    all_satisfied = True
+    for guard in guards:
+        satisfied, action = self.evaluate(guard, runtime_values)
+        results.append((guard, satisfied, action))
+        if not satisfied:
+            all_satisfied = False
+    return all_satisfied, results</code></pre>
+
+<p><strong>不短路</strong>——即使第一个 Guard 失效，仍然检查所有 Guard。
+这使得调用方能看到完整的评估结果。</p>
+
+<h3>evaluate_region — 区域级评估（v0.11）</h3>
+
+<pre><code>def evaluate_region(self, node: RegionTreeNode, runtime_values) -> GuardStatus:
+    guards = []
+    def _collect(n):
+        if n.score is not None:
+            guards.extend(n.score.shape_assumptions)
+        for child in n.children:
+            _collect(child)
+    _collect(node)
+
+    if not guards:
+        return GuardStatus.ALL_SATISFIED
+
+    any_failed = False
+    for guard in guards:
+        satisfied, action = self.evaluate(guard, runtime_values)
+        if not satisfied:
+            if action == InvalidateAction.REPLAN:
+                return GuardStatus.ALL_FAILED  # 短路！
+            any_failed = True
+    return GuardStatus.PARTIAL_FAILED if any_failed else GuardStatus.ALL_SATISFIED</code></pre>
+
+<div class="callout info">
+  <strong>与 evaluate_all 的区别：</strong>evaluate_region <strong>会短路</strong>——
+  遇到 hard guard 失效立即返回 ALL_FAILED，不再检查后续 Guard。
+  evaluate_all <strong>不短路</strong>——始终检查所有 Guard。
+  这是因为 evaluate_region 用于运行时决策（需要快速返回），
+  而 evaluate_all 用于诊断（需要完整信息）。
+</div>
+
+<h3>select_region_guards — Guard 选择（v0.11）</h3>
+
+<pre><code>def select_region_guards(self, node, selector=None, *, density_threshold=50):
+    guards = []
+    def _collect(n):
+        if n.score is not None:
+            guards.extend(n.score.shape_assumptions)
+        for child in n.children:
+            _collect(child)
+    _collect(node)
+
+    exceeds, count = check_guard_density(guards, warning_threshold=density_threshold)
+    if exceeds:
+        warnings.warn(f"Region guard density {count} exceeds threshold ...")
+
+    if selector is None:
+        selector = EntryParamGuardSelector()
+    return selector.select(guards)</code></pre>
+
+<h2>GuardInvalidator — 失效策略决策</h2>
+
+<pre><code>class GuardInvalidator:
+    def __init__(self, default_action=InvalidateAction.REPLAN):
+        self.default_action = default_action
+
+    def invalidate(self, guard, reason="") -> InvalidateAction:
+        if guard.severity.requires_replan:
+            return InvalidateAction.REPLAN
+        return InvalidateAction.INVALIDATE_HANDLE
+
+    def invalidate_all(self, results) -> InvalidateAction:
+        for guard, satisfied, action in results:
+            if not satisfied and guard.severity.requires_replan:
+                return InvalidateAction.REPLAN
+        return InvalidateAction.INVALIDATE_HANDLE</code></pre>
+
+<p><strong>invalidate_all 的策略：</strong>遍历结果，只要有一个 hard 失效就返回 REPLAN。
+否则返回 INVALIDATE_HANDLE。注意它只看不满足的 Guard。</p>
+
+<h2>GuardSelector — 过度防护缓解</h2>
+
+<h3>GuardSelector ABC</h3>
+
+<pre><code>class GuardSelector(ABC):
+    @abstractmethod
+    def select(self, guards, runtime_info=None) -> list[GuardCondition]: ...</code></pre>
+
+<h3>EntryParamGuardSelector — 默认策略</h3>
+
+<pre><code>@dataclass(frozen=True)
+class EntryParamGuardSelector(GuardSelector):
+    top_k: int | None = None
+    priority_symbols: tuple[str, ...] = field(default_factory=tuple)
+
+    def select(self, guards, runtime_info=None):
+        guards_list = list(guards)
+        # 1. 先选 priority_symbols 中的
+        selected = [g for g in guards_list if g.symbol in self.priority_symbols]
+        # 2. 再添加剩余的（保持原始顺序）
+        remaining = [g for g in guards_list if g.symbol not in self.priority_symbols]
+        selected.extend(remaining)
+        # 3. top_k 截断
+        if self.top_k is not None and len(selected) > self.top_k:
+            selected = selected[:self.top_k]
+        return selected</code></pre>
+
+<p><strong>设计思路：</strong>入口参数（如 batch_size、seq_len）比中间 tensor 更可能变化。
+优先选择入口参数的 Guard 可以在不牺牲安全性的前提下提高缓存命中率。</p>
+
+<h3>check_guard_density — 密度检查</h3>
+
+<pre><code>def check_guard_density(guards, warning_threshold=50, logger=None) -> tuple[bool, int]:
+    count = sum(1 for _ in guards)
+    exceeds = count > warning_threshold
+    if exceeds and logger:
+        logger(warning_threshold, f"Guard density {count} exceeds threshold ...")
+    return exceeds, count</code></pre>
+
+<p>注意：<code>sum(1 for _ in guards)</code> 而不是 <code>len(list(guards))</code>——
+因为它接受 <code>Iterable</code>，不保证有 <code>len</code>。</p>
+
+<h2>迁移工具（Phase 6）</h2>
+
+<h3>shape_assumption_to_guard_condition</h3>
+
+<pre><code>def shape_assumption_to_guard_condition(sa, severity=None):
+    if not isinstance(sa, ShapeAssumption):
+        raise TypeError(...)
+    warnings.warn("ShapeAssumption is deprecated ...", DeprecationWarning)
+    if severity is not None and sa.severity != severity:
+        return ShapeAssumption(symbol=sa.symbol, dims=sa.dims, severity=severity)
+    return sa  # 已经是 GuardCondition，直接返回</code></pre>
+
+<p><strong>本质是 identity 函数</strong>——ShapeAssumption 已经是 GuardCondition 子类。
+这个函数的意义是发出 deprecation 警告，引导用户迁移到直接使用 GuardCondition。</p>
+
+<h3>deprecated_shape_assumption</h3>
+
+<pre><code>def deprecated_shape_assumption(symbol, dims=(), *, severity=GUARD_SEVERITY_HARD):
+    warnings.warn("ShapeAssumption is deprecated ...", DeprecationWarning)
+    return ShapeAssumption(symbol=symbol, dims=dims, severity=severity)</code></pre>
+
+<p>辅助函数：创建 ShapeAssumption 并发出 deprecation 警告。
+用于测试和迁移代码中。</p>
+
+<h2>__all__ 导出</h2>
+
+<pre><code>__all__ = [
+    "GuardCondition", "GuardSeverity",
+    "GUARD_SEVERITY_SOFT", "GUARD_SEVERITY_HARD",
+    "ShapeAssumption", "GUARD_CONDITION_SCHEMA_VERSION",
+    "InvalidateAction",
+    "GuardEvaluator", "GuardInvalidator",
+    "GuardSelector", "EntryParamGuardSelector",
+    "check_guard_density",
+    "shape_assumption_to_guard_condition", "deprecated_shape_assumption",
+]</code></pre>
+
+<div class="callout info">
+  <strong>注意：</strong><code>GUARD_SEVERITY_SOFT</code> 和 <code>GUARD_SEVERITY_HARD</code>
+  在 <code>__all__</code> 中导出，但 <code>GuardStatus</code> 不在——
+  <code>GuardStatus</code> 定义在 <code>plan_handle.py</code> 中，不是 guard.py 的一部分。
+</div>
+
+<div class="nav">
+  <a href="deep-03-regions.html"><span class="arrow">&larr;</span> 上一篇：regions.py 完整解析</a>
+  &nbsp;|&nbsp;
+  <a href="deep-05-memory-plan.html">下一篇：memory_plan.py 完整解析 &rarr;</a>
+</div>
+
+</body>
+</html>

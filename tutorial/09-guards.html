@@ -19,6 +19,7 @@
   .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
   .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
   .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
   .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
   .nav a { color: #2563eb; text-decoration: none; }
   .nav a:hover { text-decoration: underline; }
@@ -29,170 +30,242 @@
 
 <h1>Tutorial 9 - Guard 条件系统</h1>
 
-<h2>提问：什么是 Guard？</h2>
+<h2>提问：什么是 Guard？为什么需要它？</h2>
 
-<p>Sonata 的 Score 是在<strong>编译时</strong>生成的静态执行计划。但编译时做出的假设
-（比如 "batch_size = 32"）可能在运行时不再成立。Guard 就是这些假设的<strong>运行时断言</strong>。</p>
+<p>Sonata 的 Score 是在<strong>编译时</strong>生成的静态执行计划。
+编译时做出的假设（比如 "batch_size = 32"）可能在运行时不再成立。
+Guard 就是这些假设的<strong>运行时断言</strong>。</p>
+
+<p>一个具体的场景：</p>
+
+<pre><code># 编译时：输入形状 (32, 128)
+score = check_static_eligibility(model, entry_name="forward").score
+# score 包含: ShapeAssumption(symbol="batch_size", dims=(32,))
+#             ShapeAssumption(symbol="seq_len", dims=(128,))
+
+# 运行时：用户换了 batch_size
+runtime_values = {"batch_size": 64, "seq_len": 128}
+# batch_size 从 32 变成 64 → 假设失效 → 怎么办？</code></pre>
 
 <div class="callout info">
-  <strong>类比：</strong>你根据"今天 32°C"规划了户外烧烤。Guard 就是"如果下雨就取消"。
-  你不需要重新规划——只需要检查一个条件，决定是继续执行还是切换到 Plan B。
+  <strong>类比：</strong>你根据"今天 32°C"规划了户外烧烤。
+  Guard 就是"如果下雨就取消"。
+  你不需要重新规划所有细节——只需要检查一个条件，决定是继续还是切换。
 </div>
 
-<p>v0.1-v0.9 只有一种 Guard：<code>ShapeAssumption</code>——假设输入张量的形状固定。
-v0.10 将其抽象为 <code>GuardCondition</code> ABC，支持任意类型的运行时约束。</p>
-
 <h2>提问：GuardCondition 的接口是什么？</h2>
+
+<p>v0.10 将 ShapeAssumption 抽象为 <code>GuardCondition</code> ABC。
+任何 Guard 都必须实现 <code>evaluate()</code> 方法：</p>
 
 <pre><code>from abc import ABC, abstractmethod
 
 class GuardCondition(ABC):
-    symbol: str          # 可读标识符，如 "batch_size"
+    symbol: str              # 可读标识符，如 "batch_size"
     severity: GuardSeverity  # "soft" 或 "hard"
 
     @abstractmethod
     def evaluate(self, runtime_values: dict[str, Any]) -> bool:
-        """O(1) 运行时检查。返回 True = 条件满足。"""
+        """O(1) 运行时检查。True = 条件满足（guard 通过）。"""
         ...</code></pre>
 
-<p>所有 Guard 都必须实现 <code>evaluate()</code> 方法，且必须是 O(1)——
-因为每次 cache 查找都会执行所有 Guard 的 evaluate。</p>
+<p>O(1) 是硬性要求——每次 cache 查找都会执行所有 Guard 的 evaluate。</p>
 
-<h2>提问：severity soft 和 hard 有什么区别？</h2>
+<h2>提问：soft 和 hard 有什么区别？</h2>
+
+<p>一个具体的例子说明区别：</p>
+
+<div class="diagram">Score 编译时假设:
+  Guard A: batch_size == 32   (hard)  ← 维度数不变，只是参数变了
+  Guard B: seq_len   == 128  (soft)  ← 序列长度可能变
+
+场景 1: runtime_values = {"batch_size": 32, "seq_len": 256}
+  Guard A: 32 == 32 → True  (满足)
+  Guard B: 256 == 128 → False (失效)
+  动作: INVALIDATE_HANDLE
+  → 只需要重建 PlanHandle，Score 仍然有效（结构没变）
+
+场景 2: runtime_values = {"batch_size": 64, "seq_len": 128}
+  Guard A: 64 == 32 → False (失效)
+  Guard B: 128 == 128 → True (满足)
+  动作: REPLAN
+  → Score 和 PlanHandle 都失效，需要重新编译（形状假设变了）
+
+场景 3: runtime_values = {"batch_size": 64, "seq_len": 256}
+  Guard A: 64 == 32 → False (失效, hard)
+  动作: REPLAN ← 遇到 hard 失效立即短路，不再检查 Guard B</div>
 
 <table>
-  <tr><th>Severity</th><th>含义</th><th>失效动作</th><th>例子</th></tr>
-  <tr><td><code>hard</code></td><td>结构级变化</td><td><code>REPLAN</code>：Score 和 PlanHandle 都失效，需要重新编译</td><td>输入维度数变了</td></tr>
-  <tr><td><code>soft</code></td><td>参数级变化</td><td><code>INVALIDATE_HANDLE</code>：只失效 PlanHandle，Score 仍可用</td><td>batch_size 从 32 变成 64</td></tr>
+  <tr><th>Severity</th><th>含义</th><th>失效动作</th><th>典型场景</th></tr>
+  <tr><td><code>hard</code></td><td>结构级变化</td><td><code>REPLAN</code>：Score + PlanHandle 都失效</td><td>输入维度数变了、buffer 布局变了</td></tr>
+  <tr><td><code>soft</code></td><td>参数级变化</td><td><code>INVALIDATE_HANDLE</code>：只失效 PlanHandle</td><td>batch_size 从 32 变成 64</td></tr>
 </table>
-
-<pre><code>from sonata.guard import GuardSeverity, GUARD_SEVERITY_SOFT, GUARD_SEVERITY_HARD
-
-# hard（默认）：形状假设通常用 hard
-guard = ShapeAssumption(symbol="batch_size", dims=(32,), severity=GUARD_SEVERITY_HARD)
-
-# soft：参数级约束
-guard = ShapeAssumption(symbol="seq_len", dims=(128,), severity=GUARD_SEVERITY_SOFT)</code></pre>
 
 <h2>提问：ShapeAssumption 现在怎么用？</h2>
 
-<p><code>ShapeAssumption</code> 现在继承自 <code>GuardCondition</code>，保持向后兼容但已标记 deprecated：</p>
+<p><code>ShapeAssumption</code> 现在继承自 <code>GuardCondition</code>，向后兼容但已 deprecated：</p>
 
-<pre><code>import warnings
-warnings.simplefilter("always")  # 开启 deprecation 警告
-
-# 旧写法（会触发 DeprecationWarning）
+<pre><code># 旧写法（会触发 DeprecationWarning）
 from sonata.score import ShapeAssumption
-old_guard = ShapeAssumption(symbol="N", dims=(128,))
+old = ShapeAssumption(symbol="N", dims=(128,))
 
-# 新写法（推荐）
+# 新写法（推荐）— 显式指定 severity
 from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
-new_guard = ShapeAssumption(symbol="N", dims=(128,), severity=GUARD_SEVERITY_HARD)</code></pre>
+new = ShapeAssumption(symbol="N", dims=(128,), severity=GUARD_SEVERITY_HARD)
+
+# evaluate 逻辑：runtime_values[symbol] == dims
+new.evaluate({"N": (128,)})   # True
+new.evaluate({"N": (64,)})    # False
+new.evaluate({"N": None})     # False（缺少该符号）</code></pre>
 
 <div class="callout warn">
   <strong>迁移提示：</strong>ShapeAssumption 将在 v0.11 正式版移除。
-  请使用 GuardCondition 子类代替。详见
-  <code>docs/user-guide/guards-migration.md</code>。
+  请使用 GuardCondition 子类代替。
+  详见 <code>docs/user-guide/guards-migration.md</code>。
 </div>
 
-<h2>提问：GuardEvaluator 是什么？</h2>
+<h2>提问：GuardEvaluator 的完整工作流程是什么？</h2>
 
-<p><code>GuardEvaluator</code> 是运行时评估器，负责检查一组 Guard 是否满足：</p>
+<p>用一个端到端的例子展示从编译到运行时检查的完整流程：</p>
 
 <pre><code>from sonata.guard import GuardEvaluator, InvalidateAction
+from sonata.plan_handle import GuardStatus
 
+# 编译时：提取 Score 和 Guard
+score = check_static_eligibility(model).score
+guards = list(score.shape_assumptions)
+# guards = [
+#   ShapeAssumption(symbol="batch_size", dims=(32,), severity=HARD),
+#   ShapeAssumption(symbol="seq_len", dims=(128,), severity=SOFT),
+# ]
+
+# 运行时：检查单个 Guard
 evaluator = GuardEvaluator()
+runtime = {"batch_size": 32, "seq_len": 128}
 
-# 检查单个 Guard
-runtime_values = {"batch_size": 32, "seq_len": 128}
-satisfied, action = evaluator.evaluate(guard, runtime_values)
-# satisfied=True, action=InvalidateAction.REPLAN（如果是 hard guard）
+satisfied, action = evaluator.evaluate(guards[0], runtime)
+# satisfied=True, action=REPLAN（hard guard，即使满足也预设最坏动作）
 
-# 检查多个 Guard
-all_ok, results = evaluator.evaluate_all([guard1, guard2], runtime_values)
-# all_ok=True if 全部满足
-# results=[(guard1, True, action1), (guard2, True, action2)]</code></pre>
+# 检查所有 Guard
+all_ok, results = evaluator.evaluate_all(guards, runtime)
+# all_ok=True
+# results=[
+#   (guard0, True, REPLAN),
+#   (guard1, True, INVALIDATE_HANDLE),
+# ]
 
-<h2>提问：区域级 Guard 评估是什么？</h2>
+# 如果 batch_size 变了
+runtime_v2 = {"batch_size": 64, "seq_len": 128}
+all_ok, results = evaluator.evaluate_all(guards, runtime_v2)
+# all_ok=False
+# results=[
+#   (guard0, False, REPLAN),      ← hard 失效
+#   (guard1, True, INVALIDATE_HANDLE),
+# ]</code></pre>
 
-<p>v0.11 的关键新功能：<code>evaluate_region()</code> 可以对整棵 RegionTree 子树
-评估所有 Guard，返回一个 <code>GuardStatus</code>：</p>
+<h2>提问：区域级 Guard 评估（evaluate_region）怎么工作？</h2>
 
-<pre><code>from sonata.guard import GuardEvaluator
+<p>v0.11 的关键新功能。用一个具体例子：</p>
+
+<pre><code># RegionTree 结构:
+#   root (Score: 2 tasks, 1 guard: batch_size==32)
+#     ├─ child[0] (no Score, dynamic)
+#     └─ child[1] (Score: 1 task, 1 guard: seq_len==128)
+
+from sonata.guard import GuardEvaluator
 from sonata.plan_handle import GuardStatus
 
 evaluator = GuardEvaluator()
 
-# 评估某个区域节点及其所有子孙的 Guard
-status = evaluator.evaluate_region(region_node, runtime_values)
+# evaluate_region 会递归收集 root + child[1] 的所有 guards
+# 总共 2 个 guards: [batch_size==32, seq_len==128]
 
-if status == GuardStatus.ALL_SATISFIED:
-    print("所有 Guard 满足，可以使用缓存")
-elif status == GuardStatus.PARTIAL_FAILED:
-    print("部分 soft guard 失效，需要更新 PlanHandle")
-elif status == GuardStatus.ALL_FAILED:
-    print("hard guard 失效，需要重新编译")</code></pre>
+runtime = {"batch_size": 32, "seq_len": 128}
+status = evaluator.evaluate_region(tree.root, runtime)
+# → GuardStatus.ALL_SATISFIED
 
-<p>短路逻辑：如果遇到 hard guard 失效，立即返回 <code>ALL_FAILED</code>，
-不再检查后续 Guard。</p>
+runtime_v2 = {"batch_size": 64, "seq_len": 128}
+status = evaluator.evaluate_region(tree.root, runtime_v2)
+# → GuardStatus.ALL_FAILED  (batch_size 是 hard guard，短路返回)
 
-<h2>提问：GuardSelector 是什么？怎么防止 over-guarding？</h2>
+runtime_v3 = {"batch_size": 32, "seq_len": 256}
+status = evaluator.evaluate_region(tree.root, runtime_v3)
+# → GuardStatus.PARTIAL_FAILED  (seq_len 是 soft guard，不短路)</code></pre>
 
-<p>如果一个图有 100 个参数，就会有 100 个 Guard。
-但 fingerprint 包含所有 Guard 的哈希，这意味着只要任何一个参数变化，
-fingerprint 就会变——缓存命中率极低。这叫做 <strong>over-guarding</strong>。</p>
+<div class="diagram">evaluate_region 递归过程:
 
-<p><code>GuardSelector</code> 从所有 Guard 中选出最重要的 Top-K：</p>
+  _collect(root):
+    root.score.shape_assumptions → [batch_size guard]
+    _collect(child[0]): no score → skip
+    _collect(child[1]):
+      child[1].score.shape_assumptions → [seq_len guard]
 
-<pre><code>from sonata.guard import EntryParamGuardSelector
+  guards = [batch_size==32 (hard), seq_len==128 (soft)]
 
-# 选择最重要的 10 个 Guard
-selector = EntryParamGuardSelector(top_k=10)
-critical_guards = selector.select(all_guards)
+  逐个评估:
+    batch_size==32, runtime=64 → False, action=REPLAN → return ALL_FAILED (短路!)
+    seq_len==128 → 不再检查</div>
 
-# 带优先级
+<h2>提问：GuardSelector 怎么防止 over-guarding？</h2>
+
+<p>一个 100 个参数的 IR 会产生 100 个 Guard。
+如果 fingerprint 包含所有 Guard 的哈希，任何一个参数变化都会使 fingerprint 失效——
+缓存命中率极低。这叫 <strong>over-guarding</strong>。</p>
+
+<pre><code>from sonata.guard import EntryParamGuardSelector, GuardEvaluator
+
+# 假设一个大图有 100 个 ShapeAssumption
+all_guards = score.shape_assumptions  # len = 100
+
+# 用 GuardSelector 只选最重要的 10 个
 selector = EntryParamGuardSelector(
-    top_k=5,
-    priority_symbols=("batch_size", "seq_len"),
+    top_k=10,
+    priority_symbols=("batch_size", "seq_len"),  # 这两个优先
 )
-selected = selector.select(all_guards)</code></pre>
+selected = selector.select(all_guards)
+# len(selected) = 10
+# batch_size 和 seq_len 排在最前面
 
-<p>也可以用 <code>select_region_guards()</code> 一步完成选择和密度检查：</p>
-
-<pre><code>from sonata.guard import GuardEvaluator
-
+# 或者用 evaluate_region 的集成版本
 evaluator = GuardEvaluator()
 selected = evaluator.select_region_guards(
     region_node,
     selector=EntryParamGuardSelector(top_k=10),
-    density_threshold=50,  # 超过 50 个 Guard 时发出警告
+    density_threshold=50,  # 超过 50 个 Guard 时发出 UserWarning
 )</code></pre>
 
-<h2>提问：InvalidateAction 有哪几种？</h2>
+<p><code>EntryParamGuardSelector</code> 的策略：</p>
+<ol>
+  <li>先选 <code>priority_symbols</code> 中的 Guard</li>
+  <li>再按原始顺序添加剩余 Guard</li>
+  <li>最后按 <code>top_k</code> 截断</li>
+</ol>
 
-<table>
-  <tr><th>Action</th><th>含义</th><th>触发条件</th></tr>
-  <tr><td><code>REPLAN</code></td><td>Score 和 PlanHandle 都失效，需要重新提取和编译</td><td>hard guard 失效</td></tr>
-  <tr><td><code>INVALIDATE_HANDLE</code></td><td>只失效 PlanHandle，Score 可重用</td><td>soft guard 失效</td></tr>
-  <tr><td><code>UPDATE_IN_PLACE</code></td><td>参数级更新，无需重建</td><td>（预留，当前未使用）</td></tr>
-</table>
+<h2>提问：InvalidateAction 和 GuardInvalidator 是什么？</h2>
 
-<h2>提问：GuardInvalidator 和 GuardEvaluator 有什么区别？</h2>
+<pre><code>from sonata.guard import GuardEvaluator, GuardInvalidator, InvalidateAction
 
-<pre><code># GuardEvaluator: 评估 Guard 是否满足
-satisfied, action = evaluator.evaluate(guard, runtime_values)
-# → 告诉你"是否满足"+"如果失效该怎么做"
-
-# GuardInvalidator: 决定失效策略
+evaluator = GuardEvaluator()
 invalidator = GuardInvalidator()
-action = invalidator.invalidate(guard, reason="shape changed")
-# → 告诉你"该执行什么恢复动作"
 
-# 批量决策
-results = evaluator.evaluate_all(guards, runtime_values)
-overall_action = invalidator.invalidate_all(results)
-# → 如果有 hard 失效 → REPLAN
-# → 只有 soft 失效 → INVALIDATE_HANDLE</code></pre>
+# 端到端流程
+runtime = {"batch_size": 64, "seq_len": 128}
+
+# 第一步：评估
+results = evaluator.evaluate_all(guards, runtime)
+# results = [(guard0, False, REPLAN), (guard1, True, INVALIDATE_HANDLE)]
+
+# 第二步：决策
+action = invalidator.invalidate_all(results)
+# → InvalidateAction.REPLAN（因为 guard0 是 hard 失效）
+
+# 第三步：执行
+if action == InvalidateAction.REPLAN:
+    # 重新提取 Score
+    new_score = check_static_eligibility(model).score
+elif action == InvalidateAction.INVALIDATE_HANDLE:
+    # 只重建 PlanHandle，复用 Score
+    new_handle = PlanHandle.from_score(score)</code></pre>
 
 <h2>提问：怎么自定义 Guard 类型？</h2>
 
@@ -215,16 +288,21 @@ class MemoryBudgetGuard(GuardCondition):
         base["budget_bytes"] = self.budget_bytes
         return base
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "MemoryBudgetGuard":
+        return cls(budget_bytes=data["budget_bytes"])
+
 # 使用
-guard = MemoryBudgetGuard(budget_bytes=1024 * 1024 * 512)  # 512 MB
-ok = guard.evaluate({"memory_used": 100 * 1024 * 1024})  # True</code></pre>
+guard = MemoryBudgetGuard(budget_bytes=512 * 1024 * 1024)  # 512 MB
+ok = guard.evaluate({"memory_used": 100 * 1024 * 1024})     # True
+ok = guard.evaluate({"memory_used": 600 * 1024 * 1024})     # False</code></pre>
 
 <div class="callout success">
   <strong>设计原则：</strong>
   <ul>
     <li>Guard 必须是 <code>frozen=True</code>（不可变）</li>
     <li><code>evaluate()</code> 必须是 O(1)</li>
-    <li>新增 Guard 类型只需实现 <code>evaluate()</code>，可选覆盖 <code>to_dict()</code> / <code>from_dict()</code></li>
+    <li>新增类型只需实现 <code>evaluate()</code>，可选覆盖 <code>to_dict()</code> / <code>from_dict()</code></li>
   </ul>
 </div>
 
