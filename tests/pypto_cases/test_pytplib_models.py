@@ -103,13 +103,12 @@ class TestPyPTOLibModels:
 
         result = sonata_analyze(certified, entry_name=name)
 
-        # Most LLM models use pl.spmd → no Orchestration → ineligible
-        if not result.eligible:
-            assert result.eligibility_result is not None
-            # Expected: entry_function_not_orchestration or control_flow_not_supported
-            assert len(result.fallback_reasons) > 0
+        # qwen3/14b and similar SPMD programs: eligible via region fallback
+        if result.eligible:
+            assert result.has_plan
+            assert len(result.region_statuses) >= 1
             return
 
-        # If eligible (unlikely for LLM models), verify plan structure
-        assert result.score is not None
-        assert result.has_plan
+        # Other models (no Orchestration, no SPMD fallback): correctly ineligible
+        assert result.eligibility_result is not None
+        assert len(result.fallback_reasons) > 0
