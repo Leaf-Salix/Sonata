@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 11 - Pipeline：一站式分析入口</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 11 - Pipeline：一站式分析入口</h1>
+
+<h2>提问：为什么需要 pipeline？</h2>
+
+<p>前面的教程介绍了 Sonata 的各个子系统：eligibility、regions、guards、memory plan、
+runtime adapter。在实际使用中，你需要依次调用这些模块，把它们的结果串联起来。</p>
+
+<p><code>pipeline.py</code> 把这些步骤封装成<strong>一个函数调用</strong>：</p>
+
+<div class="diagram">没有 pipeline 时（手动串联）：
+
+  elig = check_static_eligibility(ir, entry_name="fwd")
+  region_map = extract_regions(ir)
+  region_tree = build_region_tree(region_map)
+  region_elig = check_region_eligibility(ir)
+  plan_handle = PlanHandle.from_score(elig.score)
+  adapter = HostBuildGraphRuntimeAdapter()
+  result = adapter.generate_region_aware(elig.score, plan_handle, region_statuses=...)
+  # 6 步，需要了解每个模块的 API
+
+有 pipeline 时（一步到位）：
+
+  result = sonata_analyze(certified_ir, entry_name="fwd")
+  # 1 步，返回包含所有结果的 SonataAnalysisResult</code></pre></div>
+
+<h2>提问：sonata_analyze 怎么用？</h2>
+
+<pre><code>from sonata.pipeline import sonata_analyze
+
+# certified_ir 是 PyPTO pass pipeline 在 Simplify pass 之后的 IR dump
+result = sonata_analyze(certified_ir, entry_name="forward")
+
+if result.eligible:
+    print(f"Tasks: {result.task_count}")
+    print(f"Has plan: {result.has_plan}")
+
+    # 访问 Score
+    score = result.score
+    print(f"Dependencies: {len(score.dependencies)}")
+
+    # 访问 RegionTree
+    rt = result.region_tree
+    print(f"Static ratio: {rt.static_ratio:.0%}")
+
+    # 访问 HostBuildGraphPlan
+    plan = result.host_build_graph_plan
+    for task in plan.tasks:
+        print(f"  Task {task.task_id}: {task.name} ({task.core_type})")
+else:
+    for reason in result.fallback_reasons:
+        print(f"[{reason.code}] {reason.message}")</code></pre>
+
+<h2>提问：SonataAnalysisResult 包含什么？</h2>
+
+<pre><code>@dataclass(frozen=True)
+class SonataAnalysisResult:
+    # Eligibility
+    eligible: bool
+    score: Score | None = None
+    eligibility_result: EligibilityResult | None = None
+
+    # Region analysis
+    region_tree: RegionTree | None = None
+    region_eligibility: EligibilityResult | None = None
+
+    # Runtime plan
+    plan_handle: PlanHandle | None = None
+    host_build_graph_plan: HostBuildGraphPlan | None = None
+    adapter_result: RuntimeAdapterResult | None = None
+
+    # Metadata
+    region_statuses: dict[str, str] = field(default_factory=dict)
+    fallback_reasons: tuple[Any, ...] = ()</code></pre>
+
+<table>
+  <tr><th>字段</th><th>eligible=True 时</th><th>eligible=False 时</th></tr>
+  <tr><td><code>score</code></td><td>提取的 Score</td><td>None</td></tr>
+  <tr><td><code>region_tree</code></td><td>RegionTree（层次化区域）</td><td>None</td></tr>
+  <tr><td><code>plan_handle</code></td><td>PlanHandle（运行时绑定）</td><td>None</td></tr>
+  <tr><td><code>host_build_graph_plan</code></td><td>HostBuildGraphPlan（最终执行计划）</td><td>None</td></tr>
+  <tr><td><code>fallback_reasons</code></td><td>空</td><td>拒绝原因列表</td></tr>
+</table>
+
+<h2>提问：sonata_analyze 内部做了什么？</h2>
+
+<div class="diagram">sonata_analyze(certified_ir) 内部流程:
+
+  Step 1: check_static_eligibility(ir)
+    ├─ eligible → 继续
+    └─ not eligible → 返回 SonataAnalysisResult(eligible=False)
+
+  Step 2: extract_regions(ir) → region_map
+          build_region_tree(region_map) → region_tree
+          check_region_eligibility(ir) → region_statuses
+
+  Step 3: PlanHandle.from_score(score)
+
+  Step 4: HostBuildGraphRuntimeAdapter().generate_region_aware(
+              score, plan_handle, region_statuses=region_statuses)
+    ├─ success → host_build_graph_plan
+    └─ failure → host_build_graph_plan = None
+
+  返回 SonataAnalysisResult(eligible=True, ...)</code></pre>
+
+<h2>提问：sonata_compile 是什么？</h2>
+
+<p><code>sonata_compile()</code> 把 PyPTO 编译和 Sonata 分析合在一起：</p>
+
+<pre><code>from sonata.pipeline import sonata_compile
+
+# program 是 @pl.program 装饰的类
+compiled, result = sonata_compile(program, output_dir="./output", entry_name="forward")
+
+if result.eligible:
+    print(f"Plan: {result.task_count} tasks")
+    # sonata_plan.json 已自动写入 output_dir</code></pre>
+
+<p>内部流程：</p>
+<ol>
+  <li>调用 <code>pypto.ir.compile(program)</code> 编译</li>
+  <li>运行 PyPTO pass pipeline，在 Simplify pass 之后提取 certified IR</li>
+  <li>调用 <code>sonata_analyze(certified_ir)</code></li>
+  <li>如果 eligible，将 <code>sonata_plan.json</code> 写入编译产物目录</li>
+</ol>
+
+<div class="callout warn">
+  <strong>注意：</strong><code>sonata_compile</code> 依赖 PyPTO 的 <code>pypto.ir</code>、
+  <code>pypto.backend</code>、<code>pypto_core.passes</code> 等模块。
+  在纯 Sonata 环境中（没有 PyPTO C++ bindings）无法使用。
+  纯测试用 <code>sonata_analyze</code> 即可。
+</div>
+
+<h2>提问：execute_with_sonata 是什么？</h2>
+
+<p><code>execute_with_sonata()</code> 是运行时执行的包装器——在执行编译产物前，
+先读取 <code>sonata_plan.json</code>：</p>
+
+<pre><code>from sonata.pipeline import execute_with_sonata
+
+execute_result, sonata_plan = execute_with_sonata("./output", *inputs)
+
+if sonata_plan is not None:
+    print(f"Sonata plan: eligible={sonata_plan.eligible}, tasks={sonata_plan.task_count}")
+else:
+    print("No Sonata plan found, using default runtime")</code></pre>
+
+<p>向后兼容：如果 <code>output_dir</code> 里没有 <code>sonata_plan.json</code>，
+<code>sonata_plan</code> 返回 None，执行照常进行。</p>
+
+<h2>提问：sonata_plan.json 的格式是什么？</h2>
+
+<pre><code>{
+  "schema_version": 1,
+  "eligible": true,
+  "task_count": 5,
+  "region_statuses": {
+    "region_0": "static",
+    "region_1": "dynamic",
+    "region_2": "static"
+  },
+  "score": { ... },
+  "plan_handle": { ... },
+  "host_build_graph_plan": {
+    "tasks": [
+      {"task_id": 0, "func_id": 0, "core_type": "aic", "name": "matmul"},
+      {"task_id": 1, "func_id": 1, "core_type": "aiv", "name": "add"}
+    ],
+    "edges": [
+      {"producer": 0, "consumer": 1}
+    ],
+    "metadata": { ... }
+  },
+  "fallback_reasons": []
+}</code></pre>
+
+<p>用 <code>load_sonata_plan()</code> 反序列化：</p>
+
+<pre><code>from sonata.pipeline import load_sonata_plan
+
+plan = load_sonata_plan("./output")  # 自动找 sonata_plan.json
+if plan is not None:
+    print(plan.task_count)</code></pre>
+
+<div class="callout info">
+  <strong>注意：</strong>当前 <code>load_sonata_plan</code> 只恢复基本字段
+  （eligible 和 region_statuses），不恢复 score/plan_handle/host_build_graph_plan。
+  完整反序列化将在后续版本实现。
+</div>
+
+<h2>提问：完整的端到端流程是什么？</h2>
+
+<div class="diagram">PyPTO 编译 + Sonata 分析 + 运行时执行:
+
+  ┌─────────────────────────────────────┐
+  │  @pl.program                        │
+  │  class MyModel: ...                 │
+  └──────────┬──────────────────────────┘
+             │
+             ▼
+  ┌─────────────────────────────────────┐
+  │  sonata_compile(program, output_dir)│
+  │    ├─ pypto.ir.compile()            │
+  │    ├─ Pass pipeline → Simplify      │
+  │    ├─ sonata_analyze(certified_ir)  │
+  │    └─ write sonata_plan.json        │
+  └──────────┬──────────────────────────┘
+             │
+             ▼
+  ┌─────────────────────────────────────┐
+  │  output_dir/                        │
+  │    ├─ kernel_config.py              │
+  │    ├─ sonata_plan.json  ← Sonata   │
+  │    └─ ...                           │
+  └──────────┬──────────────────────────┘
+             │
+             ▼
+  ┌─────────────────────────────────────┐
+  │  execute_with_sonata(output_dir)    │
+  │    ├─ load sonata_plan.json         │
+  │    └─ execute_compiled()            │
+  └─────────────────────────────────────┘</code></pre>
+
+<div class="callout success">
+  <strong>总结：</strong><code>pipeline.py</code> 是 Sonata 的顶层入口。
+  <code>sonata_analyze</code> 适合测试和验证；
+  <code>sonata_compile</code> 适合 PyPTO 集成；
+  <code>execute_with_sonata</code> 适合运行时执行。
+  三者配合 <code>sonata_plan.json</code> 形成完整的编译→执行链路。
+</div>
+
+<div class="nav">
+  <a href="10-memory-planning.html"><span class="arrow">&larr;</span> 上一篇：内存规划与约束求解</a>
+  &nbsp;|&nbsp;
+  <a href="deep-01-score-model.html">Deep Dive：score.py 完整解析 &rarr;</a>
+</div>
+
+</body>
+</html>
