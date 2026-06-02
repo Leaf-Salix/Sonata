@@ -138,24 +138,24 @@ def test_score_validate_rejects_unknown_dependency_target():
 <table>
   <tr><th>限制</th><th>影响</th><th>缓解/计划</th></tr>
   <tr>
-    <td>无端到端性能数据</td>
+    <td>❌ 无端到端性能数据</td>
     <td>虽有 benchmark 基线，但未在真实 NPU 上跑端到端</td>
-    <td>v0.12+ 真机 benchmark</td>
+    <td>v0.13+ 真机 benchmark</td>
   </tr>
   <tr>
-    <td>ILP/CP 求解器未接入</td>
+    <td>❌ ILP/CP 求解器未接入</td>
     <td>内存规划只有贪心策略，对大图不是最优</td>
-    <td>ConstraintSolver 接口已预留，v0.12+ 接入</td>
+    <td>⚠️ ConstraintSolver ABC 已定义，GreedySolver 已实现，ILP/CP 实现留给 v0.13+</td>
   </tr>
   <tr>
-    <td>Group/Spmd 不支持</td>
+    <td>❌ Group/Spmd 不支持</td>
     <td>PyPTO 的 Group/Spmd 函数会展开成多个 task，Sonata 只按 Call 提取一个</td>
     <td>后续版本扩展</td>
   </tr>
   <tr>
-    <td>per-region Score 提取为 placeholder</td>
-    <td>check_region_eligibility 中的 per-region Score 目前是空占位</td>
-    <td>v0.12+ 接入真实提取</td>
+    <td>⚠️ per-region Score 提取为 placeholder</td>
+    <td>check_region_eligibility 中的 per-region Score 目前是空占位（空 tasks/dependencies）</td>
+    <td>❌ 尚未实现真实提取，v0.13+ 规划</td>
   </tr>
 </table>
 

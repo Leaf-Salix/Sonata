@@ -211,10 +211,13 @@ plan = load_sonata_plan("./output")  # 自动找 sonata_plan.json
 if plan is not None:
     print(plan.task_count)</code></pre>
 
-<div class="callout info">
-  <strong>注意：</strong>当前 <code>load_sonata_plan</code> 只恢复基本字段
-  （eligible 和 region_statuses），不恢复 score/plan_handle/host_build_graph_plan。
-  完整反序列化将在后续版本实现。
+<div class="callout warn">
+  <strong>⚠️ 部分实现：</strong>当前 <code>load_sonata_plan</code> 只恢复基本字段
+  （eligible 和 region_statuses），<strong>不恢复</strong> score、plan_handle、host_build_graph_plan。
+  完整反序列化属于 v0.13+ 规划。
+  <br><br>
+  <code>to_dict()</code> / <code>save()</code> 已完整实现（✅），
+  输出的 JSON 包含所有字段。但反向的 <code>load</code> 只读取部分字段。
 </div>
 
 <h2>提问：完整的端到端流程是什么？</h2>

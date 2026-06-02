@@ -358,13 +358,16 @@ all_children = [D1, D2, S3{D4}, S5]
      static_region_count, dynamic_region_count,
      static_ratio, static_subtrees, region_statuses</code></pre>
 
-<h3>per_region_scores 是 placeholder</h3>
+<h3>⚠️ per_region_scores 是 placeholder（未实现）</h3>
 
 <div class="callout warn">
-  <strong>当前限制：</strong>per_region_scores 中的 Score 是空的
+  <strong>❌ 未实现：</strong>per_region_scores 中的 Score 是空的
   （tasks=(), dependencies=(), shape_assumptions=()）。
   真正的 per-region Score 提取需要从 IR 的子图中独立提取，
-  这在当前版本尚未实现。metadata 结构已就绪，等待后续版本填充。
+  <strong>当前版本未实现</strong>。metadata 结构已就绪（✅），等待 v0.13+ 填充。
+  <br><br>
+  这意味着 <code>check_region_eligibility</code> 返回的 <code>result.score</code> 为 None，
+  应通过 <code>result.metadata['region_tree']</code> 获取区域信息。
 </div>
 
 <h2>Per-Region Cache 函数（v0.11 Phase 1 C）</h2>

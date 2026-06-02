@@ -258,8 +258,10 @@ if result.eligible:
         print(f"{key}: {score.name}")</code></pre>
 
 <div class="callout warn">
-  <strong>注意：</strong><code>per_region_scores</code> 中的 Score 目前是 placeholder
-  （空的 tasks/dependencies）。真正的 per-region Score 提取将在后续版本实现。
+  <strong>⚠️ 部分实现：</strong><code>per_region_scores</code> 中的 Score 目前是 placeholder
+  （空的 tasks/dependencies/shape_assumptions）。
+  真正的 per-region Score 提取（从 IR 子图独立提取）<strong>尚未实现</strong>，
+  属于 v0.13+ 规划。metadata 结构已就绪，等待后续填充。
 </div>
 
 <div class="nav">

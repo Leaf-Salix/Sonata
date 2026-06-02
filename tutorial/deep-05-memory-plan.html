@@ -313,7 +313,7 @@ buf_a 和 buf_c 生命周期重叠，stream 相同 → 冲突</code></pre>
             "Consider using static shapes or enabling runtime shape inference."
         )</code></pre>
 
-<p>当 buffer 大小依赖运行时符号时抛出。当前代码中未被使用（预留）。</p>
+<p>当 buffer 大小依赖运行时符号时抛出。⚠️ 已定义并有单元测试覆盖，但当前生产代码中<strong>未被触发</strong>——没有代码路径主动检查动态形状并抛出此异常。留给未来接入 ILP/CP 求解器时使用。</p>
 
 <h2>solve_memory — 带超时的求解入口（v0.11）</h2>
 
