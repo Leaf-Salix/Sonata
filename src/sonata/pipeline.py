@@ -431,12 +431,16 @@ def execute_with_sonata(
 
         # Influence runtime parameters based on analysis
         if plan.task_count > 0 and "block_dim" not in kwargs:
-            suggested_block_dim = min(plan.task_count, 32)
-            kwargs["block_dim"] = suggested_block_dim
-            _region_log.info(
-                "[SONATA] Setting block_dim=%d (from %d tasks)",
-                suggested_block_dim, plan.task_count,
-            )
+            instructions = compute_scheduling_instructions(dispatch)
+            if instructions:
+                # Use the first instruction's block_dim
+                # (for single-region programs this is the optimized value)
+                suggested_block_dim = instructions[0].block_dim
+                kwargs["block_dim"] = suggested_block_dim
+                _region_log.info(
+                    "[SONATA] Setting block_dim=%d (%s)",
+                    suggested_block_dim, instructions[0].reason,
+                )
 
     execute_compiled(work_dir, *args, **kwargs)
     return None, plan
