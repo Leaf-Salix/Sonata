@@ -37,6 +37,9 @@ log = logging.getLogger("sonata.st_runner")
 # Session-level results collector for B2 summary report
 _session_results: list[dict[str, Any]] = []
 
+# Cache: program id → sonata result dict (avoids double pipeline replay)
+_analysis_cache: dict[int, dict[str, Any]] = {}
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
@@ -103,47 +106,58 @@ def _run_sonata_analysis(program: Any, entry_name: str) -> dict[str, Any] | None
 
 
 def _make_patched_compile(original_compile):
-    """Wrap compile_program to run Sonata analysis after compilation."""
+    """Wrap compile_program to run Sonata analysis after compilation.
+
+    Uses cached analysis from pytest_runtest_setup when available,
+    avoiding a second pipeline replay.
+    """
     @functools.wraps(original_compile)
     def patched_compile(program, work_dir, **kwargs):
         result = original_compile(program, work_dir, **kwargs)
         log.info("[SONATA] compile_program completed, work_dir=%s", work_dir)
         try:
-            from sonata.pipeline import sonata_analyze
-            from pypto.backend import BackendType, is_backend_configured, set_backend_type
-            from pypto.ir.pass_manager import OptimizationStrategy, PassManager
-            from pypto.pypto_core import passes as _core_passes
+            prog_id = id(program)
+            cached = _analysis_cache.get(prog_id)
 
-            if not is_backend_configured():
-                set_backend_type(BackendType.Ascend910B)
+            if cached is None:
+                # Fallback: run analysis if not cached from setup
+                from sonata.pipeline import sonata_analyze
+                from pypto.backend import BackendType, is_backend_configured, set_backend_type
+                from pypto.ir.pass_manager import OptimizationStrategy, PassManager
+                from pypto.pypto_core import passes as _core_passes
 
-            with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
-                mgr = PassManager.get_strategy(OptimizationStrategy.Default)
-                cur = program
-                after_ccg = False
-                certified_ir = None
-                for pn, po in zip(mgr.pass_names, mgr.passes):
-                    cur = po(cur)
-                    if pn == "CollectCommGroups":
-                        after_ccg = True
-                    elif after_ccg and pn == "Simplify":
-                        certified_ir = cur
-                        break
+                if not is_backend_configured():
+                    set_backend_type(BackendType.Ascend910B)
 
-            if certified_ir is not None:
-                sonata_result = sonata_analyze(certified_ir, entry_name=Path(str(work_dir)).name)
-                if sonata_result.eligible:
-                    plan_path = sonata_result.save(Path(str(work_dir)) / "sonata_plan.json")
-                    log.info("[SONATA] sonata_plan.json written: %s", plan_path)
-                    # Also save to persistent location (temp dirs get cleaned up)
-                    persistent_dir = Path(__file__).resolve().parents[2] / "build" / "sonata_plans"
-                    persistent_dir.mkdir(parents=True, exist_ok=True)
-                    persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
-                    log.info("[SONATA] persistent copy: %s", persistent_path)
+                with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+                    mgr = PassManager.get_strategy(OptimizationStrategy.Default)
+                    cur = program
+                    after_ccg = False
+                    certified_ir = None
+                    for pn, po in zip(mgr.pass_names, mgr.passes):
+                        cur = po(cur)
+                        if pn == "CollectCommGroups":
+                            after_ccg = True
+                        elif after_ccg and pn == "Simplify":
+                            certified_ir = cur
+                            break
+
+                if certified_ir is not None:
+                    sonata_result = sonata_analyze(certified_ir, entry_name=Path(str(work_dir)).name)
                 else:
-                    log.info("[SONATA] analysis: not eligible")
+                    sonata_result = None
             else:
-                log.info("[SONATA] no certified IR found in pipeline")
+                sonata_result = cached.get("result_obj")
+
+            if sonata_result is not None and sonata_result.eligible:
+                plan_path = sonata_result.save(Path(str(work_dir)) / "sonata_plan.json")
+                log.info("[SONATA] sonata_plan.json written: %s", plan_path)
+                persistent_dir = Path(__file__).resolve().parents[2] / "build" / "sonata_plans"
+                persistent_dir.mkdir(parents=True, exist_ok=True)
+                persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
+                log.info("[SONATA] persistent copy: %s", persistent_path)
+            else:
+                log.info("[SONATA] analysis: not eligible or not available")
         except Exception as e:
             log.warning("[SONATA] compile-time analysis failed: %s", e, exc_info=True)
 
@@ -185,6 +199,11 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     verbose = not item.config.getoption("quiet", default=False)
 
     analysis = _run_sonata_analysis(program, entry_name=test_name)
+
+    # Cache for compile hook to reuse (avoids second pipeline replay)
+    if analysis is not None and "error" not in analysis:
+        _analysis_cache[id(program)] = analysis
+
     if analysis is None or "error" in analysis:
         _session_results.append({"test": test_name, "status": "error", "error": analysis.get("error", "unknown") if analysis else "no analysis"})
         return
