@@ -332,36 +332,55 @@ def sonata_compile(
 def execute_with_sonata(
     work_dir: str | Path,
     *args: Any,
+    runtime_values: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> tuple[Any, SonataAnalysisResult | None]:
     """Execute a compiled program with Sonata plan awareness.
 
-    v0.12 Phase 1 B2: Wrapper around ``pypto.runtime.execute_compiled``
-    that reads the Sonata plan from *work_dir* before execution and
-    returns it alongside the execution result.
+    Before execution:
+    1. Reads sonata_plan.json from work_dir
+    2. Runs guard checks against runtime_values (if provided)
+    3. Runs region dispatch to determine execution strategy
+    4. Logs decisions
+    5. Executes via pypto.runtime.execute_compiled
 
-    If no ``sonata_plan.json`` exists in *work_dir*, the plan is None
-    and execution proceeds normally (backward compatible).
+    Does NOT modify simpler runtime code. All analysis is pre-execution.
 
     Args:
-        work_dir: Compiled artifacts directory (contains ``kernel_config.py``
-            and optionally ``sonata_plan.json``).
+        work_dir: Compiled artifacts directory.
+        runtime_values: Tensor shapes/values for guard checking.
         *args, **kwargs: Forwarded to ``pypto.runtime.execute_compiled``.
 
     Returns:
-        ``(execute_result, sonata_plan)``.
+        ``(execute_result, sonata_result)``.
     """
     from pypto.runtime.runner import execute_compiled
 
     plan = load_sonata_plan(work_dir)
 
-    if plan is not None:
-        import logging
-        log = logging.getLogger("sonata")
-        log.info(
-            "Sonata plan loaded: eligible=%s, tasks=%d, regions=%s",
+    if plan is not None and plan.eligible:
+        _region_log.info(
+            "[SONATA] Plan loaded: eligible=%s, tasks=%d, regions=%s",
             plan.eligible, plan.task_count, list(plan.region_statuses.keys()),
         )
+
+        # Pre-execution: guard check
+        if runtime_values and plan.score is not None:
+            guard_results = check_guards_at_runtime(plan, runtime_values)
+            for gr in guard_results:
+                if gr.guard_status != "all_satisfied":
+                    _region_log.warning(
+                        "[SONATA] Guard violation: %s — %s (violated: %s)",
+                        gr.region_id, gr.guard_status, gr.violated_guards,
+                    )
+
+        # Pre-execution: region dispatch
+        dispatch = dispatch_regions(plan)
+        if dispatch.has_fallbacks:
+            _region_log.info(
+                "[SONATA] Dispatch: %d optimized, %d fallback, %d mixed",
+                dispatch.optimized_count, dispatch.fallback_count, dispatch.mixed_count,
+            )
 
     execute_compiled(work_dir, *args, **kwargs)
     return None, plan

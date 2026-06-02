@@ -156,6 +156,14 @@ def _make_patched_compile(original_compile):
                 persistent_dir.mkdir(parents=True, exist_ok=True)
                 persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
                 log.info("[SONATA] persistent copy: %s", persistent_path)
+
+                # Run region dispatch (informational — no runtime modification)
+                from sonata.pipeline import dispatch_regions
+                dispatch = dispatch_regions(sonata_result)
+                log.info(
+                    "[SONATA] dispatch: %d optimized, %d fallback, %d mixed",
+                    dispatch.optimized_count, dispatch.fallback_count, dispatch.mixed_count,
+                )
             else:
                 log.info("[SONATA] analysis: not eligible or not available")
         except Exception as e:
