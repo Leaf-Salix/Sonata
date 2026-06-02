@@ -33,6 +33,45 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Module-level certified IR cache: program id → certified IR
+# Avoids re-running the pass pipeline when the same program is analyzed
+# multiple times (e.g. in sonata_compile + standalone analysis).
+_certified_ir_cache: dict[int, Any] = {}
+
+
+def _extract_certified_ir(program: object) -> Any | None:
+    """Extract certified IR (post-Simplify) from a program.
+
+    Uses a module-level cache keyed by program id to avoid re-running
+    the pass pipeline for the same program.
+    """
+    prog_id = id(program)
+    if prog_id in _certified_ir_cache:
+        return _certified_ir_cache[prog_id]
+
+    from pypto.ir.pass_manager import OptimizationStrategy, PassManager
+    from pypto.pypto_core import passes as _core_passes
+    from pypto.backend import BackendType, is_backend_configured, set_backend_type
+
+    if not is_backend_configured():
+        set_backend_type(BackendType.Ascend910B)
+
+    certified_ir = None
+    with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+        manager = PassManager.get_strategy(OptimizationStrategy.Default)
+        current = program
+        after_ccg = False
+        for pname, pobj in zip(manager.pass_names, manager.passes):
+            current = pobj(current)
+            if pname == "CollectCommGroups":
+                after_ccg = True
+            elif after_ccg and pname == "Simplify":
+                certified_ir = current
+                break
+
+    _certified_ir_cache[prog_id] = certified_ir
+    return certified_ir
+
 from .eligibility import check_static_eligibility
 from .plan_handle import PlanHandle
 from .pypto_adapter import DEFAULT_CERTIFIED_DUMP, PostSimplifyPyPTOInputAdapter
@@ -272,25 +311,8 @@ def sonata_compile(
 
     compiled = _ir.compile(program, output_dir=output_dir)
 
-    # Re-run pass pipeline to extract certified IR for Sonata analysis.
-    # TODO(v0.13): eliminate this second pipeline run via dump_passes or
-    # PassContext instrument once C++ Pass object exposes its name.
-    from pypto.backend import BackendType, is_backend_configured, set_backend_type
-    if not is_backend_configured():
-        set_backend_type(BackendType.Ascend910B)
-
-    certified_ir = None
-    with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
-        manager = PassManager.get_strategy(OptimizationStrategy.Default)
-        current = program
-        after_ccg = False
-        for pname, pobj in zip(manager.pass_names, manager.passes):
-            current = pobj(current)
-            if pname == "CollectCommGroups":
-                after_ccg = True
-            elif after_ccg and pname == "Simplify":
-                certified_ir = current
-                break
+    # Extract certified IR using cached helper (avoids pipeline replay)
+    certified_ir = _extract_certified_ir(program)
 
     if certified_ir is None:
         return compiled, SonataAnalysisResult(eligible=False)
