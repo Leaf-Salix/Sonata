@@ -226,3 +226,33 @@ class TestSonataPipeline:
 
         assert result.host_build_graph_plan is not None
         assert result.host_build_graph_plan.task_count() == len(result.score.tasks)
+
+    def test_sonata_analyze_upstream_ops(self):
+        """sonata_analyze works on real upstream PyPTO operator programs."""
+        import importlib.util
+        from pathlib import Path
+        from sonata.pipeline import sonata_analyze
+
+        _UPSTREAM = Path(__file__).resolve().parents[2] / "upstream" / "pypto"
+
+        def _load_program(module_name: str, rel_path: str, attr: str):
+            path = _UPSTREAM / rel_path
+            spec = importlib.util.spec_from_file_location(module_name, str(path))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return getattr(mod, attr)
+
+        ops = [
+            ("tile_abs", "tests/st/runtime/ops/test_abs.py", "TileAbsProgram"),
+            ("tile_cast", "tests/st/runtime/ops/test_cast.py", "TileCastRowMajorNarrowProgram"),
+        ]
+
+        for name, rel_path, attr in ops:
+            program = _load_program(f"pypto_st_{name}", rel_path, attr)
+            certified = _compile_to_certified_dump(program)
+            result = sonata_analyze(certified, entry_name=name)
+
+            assert result.eligible, f"{name} should be eligible"
+            assert result.score is not None
+            assert result.has_plan, f"{name} should produce a plan"
+            assert result.task_count >= 1, f"{name} should have >= 1 task"
