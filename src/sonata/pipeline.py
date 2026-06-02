@@ -351,6 +351,7 @@ class RegionDispatchResult:
     status: str  # "static", "dynamic", "mixed"
     action: str  # "optimized", "fallback", "mixed"
     fallback_reason: str | None = None
+    dependency_kinds: tuple[str, ...] = ()  # DependencyKind values for this region
 
 
 @dataclass(frozen=True)
@@ -394,6 +395,13 @@ def dispatch_regions(
     """
     results: list[RegionDispatchResult] = []
 
+    # Extract dependency kinds from score for dispatch context
+    dep_kinds: set[str] = set()
+    if sonata_result.score is not None:
+        for dep in sonata_result.score.dependencies:
+            kind_val = getattr(dep.kind, 'value', dep.kind)
+            dep_kinds.add(kind_val)
+
     for region_id, status in sonata_result.region_statuses.items():
         if status == "static":
             action = "optimized"
@@ -410,6 +418,7 @@ def dispatch_regions(
             status=status,
             action=action,
             fallback_reason=reason,
+            dependency_kinds=tuple(sorted(dep_kinds)),
         ))
 
         if verbose:

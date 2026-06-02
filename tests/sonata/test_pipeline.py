@@ -132,6 +132,23 @@ class TestDispatchRegions:
         assert result.action == "fallback"
         assert "dynamic" in result.fallback_reason
 
+    def test_dispatch_includes_dependency_kinds(self):
+        """Dispatch results include dependency kinds from score."""
+        from sonata.score import Dependency, DependencyKind
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(),
+            dependencies=(
+                Dependency(producer=0, consumer=1, kind=DependencyKind.DATA),
+                Dependency(producer=1, consumer=2, kind=DependencyKind.WAR),
+            ),
+            shape_assumptions=(),
+        )
+        r = SonataAnalysisResult(eligible=True, score=score, region_statuses={"r0": "static"})
+        plan = dispatch_regions(r)
+        assert "data" in plan.results[0].dependency_kinds
+        assert "war" in plan.results[0].dependency_kinds
+
 
 # --- check_guards_at_runtime ---
 
