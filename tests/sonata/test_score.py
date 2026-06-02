@@ -371,5 +371,46 @@ class TestIsStaticShapeDim:
         assert is_static_shape_dim(None) is False
 
 
+class TestTaskMultiOutput:
+    """Tests for Task.outputs field (v0.11 Phase 3 A1-A3)."""
+
+    def test_task_multi_output_construction(self):
+        """Task with multiple outputs stores them correctly."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=1, core_type="aicore",
+                 outputs=("buf_0", "buf_1", "buf_2"))
+        assert t.outputs == ("buf_0", "buf_1", "buf_2")
+
+    def test_task_single_output(self):
+        """Single-output task works as before."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=1, core_type="aicore",
+                 outputs=("buf_0",))
+        assert t.outputs == ("buf_0",)
+
+    def test_task_outputs_backward_compat(self):
+        """Old Task without outputs gets empty tuple (default)."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=1, core_type="aicore")
+        assert t.outputs == ()
+
+    def test_task_outputs_roundtrip(self):
+        """outputs survives serialization -> deserialization."""
+        from sonata.score import Task, Score, RuntimeTarget
+        from sonata.serialization import score_to_dict
+        from sonata.deserialization import score_from_dict
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="f", aicpu_thread_num=1)
+        task = Task(task_id=0, func_id=1, core_type="aicore",
+                    outputs=("out_a", "out_b"))
+        score = Score(name="test", runtime_target=rt, tasks=(task,),
+                      dependencies=(), shape_assumptions=())
+        data = score_to_dict(score)
+        assert data["tasks"][0]["outputs"] == ["out_a", "out_b"]
+
+        restored = score_from_dict(data)
+        assert restored.tasks[0].outputs == ("out_a", "out_b")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

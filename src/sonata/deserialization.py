@@ -164,6 +164,7 @@ def _tasks_from_list(items: Any) -> tuple[Task, ...]:
             arg_directions=tuple(item.get("arg_directions", ())),
             arg_storage_keys=tuple(item.get("arg_storage_keys", ())),
             name=item.get("name"),
+            outputs=tuple(item.get("outputs", ())),
         ))
     return tuple(result)
 

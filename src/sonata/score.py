@@ -48,6 +48,8 @@ class Task:
     arg_directions: tuple[str, ...] = ()
     arg_storage_keys: tuple[Any | None, ...] = ()
     name: str | None = None
+    # v0.11 Phase 3 A1: Multi-output support
+    outputs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

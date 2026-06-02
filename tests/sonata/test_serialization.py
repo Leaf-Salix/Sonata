@@ -129,6 +129,7 @@ def test_score_to_json_matches_v1_golden_schema() -> None:
       "core_type": "aiv",
       "func_id": 1,
       "name": "kernel.add",
+      "outputs": [],
       "task_id": 0
     }
   ]
