@@ -144,3 +144,27 @@ class TestRealIRToHostBuildGraph:
         # Simple straight-line program should be all static
         assert len(region_map.regions) >= 1
         assert all(r.is_static for r in region_map.regions)
+
+    def test_multi_kernel_full_pipeline(self):
+        """Multi-kernel program: eligibility, region, and plan all work."""
+        from sonata.regions import check_region_eligibility
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = check_static_eligibility(
+            certified,
+            runtime_target=RuntimeTarget(runtime="host_build_graph", function_name="test"),
+        )
+        assert result.eligible
+        assert len(result.score.tasks) >= 1
+
+        # Region eligibility
+        region_result = check_region_eligibility(certified)
+        assert region_result.eligible
+        assert "region_0" in region_result.metadata["region_statuses"]
+
+        # HostBuildGraphPlan
+        plan_handle = PlanHandle.from_score(result.score, source_adapter=DEFAULT_CERTIFIED_DUMP)
+        rt_adapter = HostBuildGraphRuntimeAdapter()
+        rt_result = rt_adapter.generate(result.score, plan_handle)
+        assert rt_result.success
+        assert rt_result.plan.task_count() == len(result.score.tasks)
