@@ -559,7 +559,7 @@ def test_g2_certified_multi_root_score_namespaces_storage_keys() -> None:
         ),
     ]
     assert data["dependencies"] == []
-    assert score_fingerprint(score) == "341463dfcdf15e068c0406176b4fb8c9d0704d9e384f4cfb957bd1820f1cc4e2"
+    assert score_fingerprint(score) == "94a3c13f8db031c48bc38e8ec619fd0d90f33c3e52ee3838c0eba253353da38e"
 
 
 def test_static_eligibility_falls_back_when_dataflow_direction_data_is_missing() -> None:
