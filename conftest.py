@@ -22,3 +22,8 @@ def pytest_addoption(parser):
 def pytest_runtest_setup(item):
     if _mod is not None:
         _mod.pytest_runtest_setup(item)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _mod is not None and hasattr(_mod, "pytest_sessionfinish"):
+        _mod.pytest_sessionfinish(session, exitstatus)

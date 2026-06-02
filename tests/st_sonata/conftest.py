@@ -34,6 +34,9 @@ import pytest
 
 log = logging.getLogger("sonata.st_runner")
 
+# Session-level results collector for B2 summary report
+_session_results: list[dict[str, Any]] = []
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
@@ -183,12 +186,26 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
     analysis = _run_sonata_analysis(program, entry_name=test_name)
     if analysis is None or "error" in analysis:
+        _session_results.append({"test": test_name, "status": "error", "error": analysis.get("error", "unknown") if analysis else "no analysis"})
         return
 
+    regions = analysis.get("region_statuses", {})
+    sc = sum(1 for v in regions.values() if v == "static")
+    dc = sum(1 for v in regions.values() if v == "dynamic")
+
+    _session_results.append({
+        "test": test_name,
+        "status": "analyzed",
+        "eligible": analysis["eligible"],
+        "task_count": analysis["task_count"],
+        "region_count": len(regions),
+        "static_regions": sc,
+        "dynamic_regions": dc,
+        "has_plan": analysis.get("has_plan", False),
+    })
+
+    verbose = not item.config.getoption("quiet", default=False)
     if verbose:
-        regions = analysis.get("region_statuses", {})
-        sc = sum(1 for v in regions.values() if v == "static")
-        dc = sum(1 for v in regions.values() if v == "dynamic")
         msg = (
             f"[SONATA] {test_name}: eligible={analysis['eligible']}, "
             f"tasks={analysis['task_count']}, "
@@ -197,3 +214,35 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         if analysis.get("has_plan"):
             msg += ", plan=generated"
         warnings.warn(msg, stacklevel=1)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Print Sonata analysis summary report at end of session."""
+    if not session.config.getoption("--with-sonata", default=False):
+        return
+    if not _session_results:
+        return
+
+    analyzed = [r for r in _session_results if r["status"] == "analyzed"]
+    errors = [r for r in _session_results if r["status"] == "error"]
+    eligible = [r for r in analyzed if r.get("eligible")]
+    with_plan = [r for r in analyzed if r.get("has_plan")]
+
+    total_tasks = sum(r.get("task_count", 0) for r in analyzed)
+    total_static = sum(r.get("static_regions", 0) for r in analyzed)
+    total_dynamic = sum(r.get("dynamic_regions", 0) for r in analyzed)
+
+    print("\n" + "=" * 60)
+    print("SONATA ANALYSIS SUMMARY")
+    print("=" * 60)
+    print(f"  Tests analyzed:    {len(analyzed)}")
+    print(f"  Eligible:          {len(eligible)}/{len(analyzed)}")
+    print(f"  Plans generated:   {len(with_plan)}/{len(analyzed)}")
+    print(f"  Errors:            {len(errors)}")
+    print(f"  Total tasks:       {total_tasks}")
+    print(f"  Total regions:     {total_static + total_dynamic} ({total_static} static, {total_dynamic} dynamic)")
+    if errors:
+        print(f"\n  Failed tests:")
+        for r in errors:
+            print(f"    - {r['test']}: {r.get('error', 'unknown')}")
+    print("=" * 60 + "\n")
