@@ -42,11 +42,14 @@ class StorageConflict:
 
 
 def compute_lifetimes(tasks: tuple[Task, ...]) -> tuple[BufferLifetime, ...]:
-    """Compute buffer lifetimes from task args, directions, and storage keys.
+    """Compute buffer lifetimes from task args, directions, storage keys, and outputs.
 
     Birth = first task_id that writes the buffer.
     Death = last task_id that reads or writes the buffer.
-    Only memory-direction args with known storage keys contribute.
+
+    v0.11 Phase 3 B1: When ``Task.outputs`` is non-empty, each output
+    buffer is tracked as an explicit write (more accurate than inferring
+    from arg_directions alone).
     """
     births: dict[str, int] = {}
     deaths: dict[str, int] = {}
@@ -70,6 +73,12 @@ def compute_lifetimes(tasks: tuple[Task, ...]) -> tuple[BufferLifetime, ...]:
                 if sk not in births:
                     births[sk] = task.task_id
                 deaths[sk] = max(deaths.get(sk, task.task_id), task.task_id)
+
+        # v0.11: explicit outputs tracked as writes
+        for out_key in task.outputs:
+            if out_key not in births:
+                births[out_key] = task.task_id
+            deaths[out_key] = max(deaths.get(out_key, task.task_id), task.task_id)
 
     result: list[BufferLifetime] = []
     for key in sorted(births.keys()):

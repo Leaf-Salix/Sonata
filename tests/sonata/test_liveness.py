@@ -124,3 +124,40 @@ class TestFindConflicts:
 
     def test_empty(self):
         assert find_conflicts(()) == ()
+
+
+class TestMultiOutputLiveness:
+    """Tests for compute_lifetimes with Task.outputs (v0.11 Phase 3 B1-B3)."""
+
+    def test_multi_output_liveness_accuracy(self):
+        """Explicit outputs produce accurate lifetimes."""
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=1, core_type="aicore",
+                 outputs=("out_a", "out_b")),
+            Task(task_id=1, func_id=2, core_type="aicore",
+                 args=("out_a",), arg_directions=("Input",),
+                 arg_storage_keys=("out_a",)),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        by_key = {lt.storage_key: lt for lt in lifetimes}
+
+        assert "out_a" in by_key
+        assert "out_b" in by_key
+        assert by_key["out_a"].birth == 0
+        assert by_key["out_a"].death == 1  # read by task 1
+        assert by_key["out_b"].birth == 0
+        assert by_key["out_b"].death == 0  # only written, never read
+
+    def test_outputs_no_double_count(self):
+        """Output buffers already in arg_directions aren't duplicated."""
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=1, core_type="aicore",
+                 args=("x",), arg_directions=("Output",),
+                 arg_storage_keys=("buf_x",),
+                 outputs=("buf_x",)),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        keys = [lt.storage_key for lt in lifetimes]
+        assert keys.count("buf_x") == 1
