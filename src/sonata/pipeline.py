@@ -100,6 +100,14 @@ class SonataAnalysisResult:
             "region_statuses": self.region_statuses,
         }
 
+        # Include dependency kind summary when available
+        if self.score is not None and self.score.dependencies:
+            dep_kinds: dict[str, int] = {}
+            for dep in self.score.dependencies:
+                kind_val = getattr(dep.kind, 'value', dep.kind)
+                dep_kinds[kind_val] = dep_kinds.get(kind_val, 0) + 1
+            data["dependency_kinds"] = dep_kinds
+
         if self.score is not None:
             data["score"] = score_to_dict(self.score)
 
