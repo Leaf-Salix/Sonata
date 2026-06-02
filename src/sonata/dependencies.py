@@ -15,7 +15,7 @@ Sonata's first dependency experiments decoupled from PyPTO's C++ IR bindings.
 
 from .directions import IGNORED_DIRECTIONS, READ_DIRECTIONS, WRITE_DIRECTIONS, normalize_direction
 from .fallback import FallbackCode
-from .score import Dependency, Task
+from .score import Dependency, DependencyKind, Task
 
 DEPENDENCY_POLICY_SEQUENTIAL_V0 = "sequential_v0"
 DEPENDENCY_POLICY_DATAFLOW_V0 = "dataflow_v0"
@@ -60,7 +60,7 @@ def build_ordering_dependencies(
         Dependency(
             producer=ordered[index].task_id,
             consumer=ordered[index + 1].task_id,
-            kind="ordering",
+            kind=DependencyKind.ORDERING,
         )
         for index in range(len(ordered) - 1)
     )
@@ -113,16 +113,16 @@ def build_dataflow_dependencies(tasks: tuple[Task, ...]) -> tuple[Dependency, ..
         for access_key in reads:
             writer = last_writer.get(access_key)
             if writer is not None and writer != task.task_id:
-                _add_edge(edges, writer, task.task_id, "data")
+                _add_edge(edges, writer, task.task_id, DependencyKind.DATA)
             readers_since_write.setdefault(access_key, set()).add(task.task_id)
 
         for access_key in writes:
             writer = last_writer.get(access_key)
             if writer is not None and writer != task.task_id:
-                _add_edge(edges, writer, task.task_id, "storage")
+                _add_edge(edges, writer, task.task_id, DependencyKind.STORAGE)
             for reader in readers_since_write.get(access_key, set()):
                 if reader != task.task_id:
-                    _add_edge(edges, reader, task.task_id, "war")
+                    _add_edge(edges, reader, task.task_id, DependencyKind.WAR)
             last_writer[access_key] = task.task_id
             readers_since_write[access_key] = set()
 
@@ -145,7 +145,12 @@ def _add_edge(
         edges[key] = kind
 
 
-_KIND_PRIORITY = {"ordering": 0, "war": 1, "storage": 2, "data": 3}
+_KIND_PRIORITY = {
+    DependencyKind.ORDERING: 0,
+    DependencyKind.WAR: 1,
+    DependencyKind.STORAGE: 2,
+    DependencyKind.DATA: 3,
+}
 
 
 def _kind_priority(kind: str) -> int:
