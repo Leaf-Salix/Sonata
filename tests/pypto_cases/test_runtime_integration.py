@@ -494,3 +494,55 @@ class TestRegionDispatch:
         r3 = plan.results[3]
         assert r3.action == "mixed"
         assert "mixed" in r3.fallback_reason
+
+
+class TestRuntimeGuardChecker:
+    """Phase 2 B1-B2: Runtime guard checking and status update."""
+
+    def test_all_guards_satisfied(self):
+        """When runtime values match, all guards satisfied."""
+        from sonata.pipeline import SonataAnalysisResult, check_guards_at_runtime
+        from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
+        from sonata.score import Score, RuntimeTarget
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(), dependencies=(),
+            shape_assumptions=(ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_HARD),),
+        )
+        sr = SonataAnalysisResult(eligible=True, score=score, region_statuses={"region_0": "static"})
+
+        gr = check_guards_at_runtime(sr, {"x": (32,)})
+        assert len(gr) == 1
+        assert gr[0].guard_status == "all_satisfied"
+        assert gr[0].violated_guards == ()
+
+    def test_guard_violation_detected(self):
+        """When runtime values don't match, guards are violated."""
+        from sonata.pipeline import SonataAnalysisResult, check_guards_at_runtime
+        from sonata.guard import ShapeAssumption, GUARD_SEVERITY_HARD
+        from sonata.score import Score, RuntimeTarget
+
+        rt = RuntimeTarget(runtime="host_build_graph", function_name="test", aicpu_thread_num=1)
+        score = Score(
+            name="test", runtime_target=rt, tasks=(), dependencies=(),
+            shape_assumptions=(ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_HARD),),
+        )
+        sr = SonataAnalysisResult(eligible=True, score=score, region_statuses={"region_0": "static"})
+
+        gr = check_guards_at_runtime(sr, {"x": (64,)})
+        assert gr[0].guard_status == "all_failed"
+        assert "x" in gr[0].violated_guards
+
+    def test_update_region_guard_status(self):
+        """update_region_guard_status converts results to GuardStatus dict."""
+        from sonata.pipeline import GuardCheckResult, update_region_guard_status
+        from sonata.plan_handle import GuardStatus
+
+        results = (
+            GuardCheckResult(region_id="region_0", guard_status="all_satisfied"),
+            GuardCheckResult(region_id="region_1", guard_status="partial_failed", violated_guards=("y",)),
+        )
+        status = update_region_guard_status(None, results)
+        assert status["region_0"] == GuardStatus.ALL_SATISFIED
+        assert status["region_1"] == GuardStatus.PARTIAL_FAILED

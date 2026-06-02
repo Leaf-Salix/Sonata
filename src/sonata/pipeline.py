@@ -435,3 +435,111 @@ def dispatch_regions(
         )
 
     return plan
+
+
+@dataclass(frozen=True)
+class GuardCheckResult:
+    """Result of runtime guard checking."""
+
+    region_id: str
+    guard_status: str  # "all_satisfied", "partial_failed", "all_failed"
+    violated_guards: tuple[str, ...] = ()
+
+
+def check_guards_at_runtime(
+    sonata_result: SonataAnalysisResult,
+    runtime_values: dict[str, Any],
+    *,
+    verbose: bool = False,
+) -> tuple[GuardCheckResult, ...]:
+    """Check guard conditions for each region before execution.
+
+    v0.12 Phase 2 B1: Runtime guard checker.
+
+    Evaluates shape assumptions (which are GuardConditions) from each
+    region's Score against ``runtime_values``. Returns per-region
+    guard status.
+
+    Args:
+        sonata_result: Result from sonata_analyze().
+        runtime_values: Runtime tensor shapes/values to check against.
+        verbose: If True, log each guard check.
+
+    Returns:
+        Tuple of GuardCheckResult, one per region with guards.
+    """
+    from .guard import GuardEvaluator, GUARD_SEVERITY_HARD
+
+    evaluator = GuardEvaluator()
+    results: list[GuardCheckResult] = []
+
+    for region_id, status in sonata_result.region_statuses.items():
+        # Collect guards from the score's shape assumptions
+        if sonata_result.score is None:
+            results.append(GuardCheckResult(region_id=region_id, guard_status="all_satisfied"))
+            continue
+
+        guards = list(sonata_result.score.shape_assumptions)
+        if not guards:
+            results.append(GuardCheckResult(region_id=region_id, guard_status="all_satisfied"))
+            continue
+
+        violated: list[str] = []
+        any_failed = False
+        hard_failed = False
+
+        for guard in guards:
+            satisfied, action = evaluator.evaluate(guard, runtime_values)
+            if not satisfied:
+                violated.append(guard.symbol)
+                any_failed = True
+                if guard.severity == GUARD_SEVERITY_HARD:
+                    hard_failed = True
+
+        if hard_failed:
+            gs = "all_failed"
+        elif any_failed:
+            gs = "partial_failed"
+        else:
+            gs = "all_satisfied"
+
+        results.append(GuardCheckResult(
+            region_id=region_id,
+            guard_status=gs,
+            violated_guards=tuple(violated),
+        ))
+
+        if verbose and any_failed:
+            _region_log.warning(
+                "[GUARD] %s: %s — violated: %s",
+                region_id, gs, violated,
+            )
+
+    return tuple(results)
+
+
+def update_region_guard_status(
+    plan_handle: Any,
+    guard_results: tuple[GuardCheckResult, ...],
+) -> dict[str, str]:
+    """Update region_guard_status from runtime guard check results.
+
+    v0.12 Phase 2 B2: region_guard_status update mechanism.
+
+    Args:
+        plan_handle: PlanHandle to update (frozen — returns new dict).
+        guard_results: Results from check_guards_at_runtime.
+
+    Returns:
+        Updated region_guard_status dict.
+    """
+    from .plan_handle import GuardStatus
+
+    status_map: dict[str, GuardStatus] = {}
+    for gr in guard_results:
+        try:
+            status_map[gr.region_id] = GuardStatus(gr.guard_status)
+        except ValueError:
+            status_map[gr.region_id] = GuardStatus.ALL_FAILED
+
+    return {k: v for k, v in status_map.items()}
