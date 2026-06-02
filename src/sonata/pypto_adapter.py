@@ -120,7 +120,11 @@ class PostSimplifyPyPTOInputAdapter:
         )
 
     def extraction_roots(self) -> tuple[Any, ...]:
-        """Return selected orchestration roots."""
+        """Return selected extraction roots.
+
+        Prefers Orchestration functions. For SPMD programs (no Orchestration),
+        returns all functions so they can be analyzed.
+        """
         functions = getattr(self.node, "functions", None)
         if not isinstance(functions, dict):
             if self.entry_name is not None and getattr(self.node, "name", None) != self.entry_name:
@@ -130,13 +134,24 @@ class PostSimplifyPyPTOInputAdapter:
                 return ()
             return (self.node,)
 
-        roots: list[Any] = []
+        # First pass: collect Orchestration roots
+        orch_roots: list[Any] = []
+        spmd_roots: list[Any] = []
         for func in functions.values():
-            if self.is_orchestration(func) and (
-                self.entry_name is None or getattr(func, "name", None) == self.entry_name
-            ):
-                roots.append(func)
-        return tuple(roots)
+            if self.entry_name is not None and getattr(func, "name", None) != self.entry_name:
+                continue
+            if self.is_orchestration(func):
+                orch_roots.append(func)
+            else:
+                spmd_roots.append(func)
+
+        # Prefer Orchestration; fall back to SPMD functions when present
+        if orch_roots:
+            return tuple(orch_roots)
+        # Only fall back if program has SPMD-like structure (multiple functions)
+        if len(spmd_roots) > 1:
+            return tuple(spmd_roots)
+        return ()
 
     def is_orchestration(self, func: Any) -> bool:
         """Return whether ``func`` is an Orchestration function."""
