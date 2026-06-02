@@ -57,17 +57,20 @@ def _extract_certified_ir(program: object) -> Any | None:
         set_backend_type(BackendType.Ascend910B)
 
     certified_ir = None
-    with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
-        manager = PassManager.get_strategy(OptimizationStrategy.Default)
-        current = program
-        after_ccg = False
-        for pname, pobj in zip(manager.pass_names, manager.passes):
-            current = pobj(current)
-            if pname == "CollectCommGroups":
-                after_ccg = True
-            elif after_ccg and pname == "Simplify":
-                certified_ir = current
-                break
+    try:
+        with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+            manager = PassManager.get_strategy(OptimizationStrategy.Default)
+            current = program
+            after_ccg = False
+            for pname, pobj in zip(manager.pass_names, manager.passes):
+                current = pobj(current)
+                if pname == "CollectCommGroups":
+                    after_ccg = True
+                elif after_ccg and pname == "Simplify":
+                    certified_ir = current
+                    break
+    except Exception:
+        certified_ir = None
 
     _certified_ir_cache[prog_id] = certified_ir
     return certified_ir
