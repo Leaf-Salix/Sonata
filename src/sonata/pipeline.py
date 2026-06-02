@@ -422,6 +422,19 @@ def execute_with_sonata(
                 )
                 return None, plan
 
+            # Update guard status in sonata_plan.json
+            guard_status = update_region_guard_status(plan.plan_handle, guard_results)
+            if guard_status:
+                plan_path = Path(work_dir) / "sonata_plan.json"
+                if plan_path.exists():
+                    import json as _json
+                    data = _json.loads(plan_path.read_text())
+                    data["runtime_guard_status"] = {
+                        k: v.value for k, v in guard_status.items()
+                    }
+                    plan_path.write_text(_json.dumps(data, indent=2, sort_keys=True))
+                    _region_log.info("[SONATA] Updated guard status in sonata_plan.json")
+
         # Pre-execution: region dispatch
         dispatch = dispatch_regions(plan)
         _region_log.info(
