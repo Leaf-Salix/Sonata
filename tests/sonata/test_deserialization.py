@@ -92,18 +92,36 @@ class TestScoreRoundTrip:
         assert restored == score
 
     def test_dependency_kind_preserved(self):
+        from sonata.score import DependencyKind
         score = Score(
             name="kinds", runtime_target=RuntimeTarget(),
             tasks=(Task(task_id=0, func_id=0, core_type="aic"),
                    Task(task_id=1, func_id=1, core_type="aiv")),
             dependencies=(
-                Dependency(producer=0, consumer=1, kind="war"),
-                Dependency(producer=0, consumer=1, kind="ordering"),
+                Dependency(producer=0, consumer=1, kind=DependencyKind.WAR),
+                Dependency(producer=0, consumer=1, kind=DependencyKind.ORDERING),
             ),
         )
         restored = score_from_dict(score_to_dict(score))
-        assert restored.dependencies[0].kind == "war"
-        assert restored.dependencies[1].kind == "ordering"
+        assert restored.dependencies[0].kind == DependencyKind.WAR
+        assert restored.dependencies[1].kind == DependencyKind.ORDERING
+
+    def test_dependency_kind_backward_compat(self):
+        """Old dicts with plain string 'kind' still deserialize."""
+        from sonata.score import DependencyKind
+        data = {
+            "schema_version": 1,
+            "name": "compat",
+            "runtime_target": {"runtime": "host_build_graph", "function_name": "f", "aicpu_thread_num": 1},
+            "tasks": [],
+            "dependencies": [
+                {"producer": 0, "consumer": 1, "kind": "storage"},
+            ],
+            "shape_assumptions": [],
+            "metadata": {},
+        }
+        restored = score_from_dict(data)
+        assert restored.dependencies[0].kind == DependencyKind.STORAGE
 
 
 class TestPlanHandleRoundTrip:
