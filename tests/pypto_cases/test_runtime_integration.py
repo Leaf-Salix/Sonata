@@ -673,3 +673,37 @@ class TestMixedGraphEndToEnd:
         # region_0 and its child (region_1) should be invalidated
         assert lookup_region_tree("root", cache, path_to_fingerprint=mappings) is None
         assert lookup_region_tree("root.child[0]", cache, path_to_fingerprint=mappings) is None
+
+
+class TestMemoryHints:
+    """Phase 1 A3: Memory hint injection tests."""
+
+    def test_write_memory_hints(self):
+        """write_memory_hints produces sonata_memory_hint.json."""
+        import json
+        import tempfile
+        from sonata.pipeline import sonata_analyze, write_memory_hints, dispatch_regions
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="hint_test")
+        assert result.eligible
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = write_memory_hints(result, Path(tmpdir))
+            assert path is not None
+            assert path.exists()
+
+            data = json.loads(path.read_text())
+            assert data["schema_version"] == 1
+            assert data["eligible"] is True
+            assert data["task_count"] >= 1
+            assert "dispatch" in data
+            assert data["dispatch"]["optimized_count"] >= 1
+
+    def test_write_memory_hints_ineligible(self):
+        """write_memory_hints returns None for ineligible result."""
+        from sonata.pipeline import SonataAnalysisResult, write_memory_hints
+
+        result = SonataAnalysisResult(eligible=False)
+        path = write_memory_hints(result, Path("/tmp"))
+        assert path is None
