@@ -251,21 +251,15 @@ def sonata_analyze(
     # Step 1: Whole-graph eligibility
     elig = check_static_eligibility(certified_ir, runtime_target=rt)
 
-    # Step 1b: Fallback to region-based eligibility for SPMD programs
-    # Only activate when whole-graph fails AND the program has no Orchestration
-    # functions (typical of pl.spmd programs like LLM models)
+    # Step 1b: Fallback to region-based eligibility when static check fails
+    # This handles both SPMD programs and Orchestration programs with control flow
     if not elig.eligible:
-        from .pypto_adapter import PostSimplifyPyPTOInputAdapter
-        adapter = PostSimplifyPyPTOInputAdapter(certified_ir)
-        roots = adapter.extraction_roots()
-        has_orchestration = any(adapter.is_orchestration(r) for r in roots)
-        if not has_orchestration and roots:
-            region_elig = check_region_eligibility(certified_ir)
-            if region_elig.eligible:
-                elig = region_elig
-                _region_log.info(
-                    "[SONATA] Region-based eligibility for SPMD program"
-                )
+        region_elig = check_region_eligibility(certified_ir)
+        if region_elig.eligible:
+            elig = region_elig
+            _region_log.info(
+                "[SONATA] Region-based eligibility: static regions found"
+            )
 
     if not elig.eligible:
         return SonataAnalysisResult(

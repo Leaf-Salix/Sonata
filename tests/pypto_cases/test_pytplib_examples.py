@@ -127,17 +127,8 @@ class TestPyPTOLibExamples:
             pytest.skip(f"Pipeline did not produce certified IR for {name}")
 
         result = sonata_analyze(certified, entry_name=name)
-        # pypto-lib examples with pl.parallel generate ForStmt → correctly
-        # rejected by Sonata as control flow. This is expected behavior.
-        if not result.eligible:
-            assert result.eligibility_result is not None
-            assert any("ForStmt" in r or "control_flow" in r
-                        for r in result.eligibility_result.reasons)
-            return
-
-        # If eligible, verify plan structure
-        assert result.score is not None
-        assert result.task_count >= 1
+        # All examples should be eligible (either directly or via region fallback)
+        assert result.eligible, f"{name}: not eligible — {result.fallback_reasons}"
         assert result.has_plan
 
     @pytest.mark.parametrize("name,relpath,builder", EXAMPLES[:5],
@@ -158,11 +149,48 @@ class TestPyPTOLibExamples:
             pytest.skip(f"Pipeline did not produce certified IR for {name}")
 
         result = sonata_analyze(certified, entry_name=name)
-        # pypto-lib examples may be ineligible due to ForStmt from pl.parallel
-        if not result.eligible:
-            # Verify the analysis ran without crashing
-            assert result.eligibility_result is not None
-            return
-
+        assert result.eligible, f"{name}: should be eligible via region fallback"
         assert result.region_tree is not None
         assert len(result.region_statuses) >= 1
+
+
+class TestSPMDEligibility:
+    """v0.16 C1: Verify SPMD programs are eligible via region fallback."""
+
+    def test_spmd_program_eligible(self):
+        """A real SPMD program (qwen3) is eligible via region analysis."""
+        from sonata.pipeline import sonata_analyze
+
+        filepath = str(_PYPTO_LIB / "models/qwen3/14b/qwen3_14b_l3_generate.py")
+        mod = _load_module("qwen3_spmd", filepath)
+        program = _get_program_from_module(mod, "build_qwen3_14b_l3_generate_program")
+        if program is None:
+            pytest.skip("Could not load qwen3 program")
+
+        certified = _compile_to_certified_dump(program)
+        if certified is None:
+            pytest.skip("Could not compile qwen3")
+
+        result = sonata_analyze(certified, entry_name="qwen3_spmd")
+        assert result.eligible, "SPMD program should be eligible via region fallback"
+        assert result.has_plan
+        assert len(result.region_statuses) >= 1
+
+    def test_spmd_region_statuses_valid(self):
+        """SPMD program's region statuses are all valid types."""
+        from sonata.pipeline import sonata_analyze
+
+        filepath = str(_PYPTO_LIB / "models/qwen3/14b/qwen3_14b_l3_generate.py")
+        mod = _load_module("qwen3_spmd_regions", filepath)
+        program = _get_program_from_module(mod, "build_qwen3_14b_l3_generate_program")
+        if program is None:
+            pytest.skip("Could not load qwen3 program")
+
+        certified = _compile_to_certified_dump(program)
+        if certified is None:
+            pytest.skip("Could not compile qwen3")
+
+        result = sonata_analyze(certified, entry_name="qwen3_spmd_regions")
+        assert result.eligible
+        for region_id, status in result.region_statuses.items():
+            assert status in ("static", "dynamic", "mixed"), f"{region_id}: invalid status {status}"
