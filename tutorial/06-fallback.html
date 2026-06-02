@@ -52,9 +52,11 @@
 
 <pre><code>@dataclass(frozen=True)
 class FallbackReason:
-    code: str       # FallbackCode 的值（稳定，可作路由 key）
-    message: str    # 人类可读的说明（可能变化）
-    severity: str   # "error" 或 "warning"</code></pre>
+    code: str               # FallbackCode 的值（稳定，可作路由 key）
+    message: str            # 人类可读的说明（可能变化）
+    severity: str           # "error" 或 "warning"
+    region_type: str | None = None       # v0.11: "static"/"dynamic"/None
+    control_flow_node: str | None = None # v0.11: ForStmt/IfStmt/WhileStmt</code></pre>
 
 <p><code>EligibilityResult.reject</code> 自动把 reason 字符串映射到 FallbackCode：</p>
 

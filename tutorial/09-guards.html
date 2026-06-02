@@ -167,7 +167,13 @@ all_ok, results = evaluator.evaluate_all(guards, runtime_v2)
 
 <p>v0.11 的关键新功能。用一个具体例子：</p>
 
-<pre><code># RegionTree 结构:
+<pre><code># 假设已经从 IR 构建了 RegionTree（见 Tutorial 8）
+from sonata import extract_regions, check_region_eligibility
+from sonata.regions import build_region_tree
+
+region_map = extract_regions(ir_node)
+tree = build_region_tree(region_map)
+# RegionTree 结构:
 #   root (Score: 2 tasks, 1 guard: batch_size==32)
 #     ├─ child[0] (no Score, dynamic)
 #     └─ child[1] (Score: 1 task, 1 guard: seq_len==128)

@@ -120,15 +120,20 @@ Task 1: args=("x",),   arg_directions=("input",)    # 读取 x</code></pre>
 
 <p>有 storage key 用它做依赖判断，否则退回到参数名。没有 storage key 时，跨变量名的依赖会被漏掉。</p>
 
-<h2>提问：v0.1 的依赖类型有什么限制？</h2>
+<h2>提问：依赖类型有哪些？</h2>
 
-<div class="callout warn">
-  <strong>已决定（B+ 路线）：</strong>v0.1 不区分依赖类型。所有依赖关系统一合并成一条边，
-  宁可多画依赖（保守，不出错）也不少画（可能并行出错）。v0.3 会区分 RAW、WAW、WAR 等类型，
-  让调度器能做更精细的并行。<br><br>
-  v0.3 的设计参考来自 <code>tensormap_and_ringbuffer</code> 运行时——该运行时引入了额外的依赖约束
-  （tensor 生命周期管理、TensorMap producer lookup、manual scope 抑制），Sonata 需要支持这些依赖类型的显式表达。
-</div>
+<p>Sonata 的 <code>Dependency</code> 有 <code>kind</code> 字段，区分四种依赖类型：</p>
+
+<table>
+  <tr><th>kind</th><th>含义</th><th>策略</th></tr>
+  <tr><td><code>"data"</code></td><td>RAW（read-after-write）数据流</td><td>sequential_v0 和 dataflow_v0 都产生</td></tr>
+  <tr><td><code>"storage"</code></td><td>WAW（write-after-write）存储冲突</td><td>dataflow_v0 分析</td></tr>
+  <tr><td><code>"war"</code></td><td>WAR（write-after-read）反依赖</td><td>dataflow_v0 分析</td></tr>
+  <tr><td><code>"ordering"</code></td><td>纯顺序约束</td><td>manual 或 fallback</td></tr>
+</table>
+
+<p><code>sequential_v0</code> 策略产生的所有边 kind 都是 <code>"data"</code>（保守并集）。
+<code>dataflow_v0</code> 策略会根据 arg_directions 和 storage_keys 区分具体的 kind。</p>
 
 <h2>提问：怎么指定用哪种策略？</h2>
 

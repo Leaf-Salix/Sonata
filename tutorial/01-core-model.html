@@ -111,9 +111,10 @@ class Task:
 <pre><code>@dataclass(frozen=True)
 class Dependency:
     producer: int   # 生产者 task_id
-    consumer: int   # 消费者 task_id</code></pre>
+    consumer: int   # 消费者 task_id
+    kind: str = "data"  # "data"(RAW) | "storage"(WAW) | "war"(WAR) | "ordering"</code></pre>
 
-<p>上面 matmul_bias 的例子：<code>Dependency(producer=0, consumer=1)</code> — 必须先做完 matmul 才能做 add。</p>
+<p>上面 matmul_bias 的例子：<code>Dependency(producer=0, consumer=1, kind="data")</code> — 必须先做完 matmul 才能做 add（RAW 数据依赖）。</p>
 
 <p><code>Score.validate()</code> 检查：producer/consumer 都指向已知 task、无自环、整个图是无环 DAG。</p>
 

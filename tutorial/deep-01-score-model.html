@@ -89,12 +89,12 @@ class ShapeAssumption:
   <li><strong>失效条件</strong>：运行时输入不满足假设 → Score / PlanHandle 应 fallback 或 replan</li>
 </ol>
 
-<h3>Guard 抽象推迟到 v0.3</h3>
+<h3>Guard 抽象（v0.10 已实现）</h3>
 
 <div class="callout info">
-  <strong>已决定：</strong>v0.1 不引入 <code>GuardCondition</code> 基类。ShapeAssumption 是唯一 guard fact。v0.3 时引入 GuardCondition 抽象，包含 severity（soft/hard）和可能的 TopologyGuard、StorageGuard。
-  <br><br>
-  <strong>为什么不提前抽象：</strong>v0.1 只有形状 guard 一种，一上来抽象成基类收益不大，容易锁死 v0.3/v0.4 的 guard model。
+  <strong>已完成（v0.10）：</strong><code>GuardCondition</code> 基类已在 v0.10 引入，包含 severity（soft/hard）分级。
+  <code>ShapeAssumption</code> 现在是 <code>GuardCondition</code> 的子类，保持向后兼容但已 deprecated。
+  v0.11 进一步扩展为区域级 Guard 评估（<code>GuardEvaluator.evaluate_region</code>）。
 </div>
 
 <h3>Over-guarding 问题</h3>
@@ -195,17 +195,21 @@ Task(
 <pre><code>@dataclass(frozen=True)
 class Dependency:
     producer: int
-    consumer: int</code></pre>
+    consumer: int
+    kind: str = "data"  # "data" | "storage" | "war" | "ordering"</code></pre>
 
-<h3>Dependency 不区分 kind（v0.1 决策）</h3>
+<h3>kind 的四种值</h3>
 
-<div class="callout info">
-  <strong>已决定（B+ 路线）：</strong>v0.1 不修改 public <code>Score.Dependency</code> schema。dataflow_v0 的边是 RAW/WAW/WAR/ordering 的<strong>保守并集</strong>，不区分 kind。NormalizedTaskFacts 预留 <code>source</code>/<code>hazard</code>/<code>provenance</code> 扩展位。
-  <br><br>
-  <strong>为什么不提前加 kind：</strong>现在还不知道最终 taxonomy 是单个 <code>kind</code>，还是拆成 <code>source</code>/<code>hazard</code>/<code>strength</code>/<code>scope</code> 等。过早写进 Score schema 可能形成错误抽象。
-  <br><br>
-  <strong>v0.3 的 kind 枚举建议：</strong><code>{data, storage, war, ordering}</code>。
-</div>
+<table>
+  <tr><th>kind</th><th>含义</th><th>来源</th></tr>
+  <tr><td><code>"data"</code></td><td>RAW（read-after-write）数据流依赖</td><td>dataflow_v0 分析，或 sequential_v0 默认</td></tr>
+  <tr><td><code>"storage"</code></td><td>WAW（write-after-write）存储冲突</td><td>dataflow_v0 分析</td></tr>
+  <tr><td><code>"war"</code></td><td>WAR（write-after-read）反依赖</td><td>dataflow_v0 分析</td></tr>
+  <tr><td><code>"ordering"</code></td><td>纯顺序约束，无数据流</td><td>manual 或 fallback</td></tr>
+</table>
+
+<p>sequential_v0 策略产生的所有边 kind 都是 <code>"data"</code>。
+dataflow_v0 策略会根据 arg_directions 和 storage_keys 区分具体的 kind。</p>
 
 <h2>FallbackReason — 结构化失败原因</h2>
 
@@ -213,7 +217,9 @@ class Dependency:
 class FallbackReason:
     code: str       # FallbackCode 的值（稳定路由 key）
     message: str    # 人类可读说明
-    severity: str   # "error" 或 "warning"</code></pre>
+    severity: str   # "error" 或 "warning"
+    region_type: str | None = None           # v0.11: "static"/"dynamic"/None
+    control_flow_node: str | None = None     # v0.11: ForStmt/IfStmt/WhileStmt</code></pre>
 
 <h3>code 的两种来源</h3>
 
