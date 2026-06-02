@@ -330,3 +330,108 @@ def execute_with_sonata(
 
     execute_compiled(work_dir, *args, **kwargs)
     return None, plan
+
+
+# ---------------------------------------------------------------------------
+# v0.12 Phase 2: Region-Aware Runtime
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+
+_region_log = _logging.getLogger("sonata.region_dispatch")
+
+
+@dataclass(frozen=True)
+class RegionDispatchResult:
+    """Result of region-aware execution dispatch."""
+
+    region_id: str
+    status: str  # "static", "dynamic", "mixed"
+    action: str  # "optimized", "fallback", "mixed"
+    fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class DispatchPlan:
+    """Execution plan produced by the region-aware dispatcher."""
+
+    results: tuple[RegionDispatchResult, ...]
+    optimized_count: int = 0
+    fallback_count: int = 0
+    mixed_count: int = 0
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def has_fallbacks(self) -> bool:
+        return self.fallback_count > 0
+
+
+def dispatch_regions(
+    sonata_result: SonataAnalysisResult,
+    *,
+    verbose: bool = False,
+) -> DispatchPlan:
+    """Dispatch execution strategy per region based on Sonata analysis.
+
+    v0.12 Phase 2 A1: Region-aware execution dispatcher.
+
+    For each region in the Sonata analysis:
+    - static: mark as optimized (use Sonata's plan)
+    - dynamic: mark as fallback (use original PyPTO runtime path)
+    - mixed: mark as mixed (static children optimized, dynamic children fallback)
+
+    Args:
+        sonata_result: Result from sonata_analyze().
+        verbose: If True, log each region's dispatch decision.
+
+    Returns:
+        DispatchPlan with per-region dispatch results.
+    """
+    results: list[RegionDispatchResult] = []
+
+    for region_id, status in sonata_result.region_statuses.items():
+        if status == "static":
+            action = "optimized"
+            reason = None
+        elif status == "dynamic":
+            action = "fallback"
+            reason = "dynamic control flow region"
+        else:  # mixed
+            action = "mixed"
+            reason = "mixed static/dynamic subtree"
+
+        results.append(RegionDispatchResult(
+            region_id=region_id,
+            status=status,
+            action=action,
+            fallback_reason=reason,
+        ))
+
+        if verbose:
+            _region_log.info(
+                "[DISPATCH] %s: status=%s → action=%s%s",
+                region_id, status, action,
+                f" (reason: {reason})" if reason else "",
+            )
+
+    optimized = sum(1 for r in results if r.action == "optimized")
+    fallback = sum(1 for r in results if r.action == "fallback")
+    mixed = sum(1 for r in results if r.action == "mixed")
+
+    plan = DispatchPlan(
+        results=tuple(results),
+        optimized_count=optimized,
+        fallback_count=fallback,
+        mixed_count=mixed,
+    )
+
+    if verbose:
+        _region_log.info(
+            "[DISPATCH SUMMARY] total=%d, optimized=%d, fallback=%d, mixed=%d",
+            plan.total, optimized, fallback, mixed,
+        )
+
+    return plan

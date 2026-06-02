@@ -443,3 +443,54 @@ class TestSonataPlanRoundTrip:
             for hbg, score_task in zip(plan_tasks, original.score.tasks):
                 assert hbg["task_id"] == score_task.task_id
                 assert hbg["func_id"] == score_task.func_id
+
+
+class TestRegionDispatch:
+    """Phase 2 A1-A2: Region-aware execution dispatcher."""
+
+    def test_all_static_dispatch(self):
+        """All-static graph: all regions optimized."""
+        from sonata.pipeline import sonata_analyze, dispatch_regions
+
+        certified = _compile_to_certified_dump(_SIMPLE_ADD_PROGRAM)
+        result = sonata_analyze(certified, entry_name="dispatch_test")
+
+        plan = dispatch_regions(result)
+        assert plan.total >= 1
+        assert plan.optimized_count >= 1
+        assert plan.fallback_count == 0
+        assert not plan.has_fallbacks
+
+    def test_mixed_graph_dispatch(self):
+        """Mixed graph: static regions optimized, dynamic regions fallback."""
+        from sonata.pipeline import dispatch_regions, SonataAnalysisResult
+
+        result = SonataAnalysisResult(
+            eligible=True,
+            region_statuses={
+                "region_0": "static",
+                "region_1": "dynamic",
+                "region_2": "static",
+                "region_3": "mixed",
+            },
+        )
+
+        plan = dispatch_regions(result, verbose=True)
+        assert plan.total == 4
+        assert plan.optimized_count == 2
+        assert plan.fallback_count == 1
+        assert plan.mixed_count == 1
+        assert plan.has_fallbacks
+
+        # Check per-region results
+        r0 = plan.results[0]
+        assert r0.action == "optimized"
+        assert r0.fallback_reason is None
+
+        r1 = plan.results[1]
+        assert r1.action == "fallback"
+        assert "dynamic" in r1.fallback_reason
+
+        r3 = plan.results[3]
+        assert r3.action == "mixed"
+        assert "mixed" in r3.fallback_reason
