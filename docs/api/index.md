@@ -14,4 +14,6 @@ Sonata is a host-side static scheduling compiler layer for PyPTO. For static-sha
 | [Cache](cache.md) | Fingerprint-based Score and PlanHandle cache to avoid repeated eligibility checks. |
 | [PlanHandle / Runtime](plan-handle.md) | Runtime artifact key types bridging Score to a specific runtime target and function registry. |
 | [Adapters](adapters.md) | Multi-adapter registry for PyPTO pipeline stages with capability-based selection. |
+| [Runtime Hook](runtime-hook.md) | Optional pre-dispatch hook for PyPTO `execute_compiled()` — auto-discovers `sonata_plan.json`. |
+| [Profile](profile.md) | Operator execution profiling for feedback-driven scheduling. |
 | [Version](version.md) | Version constants, deprecation utilities, schema version introspection, and API audit helpers. |
