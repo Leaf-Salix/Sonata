@@ -489,5 +489,42 @@ class TestStorageEffect:
             assert e.kind == kind
 
 
+class TestTaskStorageEffects:
+    """v0.17 Phase 3 A2: Task.storage_effects optional field."""
+
+    def test_default_none(self):
+        """storage_effects defaults to None (backward compatible)."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic")
+        assert t.storage_effects is None
+
+    def test_with_storage_effects(self):
+        """Task can carry storage_effects."""
+        from sonata.score import Task, StorageEffect
+        effects = (
+            StorageEffect(buffer_id="buf_x", kind="read"),
+            StorageEffect(buffer_id="buf_y", kind="write"),
+        )
+        t = Task(task_id=0, func_id=0, core_type="aic", storage_effects=effects)
+        assert len(t.storage_effects) == 2
+        assert t.storage_effects[0].buffer_id == "buf_x"
+        assert t.storage_effects[1].kind == "write"
+
+    def test_empty_tuple(self):
+        """Empty storage_effects tuple is valid."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic", storage_effects=())
+        assert t.storage_effects == ()
+
+    def test_backward_compat(self):
+        """Existing Task without storage_effects still works."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("param:x",))
+        assert t.storage_effects is None
+        assert len(t.args) == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

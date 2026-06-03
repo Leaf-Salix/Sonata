@@ -51,6 +51,8 @@ class Task:
     name: str | None = None
     # v0.11 Phase 3 A1: Multi-output support
     outputs: tuple[str, ...] = ()
+    # v0.17 Phase 3 A2: Storage identity for liveness analysis
+    storage_effects: tuple["StorageEffect", ...] | None = None
 
 
 class DependencyKind(str, Enum):
