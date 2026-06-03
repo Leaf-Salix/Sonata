@@ -313,3 +313,79 @@ class TestSchedulingInstructions:
         inst = compute_scheduling_instructions(dispatch, base_block_dim=16, fallback_block_dim=4)
         assert inst[0].block_dim == 16
         assert inst[1].block_dim == 4
+
+
+class TestMemoryPlanIntegration:
+    """v0.18 Phase 1 C1: sonata_analyze outputs MemoryPlan."""
+
+    def test_result_has_memory_plan(self):
+        """SonataAnalysisResult with score produces a memory plan."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.liveness import compute_lifetimes
+        from sonata.memory_plan import plan_memory
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(
+                    Task(task_id=0, func_id=0, core_type="aic",
+                         args=("x", "y"), arg_directions=("input", "output"),
+                         arg_storage_keys=("buf:x", "buf:y")),
+                    Task(task_id=1, func_id=1, core_type="aiv",
+                         args=("y", "z"), arg_directions=("input", "output"),
+                         arg_storage_keys=("buf:y", "buf:z")),
+                ),
+            )
+        lifetimes = compute_lifetimes(score.tasks)
+        buffer_sizes = {lt.storage_key: 1024 for lt in lifetimes}
+        mp = plan_memory(lifetimes, buffer_sizes)
+        result = SonataAnalysisResult(
+            eligible=True, score=score, memory_plan=mp,
+        )
+        assert result.memory_plan is not None
+        assert result.memory_plan.peak_memory >= 0
+
+    def test_memory_plan_in_to_dict(self):
+        """memory_plan appears in to_dict() output."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.liveness import compute_lifetimes
+        from sonata.memory_plan import plan_memory
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(
+                    Task(task_id=0, func_id=0, core_type="aic",
+                         args=("x",), arg_directions=("input",),
+                         arg_storage_keys=("buf:x",)),
+                ),
+            )
+        lifetimes = compute_lifetimes(score.tasks)
+        buffer_sizes = {lt.storage_key: 1024 for lt in lifetimes}
+        mp = plan_memory(lifetimes, buffer_sizes)
+        result = SonataAnalysisResult(
+            eligible=True, score=score, memory_plan=mp,
+        )
+        d = result.to_dict()
+        assert "memory_plan" in d
+        assert "peak_memory" in d["memory_plan"]
+        assert "allocations" in d["memory_plan"]
+
+    def test_no_memory_plan_when_none(self):
+        """No memory_plan in to_dict() when memory_plan is None."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+            )
+        result = SonataAnalysisResult(eligible=True, score=score)
+        d = result.to_dict()
+        assert "memory_plan" not in d

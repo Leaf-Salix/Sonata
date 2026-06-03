@@ -120,6 +120,9 @@ class SonataAnalysisResult:
     host_build_graph_plan: HostBuildGraphPlan | None = None
     adapter_result: RuntimeAdapterResult | None = None
 
+    # v0.18 Phase 1 C1: Memory plan
+    memory_plan: Any = None
+
     # Metadata
     region_statuses: dict[str, str] = field(default_factory=dict)
     fallback_reasons: tuple[Any, ...] = ()
@@ -202,6 +205,18 @@ class SonataAnalysisResult:
                 for r in self.fallback_reasons
                 if hasattr(r, "code")
             ]
+
+        # v0.18 Phase 1 C1: Memory plan serialization
+        if self.memory_plan is not None:
+            mp = self.memory_plan
+            data["memory_plan"] = {
+                "peak_memory": mp.peak_memory,
+                "solver_type": getattr(mp, "solver_type", "unknown"),
+                "allocations": [
+                    {"buffer_id": a.storage_key, "offset": a.offset, "size": a.size}
+                    for a in mp.allocations
+                ],
+            }
 
         return data
 
@@ -350,6 +365,14 @@ def sonata_analyze(
         region_statuses=region_statuses,
     )
 
+    # Step 5: Memory plan (v0.18 Phase 1 C1)
+    from .liveness import compute_lifetimes
+    from .memory_plan import plan_memory
+    lifetimes = compute_lifetimes(score.tasks)
+    # Default buffer sizes (1024 bytes each) when actual sizes unavailable
+    buffer_sizes = {lt.storage_key: 1024 for lt in lifetimes}
+    memory_plan = plan_memory(lifetimes, buffer_sizes) if lifetimes else None
+
     return SonataAnalysisResult(
         eligible=True,
         score=score,
@@ -360,6 +383,7 @@ def sonata_analyze(
         host_build_graph_plan=rt_result.plan if rt_result.success else None,
         adapter_result=rt_result,
         region_statuses=region_statuses,
+        memory_plan=memory_plan,
     )
 
 
