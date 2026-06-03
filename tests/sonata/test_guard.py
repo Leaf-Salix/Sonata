@@ -863,3 +863,27 @@ class TestTwoLevelInvalidation:
         assert results[0].guard_status == "all_failed"
         assert "batch" in results[0].violated_guards
         assert "seq" in results[0].violated_guards
+
+
+class TestShapeAssumptionEquality:
+    """Bug fix: ShapeAssumption.__eq__ must include dims."""
+
+    def test_different_dims_not_equal(self):
+        """ShapeAssumptions with different dims should NOT be equal."""
+        a = ShapeAssumption(symbol="N", dims=(32,))
+        b = ShapeAssumption(symbol="N", dims=(64,))
+        assert a != b
+
+    def test_same_dims_equal(self):
+        """ShapeAssumptions with same dims should be equal."""
+        a = ShapeAssumption(symbol="N", dims=(32,))
+        b = ShapeAssumption(symbol="N", dims=(32,))
+        assert a == b
+
+    def test_different_dims_different_hash(self):
+        """Different dims should produce different hashes for set/dict use."""
+        a = ShapeAssumption(symbol="N", dims=(32,))
+        b = ShapeAssumption(symbol="N", dims=(64,))
+        assert hash(a) != hash(b)
+        s = {a, b}
+        assert len(s) == 2

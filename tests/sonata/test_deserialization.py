@@ -241,3 +241,49 @@ class TestDeserializationErrors:
         data["dependencies"] = [{"producer": "bad", "consumer": 1}]
         with pytest.raises(DeserializationError, match="producer"):
             score_from_dict(data)
+
+
+class TestPlanHandleGuardStatusDeserialization:
+    """Bug fix: plan_handle_from_dict must read guard_status and critical_guards."""
+
+    def test_guard_status_round_trip(self):
+        """guard_status survives serialization → deserialization."""
+        from sonata.plan_handle import PlanHandle, GuardStatus
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.serialization import plan_handle_to_dict
+        from sonata.deserialization import plan_handle_from_dict
+
+        score = Score(name="t", runtime_target=RuntimeTarget(),
+                      tasks=(Task(task_id=0, func_id=0, core_type="aic"),))
+        ph = PlanHandle.from_score(score)
+        ph_failed = PlanHandle(
+            score_fingerprint=ph.score_fingerprint,
+            runtime_target=ph.runtime_target,
+            source_adapter=ph.source_adapter,
+            func_registry=ph.func_registry,
+            guard_status=GuardStatus.ALL_FAILED,
+        )
+        d = plan_handle_to_dict(ph_failed)
+        restored = plan_handle_from_dict(d)
+        assert restored.guard_status == GuardStatus.ALL_FAILED
+
+    def test_stale_guard_status_round_trip(self):
+        """STALE guard_status survives round-trip."""
+        from sonata.plan_handle import PlanHandle, GuardStatus
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.serialization import plan_handle_to_dict
+        from sonata.deserialization import plan_handle_from_dict
+
+        score = Score(name="t", runtime_target=RuntimeTarget(),
+                      tasks=(Task(task_id=0, func_id=0, core_type="aic"),))
+        ph = PlanHandle.from_score(score)
+        ph_stale = PlanHandle(
+            score_fingerprint=ph.score_fingerprint,
+            runtime_target=ph.runtime_target,
+            source_adapter=ph.source_adapter,
+            func_registry=ph.func_registry,
+            guard_status=GuardStatus.STALE,
+        )
+        d = plan_handle_to_dict(ph_stale)
+        restored = plan_handle_from_dict(d)
+        assert restored.guard_status == GuardStatus.STALE

@@ -248,11 +248,32 @@ class GreedySolver(ConstraintSolver):
             for i in range(n)
         )
         peak = max((a.offset + a.size for a in allocations), default=0)
+
+        if device_memory_limit is not None and peak > device_memory_limit:
+            raise MemoryLimitExceededError(
+                f"Memory plan peak ({peak} bytes) exceeds device limit ({device_memory_limit} bytes)",
+                peak_memory=peak,
+                device_limit=device_memory_limit,
+            )
+
         return MemoryPlan(allocations=allocations, peak_memory=peak, solver_type="greedy")
 
 
 class DynamicShapeError(Exception):
     """Raised when dynamic shapes prevent memory planning."""
+
+
+class MemoryLimitExceededError(Exception):
+    """Raised when a memory plan exceeds the device memory limit."""
+
+    def __init__(self, message: str, *, peak_memory: int, device_limit: int):
+        super().__init__(message)
+        self.peak_memory = peak_memory
+        self.device_limit = device_limit
+
+
+class MemoryPlanExceededError(Exception):
+    """Raised when a memory plan exceeds the device memory limit."""
 
     def __init__(self, symbols: list[str]):
         self.symbols = symbols

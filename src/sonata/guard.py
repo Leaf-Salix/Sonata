@@ -293,6 +293,16 @@ class ShapeAssumption(GuardCondition):
     def __repr__(self) -> str:
         return f"ShapeAssumption(symbol={self.symbol!r}, dims={self.dims!r}, severity={self.severity!r})"
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ShapeAssumption):
+            return False
+        return (self.symbol == other.symbol
+                and self.dims == other.dims
+                and self.severity == other.severity)
+
+    def __hash__(self) -> int:
+        return hash((self.symbol, self.dims, self.severity))
+
 
 # Schema version for guard condition ABI
 GUARD_CONDITION_SCHEMA_VERSION = 1

@@ -152,16 +152,11 @@ class RegionTreeNode:
             "region_kind": self.region.kind,
             "node_count": self.region.node_count,
         }
-        
-        # Add score-based identity if available
+
+        # Add score-based identity if available — use full score_fingerprint
+        # to include task/dependency/guard content (not just counts)
         if self.score is not None:
-            score_identity = {
-                "score_name": self.score.name,
-                "task_count": len(self.score.tasks),
-                "dep_count": len(self.score.dependencies),
-                "guard_count": len(self.score.shape_assumptions),
-            }
-            base_identity.update(score_identity)
+            base_identity["score_fingerprint"] = score_fingerprint(self.score)
         
         # Add child fingerprints for hierarchical identity
         if self.children:

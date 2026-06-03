@@ -96,6 +96,24 @@ def plan_handle_from_dict(data: dict[str, Any]) -> PlanHandle:
                 region_guard_status[k] = GuardStatus(v)
             except ValueError:
                 raise DeserializationError(f"plan_handle.region_guard_status[{k!r}]: invalid GuardStatus {v!r}")
+
+    # v0.17: Top-level guard status and critical guards
+    guard_status_raw = data.get("guard_status", "all_satisfied")
+    try:
+        guard_status = GuardStatus(guard_status_raw)
+    except ValueError:
+        raise DeserializationError(f"plan_handle.guard_status: invalid GuardStatus {guard_status_raw!r}")
+
+    critical_guards_raw = data.get("critical_guards", [])
+    critical_guards: tuple[Any, ...] = ()
+    if isinstance(critical_guards_raw, list) and critical_guards_raw:
+        from .guard import GuardCondition
+        parsed = []
+        for g in critical_guards_raw:
+            if isinstance(g, dict):
+                parsed.append(GuardCondition.from_dict(g))
+        critical_guards = tuple(parsed)
+
     return PlanHandle(
         score_fingerprint=fp,
         runtime_target=rt,
@@ -104,6 +122,8 @@ def plan_handle_from_dict(data: dict[str, Any]) -> PlanHandle:
         func_registry=registry,
         arg_bindings=bindings,
         metadata=metadata,
+        guard_status=guard_status,
+        critical_guards=critical_guards,
         region_guard_status=region_guard_status,
     )
 

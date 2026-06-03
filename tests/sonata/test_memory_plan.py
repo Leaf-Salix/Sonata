@@ -1,5 +1,7 @@
 """Tests for v0.3 memory planning."""
 
+import pytest
+
 from sonata.liveness import BufferLifetime
 from sonata.memory_plan import BufferAllocation, MemoryPlan, plan_memory
 
@@ -314,3 +316,33 @@ class TestMemoryPlanBenchmarks:
 
 def _ranges_overlap(a: BufferAllocation, b: BufferAllocation) -> bool:
     return a.offset < b.end and b.offset < a.end
+
+
+class TestGreedySolverMemoryLimit:
+    """Bug fix: GreedySolver must respect device_memory_limit."""
+
+    def test_within_limit_succeeds(self):
+        """Plan within limit succeeds."""
+        from sonata.memory_plan import GreedySolver
+        solver = GreedySolver()
+        # Two non-conflicting buffers of 100 each
+        matrix = [[False, False], [False, False]]
+        plan = solver.solve(matrix, [100, 100], device_memory_limit=500)
+        assert plan.peak_memory <= 500
+
+    def test_exceeds_limit_raises(self):
+        """Plan exceeding limit raises MemoryLimitExceededError."""
+        from sonata.memory_plan import GreedySolver, MemoryLimitExceededError
+        solver = GreedySolver()
+        # Two conflicting buffers of 100 each → peak = 200
+        matrix = [[False, True], [True, False]]
+        with pytest.raises(MemoryLimitExceededError, match="exceeds device limit"):
+            solver.solve(matrix, [100, 100], device_memory_limit=150)
+
+    def test_none_limit_no_check(self):
+        """None limit means no checking (backward compatible)."""
+        from sonata.memory_plan import GreedySolver
+        solver = GreedySolver()
+        matrix = [[False, True], [True, False]]
+        plan = solver.solve(matrix, [100, 100], device_memory_limit=None)
+        assert plan.peak_memory == 200
