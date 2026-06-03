@@ -442,3 +442,8 @@ def _dedupe(reasons: list[FallbackReason]) -> tuple[FallbackReason, ...]:
             seen.add(key)
             result.append(reason)
     return tuple(result)
+
+
+__all__ = [
+    "check_static_eligibility",
+]

@@ -377,3 +377,16 @@ def _visit_for_cycle(
 
 def _format_cycle(cycle: tuple[int, ...]) -> str:
     return " -> ".join(str(task_id) for task_id in cycle)
+
+
+__all__ = [
+    "Dependency",
+    "DependencyKind",
+    "EligibilityResult",
+    "FallbackReason",
+    "RuntimeTarget",
+    "Score",
+    "StorageEffect",
+    "Task",
+    "is_static_shape_dim",
+]

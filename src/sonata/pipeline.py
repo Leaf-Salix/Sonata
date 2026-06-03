@@ -961,3 +961,24 @@ def invalidate_on_guard_violation(
             )
 
     return total_invalidated
+
+
+__all__ = [
+    "DispatchPlan",
+    "GuardCheckResult",
+    "GuardDetail",
+    "RegionDispatchResult",
+    "SchedulingInstruction",
+    "SonataAnalysisResult",
+    "check_guards_at_runtime",
+    "collect_task_timings",
+    "compute_scheduling_instructions",
+    "dispatch_regions",
+    "execute_with_sonata",
+    "invalidate_on_guard_violation",
+    "load_sonata_plan",
+    "sonata_analyze",
+    "sonata_compile",
+    "update_region_guard_status",
+    "write_memory_hints",
+]
