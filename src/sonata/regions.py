@@ -535,10 +535,32 @@ def check_region_eligibility(
         # Create a merged result with per-region metadata
         result = EligibilityResult.accept(score=None)
 
+        # Build RegionEligibilityResult (v0.18 Phase 2 A1)
+        region_elig_entries: list[RegionEligibility] = []
+        for n in region_tree.all_nodes:
+            rid = f"region_{n.region.region_id}"
+            is_static = n.region.is_static
+            region_elig_entries.append(RegionEligibility(
+                region_id=rid,
+                eligible=is_static,
+                status=n.region_status,
+                fallback_reason=(
+                    n.region.fallback_reason.message
+                    if not is_static and n.region.fallback_reason else None
+                ),
+            ))
+        region_elig_result = RegionEligibilityResult(
+            overall_eligible=True,
+            regions=tuple(region_elig_entries),
+            static_count=len(region_map.static_regions()),
+            dynamic_count=len(region_map.dynamic_regions()),
+        )
+
         # Add region tree and per-region scores to metadata (frozen dataclass)
         meta = {
             'region_tree': region_tree,
             'per_region_scores': per_region_scores,
+            'region_eligibility': region_elig_result,
             'region_count': len(region_map.regions),
             'static_region_count': len(region_map.static_regions()),
             'dynamic_region_count': len(region_map.dynamic_regions()),
@@ -552,7 +574,7 @@ def check_region_eligibility(
             },
         }
         object.__setattr__(result, 'metadata', meta)
-        
+
         return result
     
     # Fallback to whole-graph check if no static subtrees found
@@ -727,10 +749,54 @@ def invalidate_region_tree(
     return cache.invalidate(*violated_fps)
 
 
+# ---------------------------------------------------------------------------
+# v0.18 Phase 2 A1: Per-region eligibility result
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RegionEligibility:
+    """Eligibility status for a single region."""
+
+    region_id: str
+    eligible: bool
+    status: str  # "static", "dynamic", "mixed"
+    fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class RegionEligibilityResult:
+    """Per-region eligibility breakdown.
+
+    A graph is partially eligible when some regions are static (eligible)
+    and others are dynamic (fallback). Each region has independent status.
+    """
+
+    overall_eligible: bool
+    regions: tuple[RegionEligibility, ...]
+    static_count: int = 0
+    dynamic_count: int = 0
+
+    @property
+    def is_partially_eligible(self) -> bool:
+        """True when some regions are eligible and some are not."""
+        return self.static_count > 0 and self.dynamic_count > 0
+
+    def eligible_region_ids(self) -> tuple[str, ...]:
+        """Return IDs of eligible (static) regions."""
+        return tuple(r.region_id for r in self.regions if r.eligible)
+
+    def fallback_region_ids(self) -> tuple[str, ...]:
+        """Return IDs of fallback (dynamic) regions."""
+        return tuple(r.region_id for r in self.regions if not r.eligible)
+
+
 __all__ = [
     "REGION_DYNAMIC",
     "REGION_STATIC",
     "Region",
+    "RegionEligibility",
+    "RegionEligibilityResult",
     "RegionMap",
     "RegionTreeNode",
     "RegionTree",

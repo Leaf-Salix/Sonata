@@ -817,3 +817,71 @@ class TestPerformanceBenchmark:
         # Per-region: root and sibling regions still cached after partial invalidation
         # Whole-graph: would miss entirely (fingerprint changes for whole graph)
         assert hits_v2 >= 2, f"Expected ≥2 cached regions after partial invalidation, got {hits_v2}"
+
+
+class TestRegionEligibilityResult:
+    """v0.18 Phase 2 A1: Per-region eligibility tests."""
+
+    def test_fully_static_graph(self):
+        """All-static graph → all regions eligible."""
+        from sonata.regions import (
+            RegionEligibility, RegionEligibilityResult,
+            check_region_eligibility,
+        )
+        from types import SimpleNamespace
+
+        # Build a simple static IR (no control flow)
+        call = SimpleNamespace(
+            __class__=type("Call", (), {}),
+            callee_name="kernel",
+            args=("x",), arg_names=("x",),
+            arg_directions=("Input",), arg_storage_keys=("param:x",),
+            core_type="aic", node=SimpleNamespace(),
+        )
+        func = SimpleNamespace(
+            body=[call], name="main", calls=[call],
+            func_type=SimpleNamespace(value="Orchestration"),
+            node=SimpleNamespace(body=[call], name="main"),
+        )
+
+        result = check_region_eligibility(func.node)
+        assert result.eligible
+        region_elig = result.metadata.get("region_eligibility")
+        assert region_elig is not None
+        assert isinstance(region_elig, RegionEligibilityResult)
+        assert region_elig.overall_eligible is True
+        assert region_elig.static_count >= 1
+
+    def test_region_eligibility_result_properties(self):
+        """RegionEligibilityResult properties work correctly."""
+        from sonata.regions import RegionEligibility, RegionEligibilityResult
+
+        regions = (
+            RegionEligibility(region_id="region_0", eligible=True, status="static"),
+            RegionEligibility(region_id="region_1", eligible=False, status="dynamic",
+                              fallback_reason="ForStmt is a dynamic region"),
+        )
+        result = RegionEligibilityResult(
+            overall_eligible=True,
+            regions=regions,
+            static_count=1,
+            dynamic_count=1,
+        )
+        assert result.is_partially_eligible
+        assert result.eligible_region_ids() == ("region_0",)
+        assert result.fallback_region_ids() == ("region_1",)
+
+    def test_all_static_not_partial(self):
+        """All-static → not partially eligible."""
+        from sonata.regions import RegionEligibility, RegionEligibilityResult
+
+        regions = (
+            RegionEligibility(region_id="region_0", eligible=True, status="static"),
+            RegionEligibility(region_id="region_1", eligible=True, status="static"),
+        )
+        result = RegionEligibilityResult(
+            overall_eligible=True, regions=regions,
+            static_count=2, dynamic_count=0,
+        )
+        assert not result.is_partially_eligible
+        assert result.fallback_region_ids() == ()
