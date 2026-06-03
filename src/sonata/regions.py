@@ -750,8 +750,86 @@ def invalidate_region_tree(
 
 
 # ---------------------------------------------------------------------------
-# v0.18 Phase 2 A1: Per-region eligibility result
+# v0.18 Phase 2 B2: ForStmt expansion
 # ---------------------------------------------------------------------------
+
+def _get_trip_count(node: Any) -> int | None:
+    """Return constant trip count for a ForStmt, or None if not constant."""
+    if type(node).__name__ != "ForStmt":
+        return None
+    start = getattr(node, "start", None)
+    stop = getattr(node, "stop", None)
+    step = getattr(node, "step", None)
+    if not isinstance(start, (int, float)) or isinstance(start, bool):
+        return None
+    if not isinstance(stop, (int, float)) or isinstance(stop, bool):
+        return None
+    if step is not None and step != 1:
+        return None
+    trip = int(stop) - int(start)
+    return trip if 0 < trip <= 16 else None
+
+
+def _collect_calls_from_body(node: Any) -> tuple[Any, ...]:
+    """Collect ordinary Call nodes from a ForStmt's body."""
+    body = getattr(node, "body", None)
+    if body is None:
+        return ()
+    if not isinstance(body, (list, tuple)):
+        body = (body,)
+    calls = []
+    for stmt in body:
+        kind = type(stmt).__name__
+        if kind in ("Call", "EvalStmt"):
+            calls.append(stmt)
+        elif hasattr(stmt, "body"):
+            # Nested structure — recurse one level
+            for sub in _collect_calls_from_body(stmt):
+                calls.append(sub)
+    return tuple(calls)
+
+
+def expand_for_stmt(node: Any) -> tuple[Any, ...]:
+    """Expand a constant-trip-count ForStmt into repeated body calls.
+
+    For a ForStmt with trip_count=N, returns N copies of the body's
+    ordinary Calls. Each copy is a deep clone to avoid shared state.
+
+    Returns empty tuple if the node is not an unrollable ForStmt.
+    """
+    trip_count = _get_trip_count(node)
+    if trip_count is None:
+        return ()
+
+    body_calls = _collect_calls_from_body(node)
+    if not body_calls:
+        return ()
+
+    import copy
+    expanded: list[Any] = []
+    for _ in range(trip_count):
+        for call in body_calls:
+            expanded.append(copy.deepcopy(call))
+    return tuple(expanded)
+
+
+def expand_task_graph(nodes: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Expand all unrollable ForStmts in a node sequence.
+
+    For each node:
+    - If it's an unrollable ForStmt → expand into repeated body calls
+    - Otherwise → keep as-is
+
+    Returns the expanded node sequence.
+    """
+    result: list[Any] = []
+    for node in nodes:
+        kind = type(node).__name__
+        if kind == "ForStmt" and _get_trip_count(node) is not None:
+            result.extend(expand_for_stmt(node))
+        else:
+            result.append(node)
+    return tuple(result)
 
 
 @dataclass(frozen=True)

@@ -924,3 +924,84 @@ class TestRegionEligibilityResult:
         assert not result.is_partially_eligible
         assert result.eligible_region_ids() == ()
         assert result.fallback_region_ids() == ("region_0", "region_1")
+
+
+class TestForStmtExpansion:
+    """v0.18 Phase 2 B2: ForStmt → expanded task graph."""
+
+    def _make_for_stmt(self, start, stop, body_calls=()):
+        class ForStmt:
+            pass
+        node = ForStmt()
+        node.start = start
+        node.stop = stop
+        node.step = None
+        node.body = tuple(body_calls)
+        return node
+
+    def _make_call(self, name):
+        class Call:
+            pass
+        c = Call()
+        c.__class__ = type("Call", (), {})
+        c.callee_name = name
+        return c
+
+    def test_expand_simple_loop(self):
+        """for i in range(4): call() → 4 copies of call."""
+        from sonata.regions import expand_for_stmt
+        call = self._make_call("kernel")
+        for_stmt = self._make_for_stmt(0, 4, body_calls=[call])
+        expanded = expand_for_stmt(for_stmt)
+        assert len(expanded) == 4
+        # All copies should be distinct objects
+        assert len(set(id(c) for c in expanded)) == 4
+
+    def test_expand_non_loop_returns_empty(self):
+        """Non-ForStmt → empty tuple."""
+        from sonata.regions import expand_for_stmt
+        node = self._make_call("kernel")
+        assert expand_for_stmt(node) == ()
+
+    def test_expand_large_loop_returns_empty(self):
+        """trip_count > 16 → not unrollable, returns empty."""
+        from sonata.regions import expand_for_stmt
+        call = self._make_call("kernel")
+        for_stmt = self._make_for_stmt(0, 100, body_calls=[call])
+        assert expand_for_stmt(for_stmt) == ()
+
+    def test_expand_empty_body_returns_empty(self):
+        """ForStmt with no body calls → empty."""
+        from sonata.regions import expand_for_stmt
+        for_stmt = self._make_for_stmt(0, 4, body_calls=[])
+        assert expand_for_stmt(for_stmt) == ()
+
+    def test_expand_task_graph(self):
+        """expand_task_graph expands ForStmts, keeps others."""
+        from sonata.regions import expand_task_graph
+        call1 = self._make_call("pre")
+        call2 = self._make_call("in_loop")
+        call3 = self._make_call("post")
+        for_stmt = self._make_for_stmt(0, 3, body_calls=[call2])
+
+        nodes = (call1, for_stmt, call3)
+        expanded = expand_task_graph(nodes)
+        # call1 + 3 copies of call2 + call3 = 5
+        assert len(expanded) == 5
+        # First is call1, last is call3
+        assert expanded[0].callee_name == "pre"
+        assert expanded[-1].callee_name == "post"
+        # Middle 3 are copies of in_loop
+        for i in range(1, 4):
+            assert expanded[i].callee_name == "in_loop"
+
+    def test_expand_preserves_independence(self):
+        """Expanded copies are independent (deep copy)."""
+        from sonata.regions import expand_for_stmt
+        call = self._make_call("kernel")
+        for_stmt = self._make_for_stmt(0, 2, body_calls=[call])
+        expanded = expand_for_stmt(for_stmt)
+        assert len(expanded) == 2
+        # Modify one, other should be unaffected
+        expanded[0].callee_name = "modified"
+        assert expanded[1].callee_name == "kernel"
