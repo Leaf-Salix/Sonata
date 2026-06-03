@@ -885,3 +885,42 @@ class TestRegionEligibilityResult:
         )
         assert not result.is_partially_eligible
         assert result.fallback_region_ids() == ()
+
+    def test_mixed_eligibility_partial(self):
+        """One static + one dynamic → partially eligible."""
+        from sonata.regions import RegionEligibility, RegionEligibilityResult
+
+        regions = (
+            RegionEligibility(region_id="region_0", eligible=True, status="static"),
+            RegionEligibility(region_id="region_1", eligible=False, status="dynamic",
+                              fallback_reason="ForStmt"),
+        )
+        result = RegionEligibilityResult(
+            overall_eligible=True,
+            regions=regions,
+            static_count=1,
+            dynamic_count=1,
+        )
+        assert result.overall_eligible
+        assert result.is_partially_eligible
+        assert result.eligible_region_ids() == ("region_0",)
+        assert result.fallback_region_ids() == ("region_1",)
+
+    def test_all_dynamic_not_eligible(self):
+        """All dynamic → not eligible, not partial."""
+        from sonata.regions import RegionEligibility, RegionEligibilityResult
+
+        regions = (
+            RegionEligibility(region_id="region_0", eligible=False, status="dynamic"),
+            RegionEligibility(region_id="region_1", eligible=False, status="dynamic"),
+        )
+        result = RegionEligibilityResult(
+            overall_eligible=False,
+            regions=regions,
+            static_count=0,
+            dynamic_count=2,
+        )
+        assert not result.overall_eligible
+        assert not result.is_partially_eligible
+        assert result.eligible_region_ids() == ()
+        assert result.fallback_region_ids() == ("region_0", "region_1")
