@@ -215,7 +215,22 @@ a { color: var(--accent); }
 <p style="margin-top: 0.5rem;"><span class="pass">0 bugs</span> | 5 cleanup/efficiency findings</p>
 </div>
 
-<h2>6. 环境信息</h2>
+<h2>6. 端到端 Runtime 验证 (v0.16)</h2>
+
+<div class="card">
+<p><code>sonata_compile()</code> → <code>sonata_plan.json</code> → <code>execute_with_sonata()</code> → simpler a2a3sim 执行成功</p>
+
+<table>
+<tr><th>算子</th><th>task</th><th>core_type</th><th>sonata_plan.json</th><th>simpler 执行</th></tr>
+<tr><td>hello_world</td><td>add_scalar_incore_0</td><td>aiv (vector)</td><td><span class="pass">✅ generated</span></td><td><span class="pass">✅ passed</span></td></tr>
+<tr><td>matmul</td><td>matmul_incore_0</td><td>aic (cube)</td><td><span class="pass">✅ generated</span></td><td><span class="pass">✅ passed</span></td></tr>
+<tr><td>softmax</td><td>softmax_incore_0</td><td>aiv (vector)</td><td><span class="pass">✅ generated</span></td><td><span class="pass">✅ passed</span></td></tr>
+</table>
+
+<p style="margin-top: 0.5rem;">链路：<code>@pl.program</code> → pypto pipeline (39 passes) → C++ codegen → <code>sonata_analyze()</code> → <code>sonata_plan.json</code> → <code>execute_with_sonata()</code> reads plan → block_dim injection → simpler a2a3sim</p>
+</div>
+
+<h2>7. 环境信息</h2>
 
 <div class="card">
 <table>
