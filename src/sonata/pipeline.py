@@ -676,19 +676,26 @@ def compute_scheduling_instructions(
     *,
     base_block_dim: int = 32,
     fallback_block_dim: int = 1,
+    profile_db: Any = None,
 ) -> tuple[SchedulingInstruction, ...]:
     """Generate scheduling instructions from dispatch results.
 
     v0.15 Phase 2 A1: Region-aware scheduling.
+    v0.18 Phase 3 B1: Profile-aware scheduling (optional).
 
     - static regions → base_block_dim (optimized)
     - dynamic regions → fallback_block_dim (conservative)
     - mixed regions → half of base_block_dim
 
+    When ``profile_db`` is provided and has latency data, static regions
+    use profile-informed block_dim: higher latency → higher block_dim
+    (more parallelism to amortize overhead).
+
     Args:
         dispatch: DispatchPlan from dispatch_regions().
         base_block_dim: Block dim for optimized static regions.
         fallback_block_dim: Block dim for dynamic fallback regions.
+        profile_db: Optional ProfileDatabase for timing-aware scheduling.
 
     Returns:
         Tuple of SchedulingInstruction, one per region.
@@ -698,6 +705,16 @@ def compute_scheduling_instructions(
         if result.action == "optimized":
             bd = base_block_dim
             reason = "static region — optimized"
+            # v0.18: Profile-informed adjustment for static regions
+            if profile_db is not None:
+                avg_latency = _get_avg_profile_latency(profile_db)
+                if avg_latency is not None:
+                    if avg_latency > 1000:  # >1ms → high parallelism
+                        bd = min(base_block_dim * 2, 64)
+                        reason = f"static region — profile-informed (latency={avg_latency:.0f}us)"
+                    elif avg_latency < 100:  # <100us → low overhead
+                        bd = max(base_block_dim // 2, 4)
+                        reason = f"static region — profile-informed (latency={avg_latency:.0f}us)"
         elif result.action == "fallback":
             bd = fallback_block_dim
             reason = "dynamic region — fallback"
@@ -710,6 +727,14 @@ def compute_scheduling_instructions(
             reason=reason,
         ))
     return tuple(instructions)
+
+
+def _get_avg_profile_latency(profile_db: Any) -> float | None:
+    """Return average mean_latency_us across all profiles, or None if empty."""
+    profiles = profile_db.all_profiles()
+    if not profiles:
+        return None
+    return sum(p.mean_latency_us for p in profiles) / len(profiles)
 
 
 @dataclass(frozen=True)

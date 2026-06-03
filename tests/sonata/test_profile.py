@@ -101,5 +101,62 @@ class TestProfileDatabase:
         assert db.all_profiles() == ()
 
 
+class TestProfileAwareScheduling:
+    """v0.18 Phase 3 B1: compute_scheduling_instructions with profile data."""
+
+    def test_no_profile_uses_default(self):
+        """Without profile_db, uses default block_dim."""
+        from sonata.pipeline import DispatchPlan, RegionDispatchResult, compute_scheduling_instructions
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="static", action="optimized"),),
+            optimized_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch)
+        assert inst[0].block_dim == 32
+        assert "optimized" in inst[0].reason
+
+    def test_high_latency_increases_block_dim(self):
+        """High latency profile → higher block_dim for more parallelism."""
+        from sonata.pipeline import DispatchPlan, RegionDispatchResult, compute_scheduling_instructions
+        from sonata.profile import ProfileDatabase
+        db = ProfileDatabase()
+        db.record("matmul", (128, 128), "fp16", "aic", 2000.0)  # >1ms
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="static", action="optimized"),),
+            optimized_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, profile_db=db)
+        assert inst[0].block_dim == 64  # min(32*2, 64)
+        assert "profile-informed" in inst[0].reason
+
+    def test_low_latency_decreases_block_dim(self):
+        """Low latency profile → lower block_dim (less overhead)."""
+        from sonata.pipeline import DispatchPlan, RegionDispatchResult, compute_scheduling_instructions
+        from sonata.profile import ProfileDatabase
+        db = ProfileDatabase()
+        db.record("add", (1024,), "fp16", "aiv", 50.0)  # <100us
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="static", action="optimized"),),
+            optimized_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, profile_db=db)
+        assert inst[0].block_dim == 16  # max(32//2, 4)
+        assert "profile-informed" in inst[0].reason
+
+    def test_dynamic_region_unaffected_by_profile(self):
+        """Dynamic regions always use fallback_block_dim regardless of profile."""
+        from sonata.pipeline import DispatchPlan, RegionDispatchResult, compute_scheduling_instructions
+        from sonata.profile import ProfileDatabase
+        db = ProfileDatabase()
+        db.record("matmul", (128, 128), "fp16", "aic", 2000.0)
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="dynamic", action="fallback"),),
+            fallback_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, profile_db=db)
+        assert inst[0].block_dim == 1
+        assert "fallback" in inst[0].reason
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
