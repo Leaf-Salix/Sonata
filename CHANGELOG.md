@@ -8,6 +8,130 @@ are developed on feature branches and merged to main upon completion.
 
 ---
 
+## [v0.19] -- CI/CD + Production Hardening
+
+### Added
+- GitHub Actions workflow for automated test regression.
+- Makefile with `test-sonata`, `test-integration`, `test-st`, `test-all` targets.
+- Pipeline edge case tests (empty score, None score, empty dependencies).
+- Large graph performance benchmarks (200 calls, linear scaling).
+- API documentation for `runtime_hook` and `profile` modules.
+
+### Fixed
+- Inbox cleanup: runtime-strategy-gap resolved, roadmap_undecided #3/#19 resolved.
+
+---
+
+## [v0.18] -- Runtime Integration + Region Extension + Profile DB
+
+### Added
+- **Runtime Hook** (`sonata.runtime_hook`):
+  - `apply_sonata_runtime_hints()` optional pre-dispatch hook in PyPTO `execute_compiled()`.
+  - Auto-discovers `sonata_plan.json` — no explicit `execute_with_sonata()` needed.
+  - `user_block_dim` distinguishes user-supplied from RUNTIME_CONFIG block_dim.
+- **Per-Region Eligibility** (`sonata.regions`):
+  - `RegionEligibilityResult` and `RegionEligibility` dataclasses.
+  - `check_region_eligibility()` populates per-region breakdown.
+  - Region-level guards are independent.
+- **Static-Enumerable Control Flow** (`sonata.eligibility`):
+  - `_is_unrollable_for_stmt()`: constant-trip-count ForStmt detection (<=16).
+  - `expand_for_stmt()` / `expand_task_graph()`: loop body expansion.
+- **Profile Database** (`sonata.profile`):
+  - `OperatorProfile` dataclass with Welford's incremental mean/std.
+  - `ProfileDatabase` with record/lookup/save/load.
+  - `compute_scheduling_instructions()` accepts optional `profile_db`.
+  - `collect_task_timings()` for post-execution timing collection.
+- **Memory Planning** in `sonata_analyze()`:
+  - `sonata_plan.json` now includes `memory_plan` with `peak_memory` and `allocations`.
+
+### Changed
+- ST conftest no longer monkeypatches `execute_compiled` / `execute_on_device`.
+- Runner hook is the single runtime integration path.
+
+---
+
+## [v0.17] -- Guard Hardening + StorageEffect + Bug Fixes
+
+### Added
+- **Guard Statistics** in `sonata_plan.json`:
+  - `guard_stats` with `shape_assumption_count`, `unique_symbols`, `guard_density`.
+  - Warning when `guard_density > 8` (TorchDynamo reference).
+- **STALE Guard Status**:
+  - `GuardStatus.STALE` for two-level invalidation (plan handle invalid, Score valid).
+  - `GuardDetail` dataclass for per-guard evaluation info.
+  - `check_guards_at_runtime()` returns structured results with STALE semantics.
+- **StorageEffect Model** (`sonata.score`):
+  - `StorageEffect` dataclass (`buffer_id`, `kind`).
+  - `Task.storage_effects` optional field.
+  - `derive_storage_effects()` from arg_directions + arg_storage_keys.
+  - Serialization/deserialization round-trip support.
+
+### Fixed
+- `ShapeAssumption.__eq__/__hash__` now includes `dims` (was comparing only symbol+severity).
+- `plan_handle_from_dict()` now reads `guard_status` and `critical_guards`.
+- `_compute_fingerprint()` uses `score_fingerprint()` instead of counts.
+- `GreedySolver.solve()` respects `device_memory_limit`.
+- `score_to_dict()` severity serialization uses `getattr(.value)`.
+
+### Performance
+- IR tree walk cache in eligibility (`_walk_cache`).
+- Performance benchmarks at qwen3 scale.
+
+---
+
+## [v0.16] -- Broader pypto-lib Coverage
+
+### Added
+- SPMD eligibility via region-based fallback.
+- LLM model analysis (qwen3=49 tasks, deepseek=46 tasks).
+- End-to-end simpler execution verification.
+
+---
+
+## [v0.15] -- Deeper Runtime Integration
+
+### Added
+- Memory offset injection (`write_memory_hints`).
+- Region-aware scheduling (block_dim by region type).
+- Guard cache invalidation.
+
+---
+
+## [v0.14] -- Runtime Integration + pypto-lib Validation
+
+### Added
+- Sonata influences runtime via `execute_on_device` block_dim.
+- pypto-lib example + LLM model integration tests.
+
+---
+
+## [v0.13] -- Performance & Dependency Kind
+
+### Added
+- `DependencyKind` enum in `dependencies.py`.
+- Certified IR cache.
+- Performance benchmarks.
+
+---
+
+## [v0.12] -- Deep PyPTO Pipeline Integration
+
+### Added
+- Sonata-integrated st tests (D0-D7).
+- `sonata_plan.json` schema and serialization.
+- Region-aware execution dispatcher.
+
+---
+
+## [v0.11] -- Region Tree & Memory Optimization
+
+### Added
+- `RegionTree` with per-region fingerprints.
+- Memory planning (conflict matrix + GreedySolver).
+- Real PyPTO IR integration via `PostSimplifyPyPTOInputAdapter`.
+
+---
+
 ## [v0.10] -- Guard Condition Abstraction
 
 **Theme**: Unified guard condition system with soft/hard severity classification,
