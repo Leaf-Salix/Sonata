@@ -490,12 +490,12 @@ def check_region_eligibility(
     
     # Process each maximal static subtree
     for static_subtree in region_tree.static_subtrees():
-        # TODO: Extract Score from this subtree
-        # For now, mark as eligible but note that per-region extraction is pending
+        # v0.19: Placeholder Score per region. Full per-region Score extraction
+        # requires integration with PostSimplifyPyPTOInputAdapter per subtree.
+        # This will be addressed when liveness analysis is region-aware (v0.20+).
         region_key = f"region_{static_subtree.region.region_id}"
-        
-        # Create a placeholder Score - will be replaced with real extraction
-        # This demonstrates the per-region structure
+
+        # Create a placeholder Score for the per-region structure
         from .score import Score, Task, Dependency
         
         placeholder_score = Score(
