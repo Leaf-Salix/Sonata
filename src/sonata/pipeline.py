@@ -491,12 +491,17 @@ def execute_with_sonata(
         if runtime_values and plan.score is not None:
             guard_results = check_guards_at_runtime(plan, runtime_values)
             hard_failed = any(gr.guard_status == "all_failed" for gr in guard_results)
+            has_stale = any(gr.guard_status == "stale" for gr in guard_results)
             if hard_failed:
                 _clear_ir_cache()
                 _region_log.error(
                     "[SONATA] HARD guard violation — cleared IR cache, skipping execution"
                 )
                 return None, plan
+            if has_stale:
+                _region_log.warning(
+                    "[SONATA] STALE guard — plan handle invalid, Score still valid"
+                )
 
             # Update guard status in sonata_plan.json
             guard_status = update_region_guard_status(plan.plan_handle, guard_results)
@@ -700,12 +705,25 @@ def compute_scheduling_instructions(
 
 
 @dataclass(frozen=True)
+class GuardDetail:
+    """Per-guard evaluation detail (v0.17 Phase 2 B2)."""
+
+    symbol: str
+    satisfied: bool
+    severity: str  # "soft" or "hard"
+
+
+@dataclass(frozen=True)
 class GuardCheckResult:
-    """Result of runtime guard checking."""
+    """Result of runtime guard checking.
+
+    v0.17 Phase 2 B2: Enhanced with per-guard details and STALE semantics.
+    """
 
     region_id: str
-    guard_status: str  # "all_satisfied", "partial_failed", "all_failed"
+    guard_status: str  # "all_satisfied", "partial_failed", "all_failed", "stale"
     violated_guards: tuple[str, ...] = ()
+    guard_details: tuple[GuardDetail, ...] = ()
 
 
 def check_guards_at_runtime(
@@ -747,11 +765,17 @@ def check_guards_at_runtime(
             continue
 
         violated: list[str] = []
+        details: list[GuardDetail] = []
         any_failed = False
         hard_failed = False
 
         for guard in guards:
             satisfied, action = evaluator.evaluate(guard, runtime_values)
+            details.append(GuardDetail(
+                symbol=guard.symbol,
+                satisfied=satisfied,
+                severity=str(guard.severity),
+            ))
             if not satisfied:
                 violated.append(guard.symbol)
                 any_failed = True
@@ -761,7 +785,9 @@ def check_guards_at_runtime(
         if hard_failed:
             gs = "all_failed"
         elif any_failed:
-            gs = "partial_failed"
+            # v0.17 Phase 2 B2: STALE = only soft guards failed,
+            # Score fingerprint still valid, only plan handle needs rebuild
+            gs = "stale"
         else:
             gs = "all_satisfied"
 
@@ -769,6 +795,7 @@ def check_guards_at_runtime(
             region_id=region_id,
             guard_status=gs,
             violated_guards=tuple(violated),
+            guard_details=tuple(details),
         ))
 
         if verbose and any_failed:

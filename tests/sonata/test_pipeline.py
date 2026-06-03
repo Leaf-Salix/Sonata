@@ -177,7 +177,7 @@ class TestCheckGuards:
         score = _make_score([ShapeAssumption(symbol="x", dims=(32,), severity=GUARD_SEVERITY_SOFT)])
         r = SonataAnalysisResult(eligible=True, score=score, region_statuses={"r0": "static"})
         results = check_guards_at_runtime(r, {"x": (64,)})
-        assert results[0].guard_status == "partial_failed"
+        assert results[0].guard_status == "stale"
 
     def test_multiple_guards_mixed(self):
         score = _make_score([
@@ -185,9 +185,9 @@ class TestCheckGuards:
             ShapeAssumption(symbol="y", dims=(16,), severity=GUARD_SEVERITY_SOFT),
         ])
         r = SonataAnalysisResult(eligible=True, score=score, region_statuses={"r0": "static"})
-        # x satisfied, y violated (soft)
+        # x satisfied, y violated (soft) → stale
         results = check_guards_at_runtime(r, {"x": (32,), "y": (99,)})
-        assert results[0].guard_status == "partial_failed"
+        assert results[0].guard_status == "stale"
         assert "y" in results[0].violated_guards
         assert "x" not in results[0].violated_guards
 

@@ -683,3 +683,88 @@ class TestGuardStatsInSonataPlan:
         assert stats["guard_density"] == 10.0
         assert "warnings" in d
         assert any("guard_density" in w for w in d["warnings"])
+
+
+class TestGuardCheckStaleSemantics:
+    """v0.17 Phase 2 B2: STALE guard status for two-level invalidation."""
+
+    def _make_sonata_result(self, assumptions):
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import SonataAnalysisResult
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=tuple(assumptions),
+            )
+        return SonataAnalysisResult(
+            eligible=True,
+            score=score,
+            region_statuses={"region_0": "static"},
+        )
+
+    def test_all_satisfied(self):
+        """All guards pass → all_satisfied."""
+        from sonata.pipeline import check_guards_at_runtime
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = self._make_sonata_result([
+                ShapeAssumption(symbol="batch", dims=(32,)),
+            ])
+        guard_results = check_guards_at_runtime(result, {"batch": [32]})
+        assert len(guard_results) == 1
+        assert guard_results[0].guard_status == "all_satisfied"
+
+    def test_soft_guard_failure_is_stale(self):
+        """Soft guard fails → STALE (Score still valid)."""
+        from sonata.pipeline import check_guards_at_runtime
+        from sonata.guard import GUARD_SEVERITY_SOFT
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = self._make_sonata_result([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+            ])
+        guard_results = check_guards_at_runtime(result, {"batch": [64]})
+        assert guard_results[0].guard_status == "stale"
+        assert "batch" in guard_results[0].violated_guards
+
+    def test_hard_guard_failure_is_all_failed(self):
+        """Hard guard fails → ALL_FAILED (full replan needed)."""
+        from sonata.pipeline import check_guards_at_runtime
+        from sonata.guard import GUARD_SEVERITY_HARD
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = self._make_sonata_result([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ])
+        guard_results = check_guards_at_runtime(result, {"batch": [64]})
+        assert guard_results[0].guard_status == "all_failed"
+
+    def test_guard_details_populated(self):
+        """guard_details contains per-guard evaluation info."""
+        from sonata.pipeline import check_guards_at_runtime
+        from sonata.guard import GUARD_SEVERITY_SOFT
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = self._make_sonata_result([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+                ShapeAssumption(symbol="seq", dims=(128,)),
+            ])
+        guard_results = check_guards_at_runtime(
+            result, {"batch": [64], "seq": [128]}
+        )
+        details = guard_results[0].guard_details
+        assert len(details) == 2
+        batch_detail = [d for d in details if d.symbol == "batch"][0]
+        seq_detail = [d for d in details if d.symbol == "seq"][0]
+        assert not batch_detail.satisfied
+        assert batch_detail.severity == "soft"
+        assert seq_detail.satisfied
+        assert seq_detail.severity == "hard"
