@@ -887,3 +887,104 @@ class TestShapeAssumptionEquality:
         assert hash(a) != hash(b)
         s = {a, b}
         assert len(s) == 2
+
+
+class TestRegionIndependentGuards:
+    """v0.18 Phase 2 A2: Each region evaluates its own guards independently."""
+
+    def test_per_region_guard_independence(self):
+        """Region A's guard failure doesn't affect Region B's guard check."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import (
+            SonataAnalysisResult, check_guards_at_runtime, GuardCheckResult,
+        )
+        from sonata.score import EligibilityResult
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            # Region 0: guard batch=32 (soft)
+            score_a = Score(
+                name="region_0",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+                ),
+            )
+            # Region 1: guard seq=128 (hard)
+            score_b = Score(
+                name="region_1",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=1, func_id=1, core_type="aiv"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="seq", dims=(128,), severity=GUARD_SEVERITY_HARD),
+                ),
+            )
+
+        # Build per_region_scores metadata
+        elig_result = EligibilityResult(eligible=True)
+        from sonata.regions import RegionEligibility, RegionEligibilityResult
+        region_elig = RegionEligibilityResult(
+            overall_eligible=True,
+            regions=(
+                RegionEligibility(region_id="region_0", eligible=True, status="static"),
+                RegionEligibility(region_id="region_1", eligible=True, status="static"),
+            ),
+            static_count=2, dynamic_count=0,
+        )
+        # Set per_region_scores on the eligibility result metadata
+        import types
+        meta = {"per_region_scores": {"region_0": score_a, "region_1": score_b}}
+        object.__setattr__(elig_result, "metadata", meta)
+        object.__setattr__(region_elig, "metadata", meta)
+        # Actually store region_elig in elig_result metadata too
+        meta2 = {"per_region_scores": {"region_0": score_a, "region_1": score_b}}
+        object.__setattr__(elig_result, "metadata", meta2)
+
+        result = SonataAnalysisResult(
+            eligible=True,
+            score=score_a,  # global fallback
+            region_eligibility=elig_result,
+            region_statuses={"region_0": "static", "region_1": "static"},
+        )
+
+        # batch=64 (violates soft), seq=128 (satisfies hard)
+        guard_results = check_guards_at_runtime(result, {"batch": [64], "seq": [128]})
+
+        assert len(guard_results) == 2
+        r0 = next(gr for gr in guard_results if gr.region_id == "region_0")
+        r1 = next(gr for gr in guard_results if gr.region_id == "region_1")
+
+        # Region 0: batch=64 violates soft guard → stale
+        assert r0.guard_status == "stale"
+        # Region 1: seq=128 satisfies hard guard → all_satisfied
+        assert r1.guard_status == "all_satisfied"
+
+    def test_global_fallback_when_no_per_region_scores(self):
+        """Without per_region_scores, uses global score for all regions."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import SonataAnalysisResult, check_guards_at_runtime
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="global",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+                ),
+            )
+
+        result = SonataAnalysisResult(
+            eligible=True,
+            score=score,
+            region_eligibility=None,  # no per-region scores
+            region_statuses={"region_0": "static", "region_1": "static"},
+        )
+
+        guard_results = check_guards_at_runtime(result, {"batch": [64]})
+        # Both regions should get the same result (global score)
+        assert all(gr.guard_status == "stale" for gr in guard_results)

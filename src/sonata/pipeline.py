@@ -761,13 +761,21 @@ def check_guards_at_runtime(
     evaluator = GuardEvaluator()
     results: list[GuardCheckResult] = []
 
+    # v0.18 Phase 2 A2: Use per-region scores when available
+    per_region_scores: dict[str, Any] = {}
+    if sonata_result.region_eligibility is not None:
+        meta = getattr(sonata_result.region_eligibility, 'metadata', None)
+        if meta and isinstance(meta, dict):
+            per_region_scores = meta.get('per_region_scores', {})
+
     for region_id, status in sonata_result.region_statuses.items():
-        # Collect guards from the score's shape assumptions
-        if sonata_result.score is None:
+        # v0.18: Try per-region score first, fall back to global score
+        region_score = per_region_scores.get(region_id) or sonata_result.score
+        if region_score is None:
             results.append(GuardCheckResult(region_id=region_id, guard_status="all_satisfied"))
             continue
 
-        guards = list(sonata_result.score.shape_assumptions)
+        guards = list(region_score.shape_assumptions)
         if not guards:
             results.append(GuardCheckResult(region_id=region_id, guard_status="all_satisfied"))
             continue
