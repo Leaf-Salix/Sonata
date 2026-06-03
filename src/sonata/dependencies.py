@@ -219,6 +219,43 @@ def _storage_keys(task: Task) -> tuple[object | None, ...]:
         return task.arg_storage_keys
     return (None,) * len(task.args)
 
+
+def derive_storage_effects(task: Task) -> tuple["StorageEffect", ...]:
+    """Derive StorageEffect list from a Task's arg_directions and arg_storage_keys.
+
+    v0.17 Phase 3 A3: Maps argument directions to storage access types:
+    - input + has storage_key → StorageEffect(key, "read")
+    - output/outputexisting + has storage_key → StorageEffect(key, "write")
+    - inout + has storage_key → StorageEffect(key, "inplace_write")
+    - scalar/nodep or no storage_key → no StorageEffect
+
+    Returns empty tuple if Task has no arg_directions or arg_storage_keys.
+    """
+    from .score import StorageEffect
+
+    if not task.arg_directions or not task.arg_storage_keys:
+        return ()
+    if len(task.arg_directions) != len(task.args):
+        return ()
+    if len(task.arg_storage_keys) != len(task.args):
+        return ()
+
+    effects: list[StorageEffect] = []
+    for direction, storage_key in zip(task.arg_directions, task.arg_storage_keys):
+        if storage_key is None:
+            continue
+        normalized = normalize_direction(direction)
+        if normalized in IGNORED_DIRECTIONS:
+            continue
+        if normalized == "inout":
+            effects.append(StorageEffect(buffer_id=str(storage_key), kind="inplace_write"))
+        elif normalized in READ_DIRECTIONS:
+            effects.append(StorageEffect(buffer_id=str(storage_key), kind="read"))
+        elif normalized in WRITE_DIRECTIONS:
+            effects.append(StorageEffect(buffer_id=str(storage_key), kind="write"))
+    return tuple(effects)
+
+
 __all__ = [
     "DEPENDENCY_POLICY_DATAFLOW_V0",
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
@@ -228,5 +265,6 @@ __all__ = [
     "build_ordering_dependencies",
     "build_sequential_dependencies",
     "dataflow_dependency_fallback_code",
+    "derive_storage_effects",
     "supports_dataflow_dependencies",
 ]

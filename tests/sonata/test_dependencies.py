@@ -211,5 +211,87 @@ def test_build_dependencies_rejects_unknown_policy() -> None:
         build_dependencies((), policy="unknown")
 
 
+class TestDeriveStorageEffects:
+    """v0.17 Phase 3 A3+B1: derive_storage_effects tests."""
+
+    def test_input_is_read(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 1
+        assert effects[0].buffer_id == "buf:x"
+        assert effects[0].kind == "read"
+
+    def test_output_is_write(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("y",), arg_directions=("output",),
+                 arg_storage_keys=("buf:y",))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 1
+        assert effects[0].kind == "write"
+
+    def test_inout_is_inplace_write(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("z",), arg_directions=("inout",),
+                 arg_storage_keys=("buf:z",))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 1
+        assert effects[0].kind == "inplace_write"
+
+    def test_no_storage_key_skipped(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=(None,))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 0
+
+    def test_scalar_ignored(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("n",), arg_directions=("scalar",),
+                 arg_storage_keys=("buf:n",))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 0
+
+    def test_no_directions_returns_empty(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic", args=("x",))
+        effects = derive_storage_effects(t)
+        assert effects == ()
+
+    def test_mixed_args(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "y", "z", "n"),
+                 arg_directions=("input", "output", "inout", "scalar"),
+                 arg_storage_keys=("buf:x", "buf:y", "buf:z", None))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 3
+        kinds = [e.kind for e in effects]
+        assert kinds == ["read", "write", "inplace_write"]
+
+    def test_outputexisting_is_write(self):
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("y",), arg_directions=("OutputExisting",),
+                 arg_storage_keys=("buf:y",))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 1
+        assert effects[0].kind == "write"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
