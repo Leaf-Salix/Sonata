@@ -511,7 +511,7 @@ def execute_with_sonata(
             plan.eligible, plan.task_count, list(plan.region_statuses.keys()),
         )
 
-        # Pre-execution: guard check
+        # Pre-execution: guard check (Sonata-specific, not in runner hook)
         if runtime_values and plan.score is not None:
             guard_results = check_guards_at_runtime(plan, runtime_values)
             hard_failed = any(gr.guard_status == "all_failed" for gr in guard_results)
@@ -540,25 +540,9 @@ def execute_with_sonata(
                     plan_path.write_text(_json.dumps(data, indent=2, sort_keys=True))
                     _region_log.info("[SONATA] Updated guard status in sonata_plan.json")
 
-        # Pre-execution: region dispatch
-        dispatch = dispatch_regions(plan)
-        _region_log.info(
-            "[SONATA] Dispatch: %d optimized, %d fallback, %d mixed",
-            dispatch.optimized_count, dispatch.fallback_count, dispatch.mixed_count,
-        )
-
-        # Influence runtime parameters based on analysis
-        if plan.task_count > 0 and "block_dim" not in kwargs:
-            instructions = compute_scheduling_instructions(dispatch)
-            if instructions:
-                # Use the first instruction's block_dim
-                # (for single-region programs this is the optimized value)
-                suggested_block_dim = instructions[0].block_dim
-                kwargs["block_dim"] = suggested_block_dim
-                _region_log.info(
-                    "[SONATA] Setting block_dim=%d (%s)",
-                    suggested_block_dim, instructions[0].reason,
-                )
+        # block_dim injection is now handled by the runner hook
+        # (apply_sonata_runtime_hints in runtime_hook.py)
+        # No need to duplicate dispatch/scheduling logic here.
 
     result = execute_compiled(work_dir, *args, **kwargs)
     return result, plan
