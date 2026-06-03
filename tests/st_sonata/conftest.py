@@ -17,6 +17,10 @@ The hook monkeypatches ``compile_program`` so that after the real
 compilation completes, Sonata analysis runs on the same program and
 writes ``sonata_plan.json`` into the compilation work directory.
 
+The PyPTO runner's optional Sonata hook (in ``runtime_hook.py``) then
+automatically consumes ``sonata_plan.json`` at execution time — no
+block_dim monkeypatch needed.
+
 Usage::
 
     python tests/st_sonata/sonata_st_runner.py tests/st/runtime/ops/test_abs.py -- -v
@@ -157,10 +161,6 @@ def _make_patched_compile(original_compile):
                 persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
                 log.info("[SONATA] persistent copy: %s", persistent_path)
 
-                # Cache plan data for execute_on_device patch
-                import json as _json
-                _workdir_plan_cache[str(work_dir)] = _json.loads(plan_path.read_text())
-
                 # Run region dispatch (informational)
                 from sonata.pipeline import dispatch_regions
                 dispatch = dispatch_regions(sonata_result)
@@ -175,46 +175,6 @@ def _make_patched_compile(original_compile):
 
         return result
     return patched_compile
-
-
-def _make_patched_execute(original_execute):
-    """Wrap execute_compiled to inject Sonata-informed block_dim."""
-    @functools.wraps(original_execute)
-    def patched_execute(work_dir, *args, **kwargs):
-        plan_path = Path(str(work_dir)) / "sonata_plan.json"
-        if plan_path.exists():
-            try:
-                import json
-                plan_data = json.loads(plan_path.read_text())
-                task_count = plan_data.get("task_count", 0)
-                if task_count > 0 and "block_dim" not in kwargs:
-                    suggested = min(task_count, 32)
-                    kwargs["block_dim"] = suggested
-                    log.info("[SONATA] block_dim=%d (from %d tasks)", suggested, task_count)
-            except Exception:
-                pass
-        return original_execute(work_dir, *args, **kwargs)
-    return patched_execute
-
-
-# Cache: work_dir → sonata plan data (for execute_on_device patch)
-_workdir_plan_cache: dict[str, dict] = {}
-
-
-def _make_patched_execute_on_device(original_fn):
-    """Wrap execute_on_device to inject Sonata-informed block_dim."""
-    @functools.wraps(original_fn)
-    def patched_execute_on_device(chip_callable, orch_args, platform, runtime_name, device_id, **kwargs):
-        # Look for cached plan data from the most recent compile
-        for wd, plan_data in _workdir_plan_cache.items():
-            task_count = plan_data.get("task_count", 0)
-            if task_count > 0 and "block_dim" not in kwargs:
-                suggested = min(task_count, 32)
-                kwargs["block_dim"] = suggested
-                log.info("[SONATA] execute_on_device: block_dim=%d (from %d tasks)", suggested, task_count)
-                break
-        return original_fn(chip_callable, orch_args, platform, runtime_name, device_id, **kwargs)
-    return patched_execute_on_device
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -237,24 +197,6 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             break
         except (ImportError, AttributeError, ValueError):
             continue
-
-    # Monkeypatch execute_compiled to inject Sonata block_dim
-    try:
-        from pypto.runtime import runner as runner_mod
-        if not getattr(runner_mod.execute_compiled, "_sonata_patched", False):
-            runner_mod.execute_compiled = _make_patched_execute(runner_mod.execute_compiled)
-            runner_mod.execute_compiled._sonata_patched = True
-    except (ImportError, AttributeError):
-        pass
-
-    # Monkeypatch execute_on_device for st tests (they use this path)
-    try:
-        from pypto.runtime import device_runner as dr_mod
-        if not getattr(dr_mod.execute_on_device, "_sonata_patched", False):
-            dr_mod.execute_on_device = _make_patched_execute_on_device(dr_mod.execute_on_device)
-            dr_mod.execute_on_device._sonata_patched = True
-    except (ImportError, AttributeError):
-        pass
 
     # Standalone analysis for logging
     module = getattr(item, "module", None)
