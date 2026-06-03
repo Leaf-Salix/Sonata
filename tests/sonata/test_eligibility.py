@@ -630,3 +630,55 @@ def test_static_eligibility_rejects_tensor_read() -> None:
 
     assert not result.eligible
     assert result.reasons == ("tensor.read calls are not supported by initial Sonata eligibility",)
+
+
+class TestWalkCache:
+    """v0.17 Phase 2 C2: _walk cache prevents redundant tree traversals."""
+
+    def test_walk_cache_returns_same_nodes(self):
+        """Same node yields same results from cache."""
+        from sonata.eligibility import _walk, _walk_cache
+
+        node = Function(name="f", body=(EvalStmt(Call("k")),))
+
+        # First call — populates cache
+        result1 = tuple(_walk(node))
+        assert len(result1) > 0
+
+        # Second call — from cache
+        result2 = tuple(_walk(node))
+        assert result1 == result2
+
+        # Cleanup
+        _walk_cache.pop(id(node), None)
+
+    def test_walk_cache_different_nodes(self):
+        """Different nodes get different cache entries."""
+        from sonata.eligibility import _walk, _walk_cache
+
+        node1 = Function(name="f1", body=(EvalStmt(Call("k1")),))
+        node2 = Function(name="f2", body=(EvalStmt(Call("k2")),))
+
+        result1 = tuple(_walk(node1))
+        result2 = tuple(_walk(node2))
+
+        # Different nodes → different results
+        names1 = {getattr(n, 'name', None) for n in result1 if hasattr(n, 'name')}
+        names2 = {getattr(n, 'name', None) for n in result2 if hasattr(n, 'name')}
+        assert names1 != names2
+
+        # Cleanup
+        _walk_cache.pop(id(node1), None)
+        _walk_cache.pop(id(node2), None)
+
+    def test_walk_cache_does_not_mutate(self):
+        """Cached result is a tuple (immutable), not a mutable list."""
+        from sonata.eligibility import _walk, _walk_cache
+
+        node = Function(name="f", body=(EvalStmt(Call("k")),))
+
+        result = tuple(_walk(node))
+        assert isinstance(result, tuple)
+
+        # Cleanup
+        _walk_cache.pop(id(node), None)

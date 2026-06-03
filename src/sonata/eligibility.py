@@ -192,12 +192,24 @@ def _check_storage_coverage(result: EligibilityResult) -> EligibilityResult:
     return result
 
 
+_walk_cache: dict[int, tuple[Any, ...]] = {}
+
+
 def _walk(node: Any) -> Iterable[Any]:
-    """Yield ``node`` and recursively walk common IR-like child fields."""
-    # NOTE: kept as a local wrapper rather than calling adapter.walk() inline.
-    # If the adapter interface changes (different stage boundary, different
-    # normalization strategy), eligibility may need its own traversal again.
-    yield from PostSimplifyPyPTOInputAdapter.walk(node)
+    """Yield ``node`` and recursively walk common IR-like child fields.
+
+    v0.17 Phase 2 C2: Results are cached by node identity so that multiple
+    collectors (collect_storage_keys, collect_call_output_vars) sharing
+    the same root node avoid redundant tree traversals.
+    """
+    node_id = id(node)
+    cached = _walk_cache.get(node_id)
+    if cached is not None:
+        yield from cached
+        return
+    result = tuple(PostSimplifyPyPTOInputAdapter.walk(node))
+    _walk_cache[node_id] = result
+    yield from result
 
 
 def _kind(node: Any) -> str:
