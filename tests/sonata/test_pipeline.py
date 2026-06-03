@@ -389,3 +389,62 @@ class TestMemoryPlanIntegration:
         result = SonataAnalysisResult(eligible=True, score=score)
         d = result.to_dict()
         assert "memory_plan" not in d
+
+
+class TestEdgeCases:
+    """v0.19 Phase 2 B1: Edge case tests for pipeline robustness."""
+
+    def test_empty_score_no_tasks(self):
+        """Score with 0 tasks → memory_plan is None."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(name="empty", runtime_target=RuntimeTarget(), tasks=())
+        result = SonataAnalysisResult(eligible=True, score=score)
+        d = result.to_dict()
+        assert d["task_count"] == 0
+        assert "memory_plan" not in d
+
+    def test_empty_score_validation(self):
+        """Score with 0 tasks passes validation."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(name="empty", runtime_target=RuntimeTarget(), tasks=())
+        validation = score.validate()
+        assert validation.eligible
+
+    def test_none_score_result(self):
+        """SonataAnalysisResult with score=None → no crash in to_dict."""
+        result = SonataAnalysisResult(eligible=False, score=None)
+        d = result.to_dict()
+        assert d["eligible"] is False
+        assert d["task_count"] == 0
+        assert "memory_plan" not in d
+        assert "guard_stats" not in d
+        assert "score" not in d
+
+    def test_empty_dependencies(self):
+        """Score with tasks but no dependencies → valid."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="single",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                dependencies=(),
+            )
+        assert score.dependency_count() == 0
+        validation = score.validate()
+        assert validation.eligible
+
+    def test_empty_region_statuses(self):
+        """SonataAnalysisResult with no regions → dispatch returns empty."""
+        result = SonataAnalysisResult(eligible=True, region_statuses={})
+        dispatch = dispatch_regions(result)
+        assert dispatch.total == 0
+        assert dispatch.optimized_count == 0
