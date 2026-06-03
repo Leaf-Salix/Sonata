@@ -526,5 +526,66 @@ class TestTaskStorageEffects:
         assert len(t.args) == 1
 
 
+class TestStorageEffectBackwardCompat:
+    """v0.17 Phase 3 B3: Verify all existing APIs work without storage_effects."""
+
+    def test_dependencies_build_without_effects(self):
+        """build_dependencies works on Tasks without storage_effects."""
+        from sonata.dependencies import build_dependencies
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",)),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("y",), arg_directions=("output",),
+                 arg_storage_keys=("buf:y",)),
+        )
+        deps = build_dependencies(tasks, policy="sequential_v0")
+        assert len(deps) == 1
+
+    def test_derive_storage_effects_without_field(self):
+        """derive_storage_effects works on Tasks without storage_effects."""
+        from sonata.dependencies import derive_storage_effects
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",))
+        effects = derive_storage_effects(t)
+        assert len(effects) == 1
+        assert effects[0].kind == "read"
+
+    def test_score_validation_without_effects(self):
+        """Score.validate() works with Tasks that have no storage_effects."""
+        from sonata.score import Score, RuntimeTarget, Task
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic"),
+                Task(task_id=1, func_id=1, core_type="aiv"),
+            ),
+            dependencies=(),
+        )
+        result = score.validate()
+        assert result.eligible
+
+    def test_serialization_round_trip_without_effects(self):
+        """Score with no storage_effects round-trips correctly."""
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.serialization import score_to_dict
+        from sonata.deserialization import score_from_dict
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+        )
+        d = score_to_dict(score)
+        assert d["tasks"][0]["storage_effects"] == []
+        restored = score_from_dict(d)
+        assert restored.tasks[0].storage_effects is None
+        assert restored.tasks[0].task_id == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
