@@ -120,3 +120,52 @@ class TestWalkCachePerformance:
 
         # Cleanup
         _walk_cache.pop(id(node), None)
+
+
+class TestLargeGraphPerformance:
+    """v0.19 Phase 2 B2: Large graph (100+ tasks) performance."""
+
+    def test_region_analysis_200_calls(self):
+        """Region analysis at 200 calls completes in <5s (no O(N²))."""
+        func = _make_function(200, name="large_graph")
+        node = func.node
+
+        start = time.monotonic()
+        region_map = extract_regions(node)
+        tree = build_region_tree(region_map)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 5.0, f"200-call graph took {elapsed:.3f}s (limit 5s)"
+
+    def test_region_analysis_scales_linearly(self):
+        """Region extraction time scales linearly, not quadratically."""
+        times = []
+        for n in (50, 100, 200):
+            func = _make_function(n, name=f"graph_{n}")
+            start = time.monotonic()
+            region_map = extract_regions(func.node)
+            elapsed = time.monotonic() - start
+            times.append((n, elapsed))
+
+        # 4x size should not take >10x time (linear, not quadratic)
+        if times[0][1] > 0.001:
+            ratio = times[2][1] / times[0][1]
+            assert ratio < 10.0, (
+                f"Not linear: 4x size took {ratio:.1f}x time "
+                f"({times[0][1]:.4f}s → {times[2][1]:.4f}s)"
+            )
+
+    def test_walk_cache_200_calls(self):
+        """Walk cache works correctly for 200-call graph."""
+        func = _make_function(200, name="large_graph")
+        node = func.node
+
+        _walk_cache.pop(id(node), None)
+
+        r1 = tuple(_walk(node))
+        r2 = tuple(_walk(node))
+
+        assert r1 == r2
+        assert len(r1) > 200
+
+        _walk_cache.pop(id(node), None)
