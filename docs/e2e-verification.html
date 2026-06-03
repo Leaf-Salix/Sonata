@@ -230,7 +230,22 @@ a { color: var(--accent); }
 <p style="margin-top: 0.5rem;">链路：<code>@pl.program</code> → pypto pipeline (39 passes) → C++ codegen → <code>sonata_analyze()</code> → <code>sonata_plan.json</code> → <code>execute_with_sonata()</code> reads plan → block_dim injection → simpler a2a3sim</p>
 </div>
 
-<h2>7. 环境信息</h2>
+<h2>7. LLM 模型分析 (v0.16)</h2>
+
+<div class="card">
+<p>真实 LLM 模型通过 region-based fallback 获得 eligibility：</p>
+
+<table>
+<tr><th>模型</th><th>tasks</th><th>aic (cube)</th><th>aiv (vector)</th><th>edges</th><th>regions</th></tr>
+<tr><td>qwen3/14b decode</td><td>49</td><td>18</td><td>31</td><td>48</td><td>1 static</td></tr>
+<tr><td>deepseek v3.2 back</td><td>8</td><td>4</td><td>4</td><td>7</td><td>1 static</td></tr>
+<tr><td>deepseek v3.2 front</td><td>38</td><td>11</td><td>27</td><td>37</td><td>1 static</td></tr>
+</table>
+
+<p style="margin-top: 0.5rem;">AIC (cube) 用于 matmul/projection，AIV (vector) 用于 rmsnorm/softmax/rope 等逐元素操作。所有模型通过 region fallback 获得 eligibility（pl.spmd 无 Orchestration function）。</p>
+</div>
+
+<h2>8. 环境信息</h2>
 
 <div class="card">
 <table>
