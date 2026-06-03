@@ -132,3 +132,30 @@ class TestIRCacheEffectiveness:
 
         # Cleanup
         del _certified_ir_cache[id(prog)]
+
+    def test_cache_prevents_dual_pipeline(self):
+        """v0.17 C1: Cache ensures only one pipeline run per program.
+
+        The same program object should return cached IR on second call,
+        not trigger a second pipeline execution.
+        """
+        from sonata.pipeline import _certified_ir_cache
+
+        class FakeProgram:
+            pass
+
+        prog = FakeProgram()
+        fake_ir = {"pipeline_run": 1}
+        _certified_ir_cache[id(prog)] = fake_ir
+
+        # First call — from cache
+        result1 = _extract_certified_ir(prog)
+        assert result1 is fake_ir
+
+        # Second call — still from cache (no second pipeline run)
+        result2 = _extract_certified_ir(prog)
+        assert result2 is fake_ir
+        assert result1 is result2
+
+        # Cleanup
+        del _certified_ir_cache[id(prog)]
