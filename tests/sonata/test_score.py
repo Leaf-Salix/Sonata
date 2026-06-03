@@ -451,5 +451,43 @@ class TestDependencyKind:
         assert data["dependencies"][0]["kind"] == "storage"
 
 
+class TestStorageEffect:
+    """v0.17 Phase 3 A1: StorageEffect dataclass tests."""
+
+    def test_basic_construction(self):
+        from sonata.score import StorageEffect
+        effect = StorageEffect(buffer_id="buf_x", kind="read")
+        assert effect.buffer_id == "buf_x"
+        assert effect.kind == "read"
+
+    def test_frozen(self):
+        from sonata.score import StorageEffect
+        effect = StorageEffect(buffer_id="buf_x", kind="write")
+        import pytest
+        with pytest.raises(AttributeError):
+            effect.buffer_id = "buf_y"
+
+    def test_equality(self):
+        from sonata.score import StorageEffect
+        a = StorageEffect(buffer_id="buf_x", kind="read")
+        b = StorageEffect(buffer_id="buf_x", kind="read")
+        c = StorageEffect(buffer_id="buf_x", kind="write")
+        assert a == b
+        assert a != c
+
+    def test_hashable(self):
+        from sonata.score import StorageEffect
+        a = StorageEffect(buffer_id="buf_x", kind="read")
+        b = StorageEffect(buffer_id="buf_x", kind="write")
+        s = {a, b}
+        assert len(s) == 2
+
+    def test_all_kinds(self):
+        from sonata.score import StorageEffect
+        for kind in ("read", "write", "inplace_write"):
+            e = StorageEffect(buffer_id="buf", kind=kind)
+            assert e.kind == kind
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -91,6 +91,21 @@ class Dependency:
 
 
 @dataclass(frozen=True)
+class StorageEffect:
+    """Describes how a Task accesses a buffer.
+
+    v0.17 Phase 3 A1: Storage identity model for liveness analysis.
+
+    Attributes:
+        buffer_id: Identifier of the buffer being accessed.
+        kind: Access type — "read", "write", or "inplace_write".
+    """
+
+    buffer_id: str
+    kind: str  # "read", "write", "inplace_write"
+
+
+@dataclass(frozen=True)
 class FallbackReason:
     """Structured explanation for why a score or region is ineligible.
 
