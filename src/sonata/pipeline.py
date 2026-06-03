@@ -277,6 +277,32 @@ def sonata_analyze(
             # Use the first region's score as representative
             score = next(iter(per_region.values()))
 
+    # If score has no tasks (region placeholder), extract real tasks from IR
+    if score is not None and len(score.tasks) == 0:
+        from .pypto_adapter import PostSimplifyPyPTOInputAdapter
+        from .eligibility import _tasks_from_facts
+        adapter = PostSimplifyPyPTOInputAdapter(certified_ir)
+        try:
+            facts = adapter.normalize(require_certified=False)
+            if facts.functions:
+                real_tasks = _tasks_from_facts(facts.functions)
+                if len(real_tasks) > 0:
+                    from .dependencies import build_dependencies
+                    score = Score(
+                        name=score.name or "extracted",
+                        runtime_target=rt,
+                        tasks=real_tasks,
+                        dependencies=build_dependencies(real_tasks),
+                        shape_assumptions=score.shape_assumptions,
+                        metadata=score.metadata,
+                    )
+                    _region_log.info(
+                        "[SONATA] Extracted %d tasks from IR for region-based eligibility",
+                        len(score.tasks),
+                    )
+        except Exception:
+            pass  # keep placeholder score
+
     if score is None:
         return SonataAnalysisResult(
             eligible=False,
