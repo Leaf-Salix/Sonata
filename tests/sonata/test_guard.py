@@ -768,3 +768,98 @@ class TestGuardCheckStaleSemantics:
         assert batch_detail.severity == "soft"
         assert seq_detail.satisfied
         assert seq_detail.severity == "hard"
+
+
+class TestTwoLevelInvalidation:
+    """v0.17 Phase 2 B3: Two-level invalidation semantics.
+
+    - Shape change (soft guard) → STALE: plan handle invalid,
+      Score fingerprint unchanged. Only plan handle needs rebuild.
+    - Topology change (hard guard / new task) → ALL_FAILED: full replan.
+    """
+
+    def _make_score(self, assumptions, name="test"):
+        from sonata.score import Score, RuntimeTarget, Task
+        return Score(
+            name=name,
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+            shape_assumptions=tuple(assumptions),
+        )
+
+    def test_shape_change_stale_fingerprint_unchanged(self):
+        """Shape change → STALE, Score fingerprint stays the same."""
+        import warnings
+        from sonata.guard import GUARD_SEVERITY_SOFT
+        from sonata.serialization import score_fingerprint
+        from sonata.pipeline import check_guards_at_runtime, SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = self._make_score([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+            ])
+        fp_before = score_fingerprint(score)
+        r = SonataAnalysisResult(
+            eligible=True, score=score, region_statuses={"r0": "static"}
+        )
+        results = check_guards_at_runtime(r, {"batch": [64]})
+        assert results[0].guard_status == "stale"
+        # Fingerprint should NOT change just because guards failed
+        fp_after = score_fingerprint(score)
+        assert fp_before == fp_after, "Score fingerprint should not change on shape mismatch"
+
+    def test_hard_guard_all_failed(self):
+        """Hard guard violation → ALL_FAILED, full replan required."""
+        import warnings
+        from sonata.guard import GUARD_SEVERITY_HARD
+        from sonata.pipeline import check_guards_at_runtime, SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = self._make_score([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_HARD),
+            ])
+        r = SonataAnalysisResult(
+            eligible=True, score=score, region_statuses={"r0": "static"}
+        )
+        results = check_guards_at_runtime(r, {"batch": [64]})
+        assert results[0].guard_status == "all_failed"
+
+    def test_mixed_severity_stale_when_only_soft_fails(self):
+        """Mixed guards: hard satisfied, soft failed → STALE."""
+        import warnings
+        from sonata.guard import GUARD_SEVERITY_SOFT, GUARD_SEVERITY_HARD
+        from sonata.pipeline import check_guards_at_runtime, SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = self._make_score([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_HARD),
+                ShapeAssumption(symbol="seq", dims=(128,), severity=GUARD_SEVERITY_SOFT),
+            ])
+        r = SonataAnalysisResult(
+            eligible=True, score=score, region_statuses={"r0": "static"}
+        )
+        # batch (hard) satisfied, seq (soft) violated
+        results = check_guards_at_runtime(r, {"batch": [32], "seq": [256]})
+        assert results[0].guard_status == "stale"
+        assert "seq" in results[0].violated_guards
+        assert "batch" not in results[0].violated_guards
+
+    def test_mixed_severity_all_failed_when_hard_fails(self):
+        """Mixed guards: hard failed → ALL_FAILED (even if soft also fails)."""
+        import warnings
+        from sonata.guard import GUARD_SEVERITY_SOFT, GUARD_SEVERITY_HARD
+        from sonata.pipeline import check_guards_at_runtime, SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = self._make_score([
+                ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_HARD),
+                ShapeAssumption(symbol="seq", dims=(128,), severity=GUARD_SEVERITY_SOFT),
+            ])
+        r = SonataAnalysisResult(
+            eligible=True, score=score, region_statuses={"r0": "static"}
+        )
+        # Both violated — hard fails → ALL_FAILED
+        results = check_guards_at_runtime(r, {"batch": [64], "seq": [256]})
+        assert results[0].guard_status == "all_failed"
+        assert "batch" in results[0].violated_guards
+        assert "seq" in results[0].violated_guards
