@@ -189,8 +189,25 @@ def _tasks_from_list(items: Any) -> tuple[Task, ...]:
             arg_storage_keys=tuple(item.get("arg_storage_keys", ())),
             name=item.get("name"),
             outputs=tuple(item.get("outputs", ())),
+            storage_effects=_storage_effects_from_list(item.get("storage_effects")),
         ))
     return tuple(result)
+
+
+def _storage_effects_from_list(items: Any) -> tuple[Any, ...] | None:
+    """Deserialize storage_effects list. Returns None if items is None or empty."""
+    if items is None:
+        return None
+    if not isinstance(items, list):
+        raise DeserializationError("storage_effects must be a list")
+    if not items:
+        return None
+    from .score import StorageEffect
+    return tuple(
+        StorageEffect(buffer_id=str(e["buffer_id"]), kind=str(e["kind"]))
+        for e in items
+        if isinstance(e, dict) and "buffer_id" in e and "kind" in e
+    )
 
 
 def _dependencies_from_list(items: Any) -> tuple[Dependency, ...]:

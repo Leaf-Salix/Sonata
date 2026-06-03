@@ -94,6 +94,10 @@ def score_to_dict(score: Score) -> dict[str, Any]:
                 "arg_directions": list(task.arg_directions),
                 "arg_storage_keys": [_json_like(key) for key in task.arg_storage_keys],
                 "outputs": list(task.outputs),
+                "storage_effects": [
+                    {"buffer_id": e.buffer_id, "kind": e.kind}
+                    for e in (task.storage_effects or ())
+                ],
             }
             for task in score.tasks
         ],

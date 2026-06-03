@@ -130,6 +130,7 @@ def test_score_to_json_matches_v1_golden_schema() -> None:
       "func_id": 1,
       "name": "kernel.add",
       "outputs": [],
+      "storage_effects": [],
       "task_id": 0
     }
   ]
@@ -266,3 +267,58 @@ def test_plan_handle_region_guard_status_roundtrip() -> None:
 
     restored = plan_handle_from_dict(data)
     assert restored.region_guard_status == ph.region_guard_status
+
+
+class TestStorageEffectSerialization:
+    """v0.17 Phase 3 B2: StorageEffect round-trip tests."""
+
+    def test_round_trip_with_effects(self):
+        """Score with storage_effects survives serialization round-trip."""
+        from sonata.score import StorageEffect
+        from sonata.deserialization import score_from_dict
+        effects = (
+            StorageEffect(buffer_id="buf_x", kind="read"),
+            StorageEffect(buffer_id="buf_y", kind="write"),
+        )
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic",
+                        args=("x", "y"), arg_directions=("input", "output"),
+                        arg_storage_keys=("buf:x", "buf:y"),
+                        storage_effects=effects),),
+        )
+        d = score_to_dict(score)
+        assert d["tasks"][0]["storage_effects"] == [
+            {"buffer_id": "buf_x", "kind": "read"},
+            {"buffer_id": "buf_y", "kind": "write"},
+        ]
+        restored = score_from_dict(d)
+        assert restored.tasks[0].storage_effects == effects
+
+    def test_round_trip_none_effects(self):
+        """Score with storage_effects=None survives round-trip as None."""
+        from sonata.deserialization import score_from_dict
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic",
+                        storage_effects=None),),
+        )
+        d = score_to_dict(score)
+        assert d["tasks"][0]["storage_effects"] == []
+        restored = score_from_dict(d)
+        assert restored.tasks[0].storage_effects is None
+
+    def test_round_trip_empty_effects(self):
+        """Score with storage_effects=() survives round-trip as None."""
+        from sonata.deserialization import score_from_dict
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic",
+                        storage_effects=()),),
+        )
+        d = score_to_dict(score)
+        restored = score_from_dict(d)
+        assert restored.tasks[0].storage_effects is None
