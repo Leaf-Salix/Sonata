@@ -489,3 +489,61 @@ class TestPlanHandleGuardStatus:
                 critical_guards=score.shape_assumptions,
             )
             assert ph.guard_status == new_status
+
+    def test_stale_status_value(self):
+        """GuardStatus.STALE is a valid enum value."""
+        assert GuardStatus.STALE.value == "stale"
+
+    def test_stale_status_on_plan_handle(self):
+        """PlanHandle can be set to STALE status."""
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        ph_stale = PlanHandle(
+            score_fingerprint=ph.score_fingerprint,
+            runtime_target=ph.runtime_target,
+            source_adapter=ph.source_adapter,
+            func_registry=ph.func_registry,
+            guard_status=GuardStatus.STALE,
+        )
+        assert ph_stale.guard_status == GuardStatus.STALE
+
+    def test_stale_serialization(self):
+        """STALE guard status serializes correctly."""
+        score = Score(
+            name="test",
+            runtime_target=RuntimeTarget(runtime="host_build_graph",
+                                         function_name="build_test"),
+            tasks=(
+                Task(task_id=0, func_id=0, core_type="aic",
+                     args=("x",), arg_directions=("input",),
+                     arg_storage_keys=("param:x",), name="op"),
+            ),
+        )
+        ph = PlanHandle.from_score(score)
+        ph_stale = PlanHandle(
+            score_fingerprint=ph.score_fingerprint,
+            runtime_target=ph.runtime_target,
+            source_adapter=ph.source_adapter,
+            func_registry=ph.func_registry,
+            guard_status=GuardStatus.STALE,
+        )
+        d = plan_handle_to_dict(ph_stale)
+        assert d["guard_status"] == "stale"
+
+    def test_stale_vs_all_failed_semantics(self):
+        """STALE means plan handle invalid but Score still valid.
+        ALL_FAILED means both plan handle and Score are invalid."""
+        assert GuardStatus.STALE != GuardStatus.ALL_FAILED
+        assert GuardStatus.STALE != GuardStatus.ALL_SATISFIED
+        # STALE should be usable for shape-change scenarios
+        # where Score fingerprint doesn't change
+        assert GuardStatus.STALE.value == "stale"

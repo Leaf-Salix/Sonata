@@ -23,7 +23,7 @@ from .score import RuntimeTarget, Score
 
 class GuardStatus(Enum):
     """Current guard evaluation status for a PlanHandle.
-    
+
     Attributes:
         ALL_SATISFIED: All guard conditions are currently satisfied.
             The plan handle is valid and can be used.
@@ -31,11 +31,15 @@ class GuardStatus(Enum):
             May still be usable with soft invalidation strategy.
         ALL_FAILED: Critical guards failed. Plan handle must be invalidated
             and replan triggered from Score.
+        STALE: Guard values changed (e.g. shape 32→64) so plan handle is
+            invalid, but Score fingerprint is still valid. Only plan handle
+            needs rebuilding, not full replan from Score extraction.
     """
-    
+
     ALL_SATISFIED = "all_satisfied"
     PARTIAL_FAILED = "partial_failed"
     ALL_FAILED = "all_failed"
+    STALE = "stale"
 
 
 PLAN_HANDLE_SCHEMA_VERSION = 1
