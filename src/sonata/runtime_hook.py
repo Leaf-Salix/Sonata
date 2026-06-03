@@ -47,6 +47,7 @@ def apply_sonata_runtime_hints(
     work_dir: str | Path,
     block_dim: int | None,
     aicpu_thread_num: int | None,
+    user_block_dim: int | None = None,
 ) -> SonataRuntimeHints:
     """Compute runtime hints from sonata_plan.json if available.
 
@@ -55,20 +56,23 @@ def apply_sonata_runtime_hints(
 
     1. No ``sonata_plan.json`` → return original parameters unchanged.
     2. Plan not eligible → return original parameters unchanged.
-    3. User already supplied ``block_dim`` (not None) → don't override.
-    4. User didn't supply ``block_dim`` → use Sonata's scheduling instruction.
+    3. User explicitly supplied ``block_dim`` → don't override.
+    4. ``block_dim`` came from RUNTIME_CONFIG (not user) → use Sonata hint.
     5. Any failure → fail open: log warning, return original parameters.
 
     Args:
         work_dir: Compiled artifacts directory (contains sonata_plan.json).
-        block_dim: Caller-supplied block_dim (None = not specified).
+        block_dim: Current effective block_dim (may come from RUNTIME_CONFIG).
         aicpu_thread_num: Caller-supplied aicpu_thread_num (None = not specified).
+        user_block_dim: The original user-supplied block_dim BEFORE RUNTIME_CONFIG
+            fallback. None means user didn't specify. When not None, Sonata
+            will not override block_dim.
 
     Returns:
         SonataRuntimeHints with (possibly updated) parameters.
     """
     try:
-        return _do_apply(work_dir, block_dim, aicpu_thread_num)
+        return _do_apply(work_dir, block_dim, aicpu_thread_num, user_block_dim)
     except Exception as exc:
         log.warning("[Sonata] hook failed, using original params: %s", exc)
         return SonataRuntimeHints(
@@ -83,6 +87,7 @@ def _do_apply(
     work_dir: str | Path,
     block_dim: int | None,
     aicpu_thread_num: int | None,
+    user_block_dim: int | None,
 ) -> SonataRuntimeHints:
     plan_path = Path(work_dir) / "sonata_plan.json"
     if not plan_path.exists():
@@ -103,7 +108,7 @@ def _do_apply(
         )
 
     # User explicitly supplied block_dim — don't override
-    if block_dim is not None:
+    if user_block_dim is not None:
         return SonataRuntimeHints(
             block_dim=block_dim,
             aicpu_thread_num=aicpu_thread_num,
@@ -111,7 +116,9 @@ def _do_apply(
             reason="user_supplied_block_dim",
         )
 
-    # Compute scheduling instruction from region dispatch
+    # Build a minimal result for dispatch_regions
+    from .pipeline import SonataAnalysisResult, compute_scheduling_instructions, dispatch_regions
+
     region_statuses = plan_data.get("region_statuses", {})
     if not region_statuses:
         return SonataRuntimeHints(
@@ -121,17 +128,24 @@ def _do_apply(
             reason="no_regions",
         )
 
-    # Determine block_dim from first region's status
-    first_status = next(iter(region_statuses.values()))
-    if first_status == "static":
-        suggested_block_dim = 32
-        reason = "static_region_optimized"
-    elif first_status == "dynamic":
-        suggested_block_dim = 1
-        reason = "dynamic_region_fallback"
-    else:  # mixed
-        suggested_block_dim = 16
-        reason = "mixed_region_conservative"
+    temp_result = SonataAnalysisResult(
+        eligible=True,
+        region_statuses=region_statuses,
+    )
+
+    dispatch = dispatch_regions(temp_result)
+    instructions = compute_scheduling_instructions(dispatch)
+
+    if not instructions:
+        return SonataRuntimeHints(
+            block_dim=block_dim,
+            aicpu_thread_num=aicpu_thread_num,
+            sonata_applied=False,
+            reason="no_scheduling_instructions",
+        )
+
+    suggested_block_dim = instructions[0].block_dim
+    reason = instructions[0].reason
 
     log.info(
         "[Sonata] hook applied: block_dim=%d (%s)", suggested_block_dim, reason,

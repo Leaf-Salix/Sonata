@@ -44,7 +44,7 @@ class TestApplySonataRuntimeHints:
             assert result.reason == "plan_not_eligible"
 
     def test_user_supplied_block_dim_not_overridden(self):
-        """User explicitly passed block_dim → Sonata doesn't override."""
+        """User explicitly passed block_dim via user_block_dim → Sonata doesn't override."""
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_path = Path(tmpdir) / "sonata_plan.json"
             plan_path.write_text(json.dumps({
@@ -53,10 +53,26 @@ class TestApplySonataRuntimeHints:
             }))
             result = apply_sonata_runtime_hints(
                 work_dir=tmpdir, block_dim=64, aicpu_thread_num=None,
+                user_block_dim=64,
             )
             assert result.sonata_applied is False
             assert result.block_dim == 64
             assert result.reason == "user_supplied_block_dim"
+
+    def test_runtime_config_block_dim_allows_override(self):
+        """block_dim from RUNTIME_CONFIG (user_block_dim=None) → Sonata can override."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = Path(tmpdir) / "sonata_plan.json"
+            plan_path.write_text(json.dumps({
+                "eligible": True,
+                "region_statuses": {"region_0": "static"},
+            }))
+            result = apply_sonata_runtime_hints(
+                work_dir=tmpdir, block_dim=16, aicpu_thread_num=None,
+                user_block_dim=None,  # from RUNTIME_CONFIG, not user
+            )
+            assert result.sonata_applied is True
+            assert result.block_dim == 32
 
     def test_static_region_suggests_block_dim(self):
         """Eligible plan with static region → Sonata suggests block_dim."""
@@ -71,7 +87,7 @@ class TestApplySonataRuntimeHints:
             )
             assert result.sonata_applied is True
             assert result.block_dim == 32
-            assert result.reason == "static_region_optimized"
+            assert "static" in result.reason
 
     def test_dynamic_region_suggests_fallback(self):
         """Dynamic region → fallback block_dim=1."""
@@ -86,7 +102,7 @@ class TestApplySonataRuntimeHints:
             )
             assert result.sonata_applied is True
             assert result.block_dim == 1
-            assert result.reason == "dynamic_region_fallback"
+            assert "dynamic" in result.reason
 
     def test_mixed_region_conservative(self):
         """Mixed region → conservative block_dim=16."""
@@ -101,7 +117,7 @@ class TestApplySonataRuntimeHints:
             )
             assert result.sonata_applied is True
             assert result.block_dim == 16
-            assert result.reason == "mixed_region_conservative"
+            assert "mixed" in result.reason
 
     def test_no_regions_returns_original(self):
         """Eligible plan with no regions → original params."""
