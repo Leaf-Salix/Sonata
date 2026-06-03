@@ -548,6 +548,43 @@ def execute_with_sonata(
     return result, plan
 
 
+def collect_task_timings(
+    profile_db: Any,
+    score: Any,
+    timings_us: dict[str, float],
+) -> None:
+    """Record task execution timings into a ProfileDatabase.
+
+    v0.18 Phase 3 B2: Post-execution timing collection.
+
+    Args:
+        profile_db: ProfileDatabase instance.
+        score: Score with tasks (for op_type, shape, core_type).
+        timings_us: Dict mapping task name → latency in microseconds.
+    """
+    if profile_db is None or score is None:
+        return
+
+    for task in score.tasks:
+        task_name = task.name or f"task_{task.task_id}"
+        latency = timings_us.get(task_name)
+        if latency is None:
+            continue
+
+        # Extract op_type from task name (e.g. "kernel_add" → "add")
+        op_type = task_name
+        shape = tuple(task.args) if task.args else ()
+        dtype = "unknown"  # not available from Score alone
+
+        profile_db.record(
+            op_type=op_type,
+            shape=shape,
+            dtype=dtype,
+            core_type=task.core_type,
+            latency_us=latency,
+        )
+
+
 # ---------------------------------------------------------------------------
 # v0.12 Phase 2: Region-Aware Runtime
 # ---------------------------------------------------------------------------

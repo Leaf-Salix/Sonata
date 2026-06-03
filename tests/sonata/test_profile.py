@@ -158,5 +158,90 @@ class TestProfileAwareScheduling:
         assert "fallback" in inst[0].reason
 
 
+class TestTimingCollection:
+    """v0.18 Phase 3 B2: collect_task_timings tests."""
+
+    def test_collect_basic_timings(self):
+        """Timings are recorded into ProfileDatabase."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import collect_task_timings
+        from sonata.profile import ProfileDatabase
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(
+                    Task(task_id=0, func_id=0, core_type="aic", name="matmul"),
+                    Task(task_id=1, func_id=1, core_type="aiv", name="add"),
+                ),
+            )
+        db = ProfileDatabase()
+        collect_task_timings(db, score, {"matmul": 320.0, "add": 50.0})
+        assert db.lookup("matmul", (), "unknown") is not None
+        assert db.lookup("matmul", (), "unknown").mean_latency_us == 320.0
+        assert db.lookup("add", (), "unknown").mean_latency_us == 50.0
+
+    def test_collect_partial_timings(self):
+        """Only recorded tasks get profiles; missing tasks are skipped."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import collect_task_timings
+        from sonata.profile import ProfileDatabase
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(
+                    Task(task_id=0, func_id=0, core_type="aic", name="matmul"),
+                    Task(task_id=1, func_id=1, core_type="aiv", name="add"),
+                ),
+            )
+        db = ProfileDatabase()
+        collect_task_timings(db, score, {"matmul": 320.0})
+        assert db.lookup("matmul", (), "unknown") is not None
+        assert db.lookup("add", (), "unknown") is None
+
+    def test_collect_none_db(self):
+        """None profile_db is a no-op."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import collect_task_timings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic", name="matmul"),),
+            )
+        collect_task_timings(None, score, {"matmul": 320.0})  # should not raise
+
+    def test_collect_accumulates(self):
+        """Multiple calls accumulate samples in profile."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.pipeline import collect_task_timings
+        from sonata.profile import ProfileDatabase
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic", name="matmul"),),
+            )
+        db = ProfileDatabase()
+        collect_task_timings(db, score, {"matmul": 300.0})
+        collect_task_timings(db, score, {"matmul": 340.0})
+        p = db.lookup("matmul", (), "unknown")
+        assert p.sample_count == 2
+        assert abs(p.mean_latency_us - 320.0) < 0.01
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
