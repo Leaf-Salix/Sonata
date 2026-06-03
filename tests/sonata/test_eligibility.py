@@ -682,3 +682,69 @@ class TestWalkCache:
 
         # Cleanup
         _walk_cache.pop(id(node), None)
+
+
+class TestUnrollableForStmt:
+    """v0.18 Phase 2 B1: Small constant ForStmt detection."""
+
+    def _make_for_stmt(self, start, stop, step=None):
+        """Create a mock ForStmt with given range parameters."""
+        class ForStmt:
+            pass
+        node = ForStmt()
+        node.start = start
+        node.stop = stop
+        node.step = step
+        return node
+
+    def _make_if_stmt(self):
+        class IfStmt:
+            pass
+        return IfStmt()
+
+    def test_small_loop_is_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_for_stmt(0, 4)
+        assert _is_unrollable_for_stmt(node)
+
+    def test_threshold_loop_is_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_for_stmt(0, 16)
+        assert _is_unrollable_for_stmt(node)
+
+    def test_large_loop_not_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_for_stmt(0, 100)
+        assert not _is_unrollable_for_stmt(node)
+
+    def test_dynamic_start_not_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_for_stmt(object(), 4)
+        assert not _is_unrollable_for_stmt(node)
+
+    def test_non_for_stmt_not_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_if_stmt()
+        assert not _is_unrollable_for_stmt(node)
+
+    def test_step_2_not_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_for_stmt(0, 8, step=2)
+        assert not _is_unrollable_for_stmt(node)
+
+    def test_step_1_is_unrollable(self):
+        from sonata.eligibility import _is_unrollable_for_stmt
+        node = self._make_for_stmt(0, 4, step=1)
+        assert _is_unrollable_for_stmt(node)
+
+    def test_eligibility_accepts_small_loop(self):
+        """Eligibility check passes when only unrollable ForStmts present."""
+        from sonata.eligibility import check_static_eligibility
+
+        call = Call("kernel", args=("x",), arg_directions=("Input",))
+        for_stmt = self._make_for_stmt(0, 4)
+        for_stmt.body = (EvalStmt(call),)
+
+        func = Function(name="main", body=(for_stmt, EvalStmt(call)))
+        result = check_static_eligibility(func, require_certified=True)
+        assert result.eligible

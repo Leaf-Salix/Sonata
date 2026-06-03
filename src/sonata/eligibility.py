@@ -44,6 +44,38 @@ from .storage import (
 )
 
 _CONTROL_FLOW_KINDS = {"ForStmt", "IfStmt", "WhileStmt"}
+_UNROLL_THRESHOLD = 16  # ForStmt with trip_count <= this is "unrollable"
+
+
+def _is_unrollable_for_stmt(node: Any) -> bool:
+    """Check if a ForStmt has constant trip count <= _UNROLL_THRESHOLD.
+
+    A ForStmt is unrollable when:
+    - It has numeric start, stop attributes (PyPTO IR range)
+    - trip_count = (stop - start) is a positive integer <= threshold
+    - step is 1 or absent (simple range)
+
+    Returns False for any ForStmt that doesn't meet these criteria.
+    """
+    if type(node).__name__ != "ForStmt":
+        return False
+
+    start = getattr(node, "start", None)
+    stop = getattr(node, "stop", None)
+    step = getattr(node, "step", None)
+
+    # start/stop must be numeric constants
+    if not isinstance(start, (int, float)) or not isinstance(stop, (int, float)):
+        return False
+    if isinstance(start, bool) or isinstance(stop, bool):
+        return False
+
+    # step must be 1, None, or absent
+    if step is not None and step != 1:
+        return False
+
+    trip_count = int(stop) - int(start)
+    return 0 < trip_count <= _UNROLL_THRESHOLD
 
 
 def check_static_eligibility(
@@ -72,6 +104,9 @@ def check_static_eligibility(
         for child in adapter.walk(root):
             child_kind = _kind(child)
             if child_kind in _CONTROL_FLOW_KINDS:
+                # v0.18 Phase 2 B1: Small constant ForStmt is unrollable
+                if child_kind == "ForStmt" and _is_unrollable_for_stmt(child):
+                    continue  # don't reject — treat as static
                 reasons.append(
                     _fallback_reason(
                         FallbackCode.CONTROL_FLOW_NOT_SUPPORTED,
