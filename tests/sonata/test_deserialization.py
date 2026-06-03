@@ -287,3 +287,31 @@ class TestPlanHandleGuardStatusDeserialization:
         d = plan_handle_to_dict(ph_stale)
         restored = plan_handle_from_dict(d)
         assert restored.guard_status == GuardStatus.STALE
+
+    def test_critical_guards_not_list_raises(self):
+        """Non-list critical_guards should raise DeserializationError."""
+        from sonata.plan_handle import PlanHandle, GuardStatus
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.serialization import plan_handle_to_dict
+
+        score = Score(name="t", runtime_target=RuntimeTarget(),
+                      tasks=(Task(task_id=0, func_id=0, core_type="aic"),))
+        ph = PlanHandle.from_score(score)
+        d = plan_handle_to_dict(ph)
+        d["critical_guards"] = "not_a_list"
+        with pytest.raises(DeserializationError, match="critical_guards must be a list"):
+            plan_handle_from_dict(d)
+
+    def test_critical_guards_bad_item_raises(self):
+        """Non-dict items in critical_guards should raise DeserializationError."""
+        from sonata.plan_handle import PlanHandle
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.serialization import plan_handle_to_dict
+
+        score = Score(name="t", runtime_target=RuntimeTarget(),
+                      tasks=(Task(task_id=0, func_id=0, core_type="aic"),))
+        ph = PlanHandle.from_score(score)
+        d = plan_handle_to_dict(ph)
+        d["critical_guards"] = ["not_a_dict"]
+        with pytest.raises(DeserializationError, match="expected dict"):
+            plan_handle_from_dict(d)

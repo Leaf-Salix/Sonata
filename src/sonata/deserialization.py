@@ -106,12 +106,15 @@ def plan_handle_from_dict(data: dict[str, Any]) -> PlanHandle:
 
     critical_guards_raw = data.get("critical_guards", [])
     critical_guards: tuple[Any, ...] = ()
-    if isinstance(critical_guards_raw, list) and critical_guards_raw:
+    if critical_guards_raw:
+        if not isinstance(critical_guards_raw, list):
+            raise DeserializationError("plan_handle.critical_guards must be a list")
         from .guard import GuardCondition
         parsed = []
         for g in critical_guards_raw:
-            if isinstance(g, dict):
-                parsed.append(GuardCondition.from_dict(g))
+            if not isinstance(g, dict):
+                raise DeserializationError(f"plan_handle.critical_guards: expected dict, got {type(g).__name__}")
+            parsed.append(GuardCondition.from_dict(g))
         critical_guards = tuple(parsed)
 
     return PlanHandle(

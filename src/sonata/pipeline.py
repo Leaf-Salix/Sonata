@@ -536,8 +536,8 @@ def execute_with_sonata(
                     suggested_block_dim, instructions[0].reason,
                 )
 
-    execute_compiled(work_dir, *args, **kwargs)
-    return None, plan
+    result = execute_compiled(work_dir, *args, **kwargs)
+    return result, plan
 
 
 # ---------------------------------------------------------------------------
