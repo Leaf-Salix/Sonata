@@ -606,3 +606,80 @@ class TestRegionGuardEvaluation:
             evaluator.select_region_guards(node, density_threshold=50)
             density_warnings = [x for x in w if "density 60 exceeds threshold 50" in str(x.message)]
             assert len(density_warnings) == 1
+
+
+class TestGuardStatsInSonataPlan:
+    """v0.17 Phase 2 A1: guard_stats in SonataAnalysisResult.to_dict()."""
+
+    def _make_score(self, assumptions):
+        from sonata.score import Score, RuntimeTarget, Task
+        return Score(
+            name="test",
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+            shape_assumptions=tuple(assumptions),
+        )
+
+    def test_guard_stats_present(self):
+        """guard_stats appears when score has shape assumptions."""
+        import warnings
+        from sonata.pipeline import SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = self._make_score([
+                ShapeAssumption(symbol="batch", dims=(32,)),
+                ShapeAssumption(symbol="seq", dims=(128,)),
+            ])
+        result = SonataAnalysisResult(eligible=True, score=score)
+        d = result.to_dict()
+        assert "guard_stats" in d
+        stats = d["guard_stats"]
+        assert stats["shape_assumption_count"] == 2
+        assert stats["unique_symbols"] == 2
+        assert stats["guard_density"] == 1.0
+
+    def test_guard_stats_repeated_symbols(self):
+        """guard_density reflects multiple assumptions per symbol."""
+        import warnings
+        from sonata.pipeline import SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = self._make_score([
+                ShapeAssumption(symbol="x", dims=(32,)),
+                ShapeAssumption(symbol="x", dims=(64,)),
+                ShapeAssumption(symbol="y", dims=(128,)),
+            ])
+        result = SonataAnalysisResult(eligible=True, score=score)
+        stats = result.to_dict()["guard_stats"]
+        assert stats["shape_assumption_count"] == 3
+        assert stats["unique_symbols"] == 2
+        assert stats["guard_density"] == 1.5
+
+    def test_guard_stats_absent_when_no_assumptions(self):
+        """guard_stats is absent when score has no shape assumptions."""
+        from sonata.pipeline import SonataAnalysisResult
+        from sonata.score import Score, RuntimeTarget, Task
+        score = Score(
+            name="empty",
+            runtime_target=RuntimeTarget(),
+            tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+        )
+        result = SonataAnalysisResult(eligible=True, score=score)
+        d = result.to_dict()
+        assert "guard_stats" not in d
+
+    def test_high_density_triggers_warning(self):
+        """guard_density > 8 adds a warning to the output."""
+        import warnings
+        from sonata.pipeline import SonataAnalysisResult
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            # 2 symbols, 20 assumptions → density=10 > 8
+            assumptions = [ShapeAssumption(symbol=f"s{i % 2}", dims=(i,)) for i in range(20)]
+            score = self._make_score(assumptions)
+        result = SonataAnalysisResult(eligible=True, score=score)
+        d = result.to_dict()
+        stats = d["guard_stats"]
+        assert stats["guard_density"] == 10.0
+        assert "warnings" in d
+        assert any("guard_density" in w for w in d["warnings"])

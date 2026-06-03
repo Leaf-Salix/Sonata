@@ -158,6 +158,23 @@ class SonataAnalysisResult:
                 dep_kinds[kind_val] = dep_kinds.get(kind_val, 0) + 1
             data["dependency_kinds"] = dep_kinds
 
+        # Include guard statistics when available (v0.17 Phase 2 A1)
+        if self.score is not None and self.score.shape_assumptions:
+            assumptions = self.score.shape_assumptions
+            unique_symbols = {a.symbol for a in assumptions}
+            count = len(assumptions)
+            n_symbols = len(unique_symbols)
+            density = round(count / n_symbols, 2) if n_symbols > 0 else 0.0
+            data["guard_stats"] = {
+                "shape_assumption_count": count,
+                "unique_symbols": n_symbols,
+                "guard_density": density,
+            }
+            if density > 8:
+                data.setdefault("warnings", []).append(
+                    f"guard_density={density} exceeds TorchDynamo reference threshold (8)"
+                )
+
         if self.score is not None:
             data["score"] = score_to_dict(self.score)
 
