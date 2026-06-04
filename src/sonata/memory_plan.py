@@ -332,12 +332,87 @@ def solve_memory(
         return fallback.solve(conflict_matrix, sizes, device_memory_limit)
 
 
+# ---------------------------------------------------------------------------
+# v0.20 Phase 3: Buffer sharing legality check
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SharingLegalityResult:
+    """Result of checking whether two buffers can legally share memory."""
+
+    buffer_a: str
+    buffer_b: str
+    legal: bool
+    reason: str  # "compatible", "different_space", "incompatible_dtype", etc.
+
+
+def check_sharing_legality(
+    lifetimes: tuple[BufferLifetime, ...],
+    buffer_metadata: dict[str, dict[str, str]],
+) -> tuple[SharingLegalityResult, ...]:
+    """Check whether non-conflicting buffers can legally share memory.
+
+    v0.20 Phase 3 A1: Legality check (aligned with PyPTO LegalizePTOBufferReuse).
+
+    ``buffer_metadata`` maps storage_key → {"memory_space": str, "dtype": str}.
+    Buffers must be in the same memory_space and have compatible dtypes to share.
+
+    Only checks non-conflicting pairs (those that could potentially share).
+    """
+    from .liveness import find_conflicts
+
+    conflicts = find_conflicts(lifetimes)
+    conflict_set: set[tuple[str, str]] = set()
+    for c in conflicts:
+        conflict_set.add((c.key_a, c.key_b))
+        conflict_set.add((c.key_b, c.key_a))
+
+    results: list[SharingLegalityResult] = []
+    keys = sorted({lt.storage_key for lt in lifetimes})
+
+    for i, key_a in enumerate(keys):
+        for key_b in keys[i + 1:]:
+            # Skip conflicting pairs — they can't share anyway
+            if (key_a, key_b) in conflict_set:
+                continue
+
+            meta_a = buffer_metadata.get(key_a, {})
+            meta_b = buffer_metadata.get(key_b, {})
+
+            space_a = meta_a.get("memory_space", "unknown")
+            space_b = meta_b.get("memory_space", "unknown")
+            dtype_a = meta_a.get("dtype", "unknown")
+            dtype_b = meta_b.get("dtype", "unknown")
+
+            if space_a != space_b:
+                results.append(SharingLegalityResult(
+                    buffer_a=key_a, buffer_b=key_b,
+                    legal=False, reason="different_space",
+                ))
+            elif dtype_a != dtype_b and dtype_a != "unknown" and dtype_b != "unknown":
+                results.append(SharingLegalityResult(
+                    buffer_a=key_a, buffer_b=key_b,
+                    legal=False, reason="incompatible_dtype",
+                ))
+            else:
+                results.append(SharingLegalityResult(
+                    buffer_a=key_a, buffer_b=key_b,
+                    legal=True, reason="compatible",
+                ))
+
+    return tuple(results)
+
+
 __all__ = [
     "BufferAllocation",
     "ConstraintSolver",
     "DynamicShapeError",
     "GreedySolver",
+    "MemoryLimitExceededError",
     "MemoryPlan",
+    "SharingLegalityResult",
+    "check_sharing_legality",
     "compute_conflict_matrix",
     "plan_memory",
     "solve_memory",

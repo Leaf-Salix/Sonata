@@ -346,3 +346,83 @@ class TestGreedySolverMemoryLimit:
         matrix = [[False, True], [True, False]]
         plan = solver.solve(matrix, [100, 100], device_memory_limit=None)
         assert plan.peak_memory == 200
+
+
+class TestCheckSharingLegality:
+    """v0.20 Phase 3 A1: check_sharing_legality tests."""
+
+    def test_same_space_compatible_dtype(self):
+        """Same memory_space + compatible dtype → legal."""
+        from sonata.liveness import BufferLifetime
+        from sonata.memory_plan import check_sharing_legality
+
+        lifetimes = (
+            BufferLifetime("buf_a", birth=0, death=1),
+            BufferLifetime("buf_b", birth=2, death=3),
+        )
+        metadata = {
+            "buf_a": {"memory_space": "vec", "dtype": "fp16"},
+            "buf_b": {"memory_space": "vec", "dtype": "fp16"},
+        }
+        results = check_sharing_legality(lifetimes, metadata)
+        assert len(results) == 1
+        assert results[0].legal is True
+        assert results[0].reason == "compatible"
+
+    def test_different_space_not_legal(self):
+        """Different memory_space → not legal."""
+        from sonata.liveness import BufferLifetime
+        from sonata.memory_plan import check_sharing_legality
+
+        lifetimes = (
+            BufferLifetime("buf_a", birth=0, death=1),
+            BufferLifetime("buf_b", birth=2, death=3),
+        )
+        metadata = {
+            "buf_a": {"memory_space": "vec", "dtype": "fp16"},
+            "buf_b": {"memory_space": "mat", "dtype": "fp16"},
+        }
+        results = check_sharing_legality(lifetimes, metadata)
+        assert len(results) == 1
+        assert results[0].legal is False
+        assert results[0].reason == "different_space"
+
+    def test_incompatible_dtype(self):
+        """Same space + different dtype → not legal."""
+        from sonata.liveness import BufferLifetime
+        from sonata.memory_plan import check_sharing_legality
+
+        lifetimes = (
+            BufferLifetime("buf_a", birth=0, death=1),
+            BufferLifetime("buf_b", birth=2, death=3),
+        )
+        metadata = {
+            "buf_a": {"memory_space": "vec", "dtype": "fp16"},
+            "buf_b": {"memory_space": "vec", "dtype": "fp32"},
+        }
+        results = check_sharing_legality(lifetimes, metadata)
+        assert len(results) == 1
+        assert results[0].legal is False
+        assert results[0].reason == "incompatible_dtype"
+
+    def test_conflicting_buffers_skipped(self):
+        """Conflicting (overlapping) buffers are not checked."""
+        from sonata.liveness import BufferLifetime
+        from sonata.memory_plan import check_sharing_legality
+
+        lifetimes = (
+            BufferLifetime("buf_a", birth=0, death=3),
+            BufferLifetime("buf_b", birth=2, death=5),
+        )
+        metadata = {
+            "buf_a": {"memory_space": "vec", "dtype": "fp16"},
+            "buf_b": {"memory_space": "mat", "dtype": "fp32"},
+        }
+        results = check_sharing_legality(lifetimes, metadata)
+        # Conflicting → skipped → no results
+        assert len(results) == 0
+
+    def test_empty_lifetimes(self):
+        """Empty lifetimes → empty results."""
+        from sonata.memory_plan import check_sharing_legality
+        assert check_sharing_legality((), {}) == ()
