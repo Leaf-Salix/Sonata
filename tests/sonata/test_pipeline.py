@@ -551,3 +551,56 @@ class TestExecuteWithSonataGuardChecks:
                 loaded = load_sonata_plan(tmpdir)
                 results = check_guards_at_runtime(loaded, {"batch": [64]})
                 assert results[0].guard_status == "all_failed"
+
+
+class TestPerRegionGuardStats:
+    """v0.21 Phase 2 B1: Per-region guard density data collection."""
+
+    def test_region_guard_stats_in_to_dict(self):
+        """region_guard_stats appears in to_dict() when per-region scores exist."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task, ShapeAssumption, EligibilityResult
+        from sonata.pipeline import SonataAnalysisResult
+        from sonata.regions import RegionEligibilityResult, RegionEligibility
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score_a = Score(
+                name="region_0", runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,)),
+                ),
+            )
+            score_b = Score(
+                name="region_1", runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=1, func_id=1, core_type="aiv"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,)),
+                    ShapeAssumption(symbol="seq", dims=(128,)),
+                ),
+            )
+
+        elig_result = EligibilityResult(eligible=True)
+        meta = {"per_region_scores": {"region_0": score_a, "region_1": score_b}}
+        object.__setattr__(elig_result, "metadata", meta)
+
+        result = SonataAnalysisResult(
+            eligible=True,
+            score=score_a,
+            region_eligibility=elig_result,
+            region_statuses={"region_0": "static", "region_1": "static"},
+        )
+        d = result.to_dict()
+        assert "region_guard_stats" in d
+        assert "region_0" in d["region_guard_stats"]
+        assert "region_1" in d["region_guard_stats"]
+        assert d["region_guard_stats"]["region_0"]["shape_assumption_count"] == 1
+        assert d["region_guard_stats"]["region_1"]["shape_assumption_count"] == 2
+
+    def test_no_region_guard_stats_without_eligibility(self):
+        """No region_guard_stats when region_eligibility is None."""
+        from sonata.pipeline import SonataAnalysisResult
+        result = SonataAnalysisResult(eligible=True, region_statuses={"r0": "static"})
+        d = result.to_dict()
+        assert "region_guard_stats" not in d

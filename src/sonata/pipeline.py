@@ -178,6 +178,28 @@ class SonataAnalysisResult:
                     f"guard_density={density} exceeds TorchDynamo reference threshold (8)"
                 )
 
+        # v0.21 Phase 2 B1: Per-region guard stats
+        if self.region_eligibility is not None:
+            meta = getattr(self.region_eligibility, "metadata", None)
+            if meta and isinstance(meta, dict):
+                per_region_scores = meta.get("per_region_scores", {})
+                if per_region_scores:
+                    region_guard_stats = {}
+                    for region_key, region_score in per_region_scores.items():
+                        if region_score is not None and region_score.shape_assumptions:
+                            r_assumptions = region_score.shape_assumptions
+                            r_unique = {a.symbol for a in r_assumptions}
+                            r_count = len(r_assumptions)
+                            r_n_symbols = len(r_unique)
+                            r_density = round(r_count / r_n_symbols, 2) if r_n_symbols > 0 else 0.0
+                            region_guard_stats[region_key] = {
+                                "shape_assumption_count": r_count,
+                                "unique_symbols": r_n_symbols,
+                                "guard_density": r_density,
+                            }
+                    if region_guard_stats:
+                        data["region_guard_stats"] = region_guard_stats
+
         if self.score is not None:
             data["score"] = score_to_dict(self.score)
 
