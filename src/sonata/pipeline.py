@@ -254,6 +254,8 @@ def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
     data = json.loads(p.read_text())
 
     # Reconstruct Score with shape_assumptions for guard checking
+    from .guard import GUARD_SEVERITY_HARD, GUARD_SEVERITY_SOFT
+
     score = None
     score_data = data.get("score")
     if score_data and isinstance(score_data, dict):
@@ -262,6 +264,7 @@ def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
             ShapeAssumption(
                 symbol=s.get("symbol", ""),
                 dims=tuple(s.get("dims", ())),
+                severity=GUARD_SEVERITY_SOFT if s.get("severity") == "soft" else GUARD_SEVERITY_HARD,
             )
             for s in shape_data
             if isinstance(s, dict) and s.get("symbol")

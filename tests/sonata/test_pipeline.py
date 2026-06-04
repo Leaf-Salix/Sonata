@@ -448,3 +448,106 @@ class TestEdgeCases:
         dispatch = dispatch_regions(result)
         assert dispatch.total == 0
         assert dispatch.optimized_count == 0
+
+
+class TestExecuteWithSonataGuardChecks:
+    """v0.21 Phase 1 A2: execute_with_sonata() guard check integration."""
+
+    def test_load_sonata_plan_restores_shape_assumptions(self):
+        """load_sonata_plan() reconstructs Score with shape_assumptions."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from sonata.pipeline import load_sonata_plan
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = {
+                "eligible": True,
+                "region_statuses": {"region_0": "static"},
+                "score": {
+                    "name": "test",
+                    "shape_assumptions": [
+                        {"symbol": "batch", "dims": [32], "severity": "hard"},
+                        {"symbol": "seq", "dims": [128], "severity": "soft"},
+                    ],
+                },
+            }
+            (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+            result = load_sonata_plan(tmpdir)
+            assert result is not None
+            assert result.score is not None
+            assert len(result.score.shape_assumptions) == 2
+            assert result.score.shape_assumptions[0].symbol == "batch"
+
+    def test_load_sonata_plan_no_score(self):
+        """load_sonata_plan() with no score section → score is None."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from sonata.pipeline import load_sonata_plan
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = {"eligible": True, "region_statuses": {"region_0": "static"}}
+            (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+            result = load_sonata_plan(tmpdir)
+            assert result is not None
+            assert result.score is None
+
+    def test_guard_check_uses_restored_assumptions(self):
+        """Guard check works with shape_assumptions from load_sonata_plan."""
+        import json
+        import tempfile
+        import warnings
+        from pathlib import Path
+        from sonata.pipeline import load_sonata_plan, check_guards_at_runtime
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                plan = {
+                    "eligible": True,
+                    "region_statuses": {"region_0": "static"},
+                    "score": {
+                        "name": "test",
+                        "shape_assumptions": [
+                            {"symbol": "batch", "dims": [32], "severity": "soft"},
+                        ],
+                    },
+                }
+                (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+                loaded = load_sonata_plan(tmpdir)
+                assert loaded.score is not None
+
+                # Guard check with matching values → all_satisfied
+                results = check_guards_at_runtime(loaded, {"batch": [32]})
+                assert results[0].guard_status == "all_satisfied"
+
+                # Guard check with mismatched values → stale (soft guard)
+                results = check_guards_at_runtime(loaded, {"batch": [64]})
+                assert results[0].guard_status == "stale"
+
+    def test_guard_check_hard_guard_all_failed(self):
+        """Hard guard violation → all_failed."""
+        import json
+        import tempfile
+        import warnings
+        from pathlib import Path
+        from sonata.pipeline import load_sonata_plan, check_guards_at_runtime
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                plan = {
+                    "eligible": True,
+                    "region_statuses": {"region_0": "static"},
+                    "score": {
+                        "name": "test",
+                        "shape_assumptions": [
+                            {"symbol": "batch", "dims": [32], "severity": "hard"},
+                        ],
+                    },
+                }
+                (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+                loaded = load_sonata_plan(tmpdir)
+                results = check_guards_at_runtime(loaded, {"batch": [64]})
+                assert results[0].guard_status == "all_failed"
