@@ -8,6 +8,36 @@ are developed on feature branches and merged to main upon completion.
 
 ---
 
+## [v0.20] -- Survey Findings Landing
+
+### Added
+- **Per-Region Score Extraction** (`sonata.regions`):
+  - `extract_score_from_region()` extracts real Scores from RegionTreeNode subtrees.
+  - `check_region_eligibility()` uses real Scores instead of empty placeholders.
+  - Recursive `_collect_calls_from_body()` for deep IR nesting.
+- **View/Inplace Alias Analysis** (`sonata.alias`):
+  - `derive_aliases_from_tasks()` derives alias relationships from arg_directions.
+  - Supports ALIAS_VIEW (output→input), ALIAS_INPLACE (inout), ALIAS_ALIAS (same buffer).
+- **Buffer Sharing Legality** (`sonata.memory_plan`):
+  - `check_sharing_legality()` checks memory_space and dtype compatibility.
+  - `SharingLegalityResult` dataclass with legality status and reason.
+  - `MemoryLimitExceededError` for device memory limit enforcement.
+- **Side-Effecting Task Marking** (`sonata.score`, `sonata.dependencies`):
+  - `Task.is_side_effecting` field (bool, default False).
+  - `infer_side_effect()` infers from arg_directions.
+- **TensorMap Tag Mapping** (`sonata.runtime_adapter`):
+  - `direction_to_tensormap_tag()` maps arg_directions to CANN TensorMap tags.
+  - `task_tensormap_tags()` maps all task directions to tags.
+- **load_sonata_plan() Enhancement** (`sonata.pipeline`):
+  - Now reconstructs Score with shape_assumptions from JSON.
+  - Enables guard checking on the load-from-disk path.
+
+### Fixed
+- `extract_score_from_region()` now uses recursive `_collect_calls_from_body()` instead of inline 2-level walk.
+- `load_sonata_plan()` now loads shape_assumptions, fixing dead guard checking code.
+
+---
+
 ## [v0.19] -- CI/CD + Production Hardening
 
 ### Added
