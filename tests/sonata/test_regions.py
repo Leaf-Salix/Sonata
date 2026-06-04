@@ -1095,3 +1095,35 @@ class TestExtractScoreFromRegion:
         assert score_b.tasks[0].name == "kernel_b"
         # Scores are independent
         assert score_a.tasks != score_b.tasks
+
+
+class TestRealRegionScoreIntegration:
+    """v0.20 Phase 1 A2: extract_score_from_region integration."""
+
+    def test_extract_score_from_region_with_body_calls(self):
+        """extract_score_from_region finds Calls nested in body."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC, extract_score_from_region
+
+        # Create a Call-like node
+        class Call:
+            pass
+        call = Call()
+        call.callee_name = "kernel"
+        call.arg_names = ("x",)
+        call.arg_directions = ("Input",)
+        call.arg_storage_keys = ("param:x",)
+        call.core_type = "aic"
+
+        # Wrap in a node with body
+        class Wrapper:
+            pass
+        wrapper = Wrapper()
+        wrapper.body = [call]
+
+        region = Region(region_id=0, kind=REGION_STATIC, nodes=(wrapper,))
+        node = RegionTreeNode(region=region)
+        score = extract_score_from_region(node, entry_name="test")
+
+        assert score is not None
+        assert len(score.tasks) == 1
+        assert score.tasks[0].name == "kernel"

@@ -594,22 +594,26 @@ def check_region_eligibility(
     
     # Process each maximal static subtree
     for static_subtree in region_tree.static_subtrees():
-        # v0.19: Placeholder Score per region. Full per-region Score extraction
-        # requires integration with PostSimplifyPyPTOInputAdapter per subtree.
-        # This will be addressed when liveness analysis is region-aware (v0.20+).
         region_key = f"region_{static_subtree.region.region_id}"
 
-        # Create a placeholder Score for the per-region structure
-        from .score import Score, Task, Dependency
-        
-        placeholder_score = Score(
-            name=f"{entry_name or 'graph'}_region_{static_subtree.region.region_id}",
-            runtime_target=default_rt,
-            tasks=(),
-            dependencies=(),
-            shape_assumptions=(),
+        # v0.20: Try real Score extraction, fall back to placeholder
+        real_score = extract_score_from_region(
+            static_subtree, runtime_target=default_rt, entry_name=entry_name,
         )
-        per_region_scores[region_key] = placeholder_score
+
+        if real_score is not None and len(real_score.tasks) > 0:
+            per_region_scores[region_key] = real_score
+        else:
+            # Fallback: placeholder Score for regions without extractable Calls
+            from .score import Score, Task, Dependency
+            placeholder_score = Score(
+                name=f"{entry_name or 'graph'}_region_{static_subtree.region.region_id}",
+                runtime_target=default_rt,
+                tasks=(),
+                dependencies=(),
+                shape_assumptions=(),
+            )
+            per_region_scores[region_key] = placeholder_score
     
     # Collect fallback reasons from dynamic regions
     for dynamic_node in region_tree.dynamic_nodes():
