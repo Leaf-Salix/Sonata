@@ -1005,3 +1005,93 @@ class TestForStmtExpansion:
         # Modify one, other should be unaffected
         expanded[0].callee_name = "modified"
         assert expanded[1].callee_name == "kernel"
+
+
+class TestExtractScoreFromRegion:
+    """v0.20 Phase 1 A1: Per-region Score extraction tests."""
+
+    def _make_call(self, name, arg_names=("x",), arg_directions=("Input",)):
+        """Create a mock Call node."""
+        class Call:
+            pass
+        c = Call()
+        c.callee_name = name
+        c.arg_names = arg_names
+        c.arg_directions = arg_directions
+        c.arg_storage_keys = tuple(f"buf:{a}" for a in arg_names)
+        c.core_type = "aic"
+        return c
+
+    def test_extract_from_single_call(self):
+        """Region with one Call → Score with one task."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC, extract_score_from_region
+
+        call = self._make_call("kernel")
+        region = Region(region_id=0, kind=REGION_STATIC, nodes=(call,))
+        node = RegionTreeNode(region=region)
+
+        score = extract_score_from_region(node, entry_name="test")
+        assert score is not None
+        assert len(score.tasks) == 1
+        assert score.tasks[0].name == "kernel"
+
+    def test_extract_from_multiple_calls(self):
+        """Region with multiple Calls → Score with multiple tasks."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC, extract_score_from_region
+
+        calls = [self._make_call(f"kernel_{i}") for i in range(3)]
+        region = Region(region_id=0, kind=REGION_STATIC, nodes=tuple(calls))
+        node = RegionTreeNode(region=region)
+
+        score = extract_score_from_region(node, entry_name="test")
+        assert score is not None
+        assert len(score.tasks) == 3
+
+    def test_extract_empty_region_returns_none(self):
+        """Region with no Calls → None."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC, extract_score_from_region
+
+        region = Region(region_id=0, kind=REGION_STATIC, nodes=())
+        node = RegionTreeNode(region=region)
+
+        score = extract_score_from_region(node, entry_name="test")
+        assert score is None
+
+    def test_extract_with_nested_body(self):
+        """Region with Call nested in body → extracted."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC, extract_score_from_region
+
+        call = self._make_call("inner_kernel")
+        # Create a node with a body containing the call
+        class Wrapper:
+            pass
+        wrapper = Wrapper()
+        wrapper.body = [call]
+        region = Region(region_id=0, kind=REGION_STATIC, nodes=(wrapper,))
+        node = RegionTreeNode(region=region)
+
+        score = extract_score_from_region(node, entry_name="test")
+        assert score is not None
+        assert len(score.tasks) == 1
+
+    def test_two_regions_independent_scores(self):
+        """Two regions produce independent Scores with different tasks."""
+        from sonata.regions import Region, RegionTreeNode, REGION_STATIC, extract_score_from_region
+
+        call_a = self._make_call("kernel_a")
+        call_b = self._make_call("kernel_b")
+
+        region_a = Region(region_id=0, kind=REGION_STATIC, nodes=(call_a,))
+        region_b = Region(region_id=1, kind=REGION_STATIC, nodes=(call_b,))
+
+        node_a = RegionTreeNode(region=region_a)
+        node_b = RegionTreeNode(region=region_b)
+
+        score_a = extract_score_from_region(node_a, entry_name="test")
+        score_b = extract_score_from_region(node_b, entry_name="test")
+
+        assert score_a is not None and score_b is not None
+        assert score_a.tasks[0].name == "kernel_a"
+        assert score_b.tasks[0].name == "kernel_b"
+        # Scores are independent
+        assert score_a.tasks != score_b.tasks

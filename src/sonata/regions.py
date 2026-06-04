@@ -437,6 +437,110 @@ def extract_regions(node: Any) -> RegionMap:
     return RegionMap(regions=tuple(regions))
 
 
+def extract_score_from_region(
+    subtree: RegionTreeNode,
+    *,
+    runtime_target: Any = None,
+    entry_name: str | None = None,
+) -> Score | None:
+    """Extract a real Score from a RegionTreeNode's IR nodes.
+
+    v0.20 Phase 1 A1: Per-region Score extraction (replaces placeholder).
+
+    Walks the subtree's IR nodes, extracts ordinary Calls, and builds
+    a Score with real tasks, dependencies, and shape assumptions.
+
+    Returns None if no Calls are found in the subtree.
+    """
+    from .dependencies import build_dependencies
+    from .pypto_adapter import PostSimplifyPyPTOInputAdapter
+    from .score import RuntimeTarget, Score, Task
+
+    # Collect all IR nodes from this subtree
+    all_nodes: list[Any] = []
+
+    def _collect_nodes(node: RegionTreeNode) -> None:
+        all_nodes.extend(node.region.nodes)
+        for child in node.children:
+            _collect_nodes(child)
+
+    _collect_nodes(subtree)
+
+    if not all_nodes:
+        return None
+
+    # Extract ordinary Calls from the IR nodes
+    calls: list[Any] = []
+    for ir_node in all_nodes:
+        kind = type(ir_node).__name__
+        if kind == "Call":
+            calls.append(ir_node)
+        # Walk into body/children to find nested Calls
+        body = getattr(ir_node, "body", None)
+        if body is not None:
+            if not isinstance(body, (list, tuple)):
+                body = (body,)
+            for stmt in body:
+                stmt_kind = type(stmt).__name__
+                if stmt_kind == "Call":
+                    calls.append(stmt)
+                elif hasattr(stmt, "body"):
+                    for sub in getattr(stmt, "body", []):
+                        if type(sub).__name__ == "Call":
+                            calls.append(sub)
+
+    if not calls:
+        return None
+
+    # Build Tasks from extracted Calls
+    func_ids: dict[str, int] = {}
+    tasks: list[Task] = []
+    for call in calls:
+        call_name = getattr(call, "callee_name", None) or getattr(call, "op_name", None) or f"call_{len(tasks)}"
+        if call_name not in func_ids:
+            func_ids[call_name] = len(func_ids)
+
+        # Extract arg info
+        arg_names = tuple(getattr(call, "arg_names", ()) or getattr(call, "args", ()))
+        arg_dirs = tuple(getattr(call, "arg_directions", ()))
+        arg_keys = tuple(getattr(call, "arg_storage_keys", ()))
+
+        task = Task(
+            task_id=len(tasks),
+            func_id=func_ids[call_name],
+            core_type=getattr(call, "core_type", "aic"),
+            args=arg_names,
+            arg_directions=arg_dirs,
+            arg_storage_keys=arg_keys,
+            name=call_name,
+        )
+        tasks.append(task)
+
+    if not tasks:
+        return None
+
+    # Build dependencies
+    dependencies = build_dependencies(tuple(tasks))
+
+    # Extract shape assumptions from the subtree's existing score if available
+    shape_assumptions = ()
+    if subtree.score is not None:
+        shape_assumptions = subtree.score.shape_assumptions
+
+    rt = runtime_target or RuntimeTarget(
+        runtime="host_build_graph",
+        function_name=f"{entry_name or 'graph'}_region_{subtree.region.region_id}",
+    )
+
+    return Score(
+        name=f"{entry_name or 'graph'}_region_{subtree.region.region_id}",
+        runtime_target=rt,
+        tasks=tuple(tasks),
+        dependencies=dependencies,
+        shape_assumptions=shape_assumptions,
+    )
+
+
 def check_region_eligibility(
     node: Any,
     *,
