@@ -348,10 +348,67 @@ def _reason(code: FallbackCode, message: str) -> FallbackReason:
     return FallbackReason(code=code.value, message=message, severity="error")
 
 
+# ---------------------------------------------------------------------------
+# v0.20 Phase 5: TensorMap tag mapping
+# ---------------------------------------------------------------------------
+
+# CANN TensorMap tag constants
+TENSORMAP_TAG_INPUT = "INPUT"
+TENSORMAP_TAG_OUTPUT = "OUTPUT"
+TENSORMAP_TAG_INOUT = "INOUT"
+TENSORMAP_TAG_NO_DEP = "NO_DEP"
+
+
+def direction_to_tensormap_tag(direction: str) -> str:
+    """Map a Sonata arg_direction to a CANN TensorMap tag.
+
+    v0.20 Phase 5 A1: Direction → TensorMap tag mapping.
+
+    Based on CANN survey findings:
+    - input → INPUT (RAW dependency)
+    - output → OUTPUT (registers producer)
+    - inout → INOUT (RAW + WAW)
+    - scalar/nodep → NO_DEP (no dependency)
+    - outputexisting → OUTPUT (existing buffer, same as output)
+    """
+    from .directions import normalize_direction, READ_DIRECTIONS, WRITE_DIRECTIONS, IGNORED_DIRECTIONS
+
+    normalized = normalize_direction(direction)
+
+    if normalized in IGNORED_DIRECTIONS:
+        return TENSORMAP_TAG_NO_DEP
+    if normalized == "inout":
+        return TENSORMAP_TAG_INOUT
+    if normalized in READ_DIRECTIONS:
+        return TENSORMAP_TAG_INPUT
+    if normalized in WRITE_DIRECTIONS:
+        return TENSORMAP_TAG_OUTPUT
+
+    # Unknown direction — conservative: treat as INPUT
+    return TENSORMAP_TAG_INPUT
+
+
+def task_tensormap_tags(task: Any) -> tuple[str, ...]:
+    """Map a Task's arg_directions to TensorMap tags.
+
+    Returns tuple of tags matching the Task's arg_directions order.
+    Empty tuple if Task has no arg_directions.
+    """
+    if not task.arg_directions:
+        return ()
+    return tuple(direction_to_tensormap_tag(d) for d in task.arg_directions)
+
+
 __all__ = [
     "HostBuildGraphEdge",
     "HostBuildGraphPlan",
     "HostBuildGraphRuntimeAdapter",
     "HostBuildGraphTask",
     "RuntimeAdapterResult",
+    "TENSORMAP_TAG_INPUT",
+    "TENSORMAP_TAG_INOUT",
+    "TENSORMAP_TAG_NO_DEP",
+    "TENSORMAP_TAG_OUTPUT",
+    "direction_to_tensormap_tag",
+    "task_tensormap_tags",
 ]

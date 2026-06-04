@@ -256,3 +256,46 @@ class TestRuntimeAdapterResult:
         assert not result.success
         assert result.plan is None
         assert len(result.reasons) == 1
+
+
+class TestTensorMapTagMapping:
+    """v0.20 Phase 5 A1-A3: direction → TensorMap tag mapping."""
+
+    def test_input_is_input(self):
+        from sonata.runtime_adapter import direction_to_tensormap_tag, TENSORMAP_TAG_INPUT
+        assert direction_to_tensormap_tag("Input") == TENSORMAP_TAG_INPUT
+
+    def test_output_is_output(self):
+        from sonata.runtime_adapter import direction_to_tensormap_tag, TENSORMAP_TAG_OUTPUT
+        assert direction_to_tensormap_tag("Output") == TENSORMAP_TAG_OUTPUT
+
+    def test_inout_is_inout(self):
+        from sonata.runtime_adapter import direction_to_tensormap_tag, TENSORMAP_TAG_INOUT
+        assert direction_to_tensormap_tag("InOut") == TENSORMAP_TAG_INOUT
+
+    def test_scalar_is_no_dep(self):
+        from sonata.runtime_adapter import direction_to_tensormap_tag, TENSORMAP_TAG_NO_DEP
+        assert direction_to_tensormap_tag("Scalar") == TENSORMAP_TAG_NO_DEP
+
+    def test_nodep_is_no_dep(self):
+        from sonata.runtime_adapter import direction_to_tensormap_tag, TENSORMAP_TAG_NO_DEP
+        assert direction_to_tensormap_tag("NoDep") == TENSORMAP_TAG_NO_DEP
+
+    def test_outputexisting_is_output(self):
+        from sonata.runtime_adapter import direction_to_tensormap_tag, TENSORMAP_TAG_OUTPUT
+        assert direction_to_tensormap_tag("OutputExisting") == TENSORMAP_TAG_OUTPUT
+
+    def test_task_tensormap_tags(self):
+        from sonata.runtime_adapter import task_tensormap_tags, TENSORMAP_TAG_INPUT, TENSORMAP_TAG_OUTPUT
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x", "y"), arg_directions=("Input", "Output"),
+                 arg_storage_keys=("buf:x", "buf:y"))
+        tags = task_tensormap_tags(t)
+        assert tags == (TENSORMAP_TAG_INPUT, TENSORMAP_TAG_OUTPUT)
+
+    def test_task_no_directions(self):
+        from sonata.runtime_adapter import task_tensormap_tags
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic")
+        assert task_tensormap_tags(t) == ()
