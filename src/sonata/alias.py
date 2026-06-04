@@ -15,6 +15,7 @@ or share the buffer in an in-place operation (inplace).
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 
 ALIAS_DISJOINT = "disjoint"
@@ -101,6 +102,67 @@ def _resolve_relation(
     return ALIAS_DISJOINT
 
 
+def derive_aliases_from_tasks(
+    tasks: tuple[Any, ...],
+) -> tuple[AliasRelation, ...]:
+    """Derive alias relationships from Tasks' arg_directions and arg_storage_keys.
+
+    v0.20 Phase 2 A2: Task-based alias derivation.
+
+    Rules:
+    - Same buffer_id with inout → ALIAS_INPLACE
+    - Same buffer_id with output + input (different tasks) → ALIAS_VIEW
+    - Same buffer_id with multiple writes → ALIAS_ALIAS
+    - Different buffer_ids → ALIAS_DISJOINT (not reported)
+
+    Returns empty tuple if Tasks have no arg_directions or arg_storage_keys.
+    """
+    from .directions import READ_DIRECTIONS, WRITE_DIRECTIONS, normalize_direction
+
+    # Collect per-task buffer access: buffer_id → list of (task_id, access_type)
+    buffer_accesses: dict[str, list[tuple[int, str]]] = {}
+
+    for task in tasks:
+        if not task.arg_directions or not task.arg_storage_keys:
+            continue
+        for direction, storage_key in zip(task.arg_directions, task.arg_storage_keys):
+            if storage_key is None:
+                continue
+            normalized = normalize_direction(direction)
+            if normalized in ("scalar", "nodep"):
+                continue
+            key = str(storage_key)
+            if key not in buffer_accesses:
+                buffer_accesses[key] = []
+            if normalized == "inout":
+                buffer_accesses[key].append((task.task_id, "inplace"))
+            elif normalized in READ_DIRECTIONS:
+                buffer_accesses[key].append((task.task_id, "read"))
+            elif normalized in WRITE_DIRECTIONS:
+                buffer_accesses[key].append((task.task_id, "write"))
+
+    # Build alias relations from buffer access patterns
+    relations: list[AliasRelation] = []
+
+    for buffer_id, accesses in buffer_accesses.items():
+        task_ids = set(tid for tid, _ in accesses)
+        access_types = set(atype for _, atype in accesses)
+
+        if len(task_ids) <= 1:
+            # Single task — no inter-task alias
+            continue
+
+        # Multiple tasks access same buffer
+        if "inplace" in access_types:
+            relations.append(AliasRelation(key_a=buffer_id, key_b=buffer_id, relation=ALIAS_INPLACE))
+        elif "write" in access_types and "read" in access_types:
+            relations.append(AliasRelation(key_a=buffer_id, key_b=buffer_id, relation=ALIAS_VIEW))
+        elif "write" in access_types:
+            relations.append(AliasRelation(key_a=buffer_id, key_b=buffer_id, relation=ALIAS_ALIAS))
+
+    return tuple(relations)
+
+
 __all__ = [
     "ALIAS_ALIAS",
     "ALIAS_DISJOINT",
@@ -108,4 +170,5 @@ __all__ = [
     "ALIAS_VIEW",
     "AliasRelation",
     "analyze_aliases",
+    "derive_aliases_from_tasks",
 ]

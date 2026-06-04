@@ -78,3 +78,67 @@ class TestAliasRelation:
     def test_shares_storage_inplace(self):
         r = AliasRelation("a", "b", ALIAS_INPLACE)
         assert r.shares_storage
+
+
+class TestDeriveAliasesFromTasks:
+    """v0.20 Phase 2 A2: derive_aliases_from_tasks tests."""
+
+    def test_inout_is_inplace(self):
+        """inout direction with multiple tasks → ALIAS_INPLACE."""
+        from sonata.alias import derive_aliases_from_tasks, ALIAS_INPLACE
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("inout",),
+                 arg_storage_keys=("buf:x",)),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",)),
+        )
+        relations = derive_aliases_from_tasks(tasks)
+        inplace = [r for r in relations if r.relation == ALIAS_INPLACE]
+        assert len(inplace) >= 1
+
+    def test_output_then_input_is_view(self):
+        """output then input on same buffer → ALIAS_VIEW."""
+        from sonata.alias import derive_aliases_from_tasks, ALIAS_VIEW
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("output",),
+                 arg_storage_keys=("buf:x",)),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",)),
+        )
+        relations = derive_aliases_from_tasks(tasks)
+        view = [r for r in relations if r.relation == ALIAS_VIEW]
+        assert len(view) >= 1
+
+    def test_empty_tasks(self):
+        """No tasks → empty relations."""
+        from sonata.alias import derive_aliases_from_tasks
+        assert derive_aliases_from_tasks(()) == ()
+
+    def test_no_directions_returns_empty(self):
+        """Tasks without arg_directions → empty."""
+        from sonata.alias import derive_aliases_from_tasks
+        from sonata.score import Task
+        tasks = (Task(task_id=0, func_id=0, core_type="aic"),)
+        assert derive_aliases_from_tasks(tasks) == ()
+
+    def test_different_buffers_no_alias(self):
+        """Different buffer_ids → no alias relations."""
+        from sonata.alias import derive_aliases_from_tasks
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",)),
+            Task(task_id=1, func_id=1, core_type="aiv",
+                 args=("y",), arg_directions=("output",),
+                 arg_storage_keys=("buf:y",)),
+        )
+        relations = derive_aliases_from_tasks(tasks)
+        # Different buffers → no relations
+        assert len(relations) == 0
