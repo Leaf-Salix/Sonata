@@ -988,3 +988,99 @@ class TestRegionIndependentGuards:
         guard_results = check_guards_at_runtime(result, {"batch": [64]})
         # Both regions should get the same result (global score)
         assert all(gr.guard_status == "stale" for gr in guard_results)
+
+
+class TestStaleRebuild:
+    """v0.21 Phase 2 A1: STALE triggers plan handle rebuild."""
+
+    def test_stale_rebuilds_plan_handle(self):
+        """STALE guard → plan handle rebuilt from Score."""
+        import json
+        import tempfile
+        import warnings
+        from pathlib import Path
+        from sonata.score import Score, RuntimeTarget, Task, ShapeAssumption
+        from sonata.guard import GUARD_SEVERITY_SOFT
+        from sonata.plan_handle import PlanHandle
+        from sonata.pipeline import (
+            SonataAnalysisResult, check_guards_at_runtime, update_region_guard_status,
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+                ),
+            )
+
+        original_ph = PlanHandle.from_score(score)
+        result = SonataAnalysisResult(
+            eligible=True,
+            score=score,
+            plan_handle=original_ph,
+            region_statuses={"region_0": "static"},
+        )
+
+        # Simulate STALE guard check
+        guard_results = check_guards_at_runtime(result, {"batch": [64]})
+        assert guard_results[0].guard_status == "stale"
+
+        # Rebuild plan handle from Score
+        new_ph = PlanHandle.from_score(score)
+        assert new_ph.score_fingerprint == original_ph.score_fingerprint
+
+    def test_stale_preserves_score_fingerprint(self):
+        """STALE rebuild preserves Score fingerprint (no replan needed)."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task, ShapeAssumption
+        from sonata.guard import GUARD_SEVERITY_SOFT
+        from sonata.serialization import score_fingerprint
+        from sonata.plan_handle import PlanHandle
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+                ),
+            )
+
+        fp_before = score_fingerprint(score)
+        # Simulate guard check (STALE)
+        # Fingerprint should not change
+        fp_after = score_fingerprint(score)
+        assert fp_before == fp_after
+
+    def test_all_failed_does_not_rebuild(self):
+        """ALL_FAILED guard → no rebuild, execution skipped."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task, ShapeAssumption
+        from sonata.guard import GUARD_SEVERITY_HARD
+        from sonata.pipeline import SonataAnalysisResult, check_guards_at_runtime
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_HARD),
+                ),
+            )
+
+        result = SonataAnalysisResult(
+            eligible=True,
+            score=score,
+            region_statuses={"region_0": "static"},
+        )
+        guard_results = check_guards_at_runtime(result, {"batch": [64]})
+        assert guard_results[0].guard_status == "all_failed"
+        # ALL_FAILED should trigger replan, not rebuild

@@ -553,8 +553,29 @@ def execute_with_sonata(
                 return None, plan
             if has_stale:
                 _region_log.warning(
-                    "[SONATA] STALE guard — plan handle invalid, Score still valid"
+                    "[SONATA] STALE guard — rebuilding plan handle from Score"
                 )
+                # v0.21 Phase 2 A1: Rebuild plan handle on STALE
+                # Score fingerprint is still valid, only plan handle needs rebuild
+                if plan.score is not None:
+                    new_plan_handle = PlanHandle.from_score(
+                        plan.score,
+                        source_adapter=DEFAULT_CERTIFIED_DUMP,
+                    )
+                    plan = SonataAnalysisResult(
+                        eligible=plan.eligible,
+                        score=plan.score,
+                        eligibility_result=plan.eligibility_result,
+                        region_tree=plan.region_tree,
+                        region_eligibility=plan.region_eligibility,
+                        plan_handle=new_plan_handle,
+                        host_build_graph_plan=plan.host_build_graph_plan,
+                        adapter_result=plan.adapter_result,
+                        region_statuses=plan.region_statuses,
+                        fallback_reasons=plan.fallback_reasons,
+                        memory_plan=plan.memory_plan,
+                    )
+                    _region_log.info("[SONATA] Plan handle rebuilt from Score")
 
             # Update guard status in sonata_plan.json
             guard_status = update_region_guard_status(plan.plan_handle, guard_results)
