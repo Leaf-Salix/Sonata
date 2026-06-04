@@ -243,5 +243,85 @@ class TestTimingCollection:
         assert abs(p.mean_latency_us - 320.0) < 0.01
 
 
+class TestProfileSchedulingIntegration:
+    """v0.21 Phase 1 A3: Full profile → scheduling → runtime hint integration."""
+
+    def test_high_latency_profile_increases_block_dim(self):
+        """High latency profile → higher block_dim via scheduling instructions."""
+        import tempfile
+        import json
+        from pathlib import Path
+        from sonata.profile import ProfileDatabase
+        from sonata.runtime_hook import apply_sonata_runtime_hints
+
+        # Create a profile with high latency
+        db = ProfileDatabase()
+        db.record("matmul", (128, 128), "fp16", "aic", 2000.0)  # >1ms
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = {
+                "eligible": True,
+                "region_statuses": {"region_0": "static"},
+            }
+            (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+
+            # Without profile → default block_dim=32
+            result_no_profile = apply_sonata_runtime_hints(
+                work_dir=tmpdir, block_dim=None, aicpu_thread_num=None,
+                user_block_dim=None,
+            )
+            assert result_no_profile.block_dim == 32
+
+    def test_low_latency_profile_decreases_block_dim(self):
+        """Low latency profile → lower block_dim via scheduling instructions."""
+        import tempfile
+        import json
+        from pathlib import Path
+        from sonata.profile import ProfileDatabase
+        from sonata.pipeline import DispatchPlan, RegionDispatchResult, compute_scheduling_instructions
+
+        db = ProfileDatabase()
+        db.record("add", (1024,), "fp16", "aiv", 50.0)  # <100us
+
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="static", action="optimized"),),
+            optimized_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, profile_db=db)
+        assert inst[0].block_dim == 16  # max(32//2, 4)
+
+    def test_profile_db_round_trip(self):
+        """Profile DB survives save/load round-trip."""
+        import tempfile
+        from pathlib import Path
+        from sonata.profile import ProfileDatabase
+
+        db = ProfileDatabase()
+        db.record("matmul", (128, 128), "fp16", "aic", 320.0)
+        db.record("conv2d", (56, 56), "fp16", "aic", 1050.0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "profiles.json"
+            db.save(path)
+            db2 = ProfileDatabase()
+            db2.load(path)
+            p = db2.lookup("matmul", (128, 128), "fp16")
+            assert p is not None
+            assert abs(p.mean_latency_us - 320.0) < 0.01
+
+    def test_empty_profile_db_no_effect(self):
+        """Empty profile DB → no effect on scheduling."""
+        from sonata.profile import ProfileDatabase
+        from sonata.pipeline import DispatchPlan, RegionDispatchResult, compute_scheduling_instructions
+
+        db = ProfileDatabase()
+        dispatch = DispatchPlan(
+            results=(RegionDispatchResult(region_id="r0", status="static", action="optimized"),),
+            optimized_count=1,
+        )
+        inst = compute_scheduling_instructions(dispatch, profile_db=db)
+        assert inst[0].block_dim == 32  # default, no profile adjustment
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
