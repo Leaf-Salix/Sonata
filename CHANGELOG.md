@@ -8,6 +8,31 @@ are developed on feature branches and merged to main upon completion.
 
 ---
 
+## [v0.21] -- Runtime Integration Tests + Undecided Cleanup
+
+### Added
+- **Runner Hook End-to-End Tests** (`tests/sonata/test_runner_hook.py`):
+  - 10 tests verifying hook behavior: static/dynamic/mixed regions, user_block_dim precedence, fail-open.
+- **ST Conftest Integration Tests** (`tests/sonata/test_conftest_integration.py`):
+  - 8 tests verifying compile hook writes sonata_plan.json and runner hook consumes it.
+- **Guard Rebuild on STALE** (`sonata.pipeline`):
+  - `execute_with_sonata()` now rebuilds plan handle from Score when STALE guard detected.
+  - Score fingerprint preserved (no replan needed).
+- **Per-Region Guard Stats** (`sonata.pipeline`):
+  - `region_guard_stats` in `sonata_plan.json` with per-region shape_assumption_count, unique_symbols, guard_density.
+- **FINGERPRINT_SCOPE Constant** (`sonata.serialization`):
+  - Documents which pipeline stage the fingerprint identity is bound to.
+- **OutputDef + Task.output_defs** (`sonata.score`):
+  - `OutputDef(buffer_id, dtype, shape)` dataclass for typed output definitions.
+  - `Task.output_defs` optional field for precise liveness analysis.
+- **Liveness OutputDefs** (`sonata.liveness`):
+  - `compute_lifetimes()` now tracks Task.output_defs as writes when available.
+
+### Fixed
+- `load_sonata_plan()` now restores `severity` from JSON (was defaulting all to HARD).
+
+---
+
 ## [v0.20] -- Survey Findings Landing
 
 ### Added
