@@ -240,15 +240,41 @@ def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
 
     If *path* is a directory, looks for ``sonata_plan.json`` inside it.
     Returns None if the file does not exist.
+
+    v0.20: Also loads shape_assumptions from the score section for
+    guard checking in execute_with_sonata().
     """
+    from .score import Score, RuntimeTarget, ShapeAssumption
+
     p = Path(path)
     if p.is_dir():
         p = p / "sonata_plan.json"
     if not p.exists():
         return None
     data = json.loads(p.read_text())
+
+    # Reconstruct Score with shape_assumptions for guard checking
+    score = None
+    score_data = data.get("score")
+    if score_data and isinstance(score_data, dict):
+        shape_data = score_data.get("shape_assumptions", [])
+        shape_assumptions = tuple(
+            ShapeAssumption(
+                symbol=s.get("symbol", ""),
+                dims=tuple(s.get("dims", ())),
+            )
+            for s in shape_data
+            if isinstance(s, dict) and s.get("symbol")
+        )
+        score = Score(
+            name=score_data.get("name", "loaded"),
+            runtime_target=RuntimeTarget(),
+            shape_assumptions=shape_assumptions,
+        )
+
     return SonataAnalysisResult(
         eligible=data.get("eligible", False),
+        score=score,
         region_statuses=data.get("region_statuses", {}),
     )
 

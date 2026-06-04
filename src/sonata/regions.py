@@ -469,25 +469,14 @@ def extract_score_from_region(
     if not all_nodes:
         return None
 
-    # Extract ordinary Calls from the IR nodes
+    # Extract ordinary Calls from the IR nodes (recursive walk)
     calls: list[Any] = []
     for ir_node in all_nodes:
         kind = type(ir_node).__name__
         if kind == "Call":
             calls.append(ir_node)
-        # Walk into body/children to find nested Calls
-        body = getattr(ir_node, "body", None)
-        if body is not None:
-            if not isinstance(body, (list, tuple)):
-                body = (body,)
-            for stmt in body:
-                stmt_kind = type(stmt).__name__
-                if stmt_kind == "Call":
-                    calls.append(stmt)
-                elif hasattr(stmt, "body"):
-                    for sub in getattr(stmt, "body", []):
-                        if type(sub).__name__ == "Call":
-                            calls.append(sub)
+        # Recursively collect from body
+        calls.extend(_collect_calls_from_body(ir_node))
 
     if not calls:
         return None
