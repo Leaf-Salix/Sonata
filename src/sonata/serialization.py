@@ -23,6 +23,17 @@ SCORE_SCHEMA_VERSION = 1
 ELIGIBILITY_RESULT_SCHEMA_VERSION = 1
 FINGERPRINT_VERSION = 1
 
+# v0.21 Phase 3 A1: Fingerprint scope — documents which pipeline stage
+# the fingerprint identity is bound to. This is informational only;
+# changing it does NOT affect the hash algorithm, but records the
+# contract for downstream consumers.
+#
+# Current scope: post-Simplify, after CollectCommGroups.
+# This means fingerprint identity = the IR at this specific stage.
+# If PyPTO pipeline reorders passes relative to this stage,
+# fingerprints will change (expected behavior, not a bug).
+FINGERPRINT_SCOPE = "post_simplify_after_collect_comm_groups"
+
 
 def plan_handle_to_dict(plan_handle: "PlanHandle") -> dict[str, Any]:
     """Return a deterministic JSON-like dictionary for ``plan_handle``."""
@@ -185,6 +196,7 @@ def _json_like(value: Any) -> Any:
 
 __all__ = [
     "ELIGIBILITY_RESULT_SCHEMA_VERSION",
+    "FINGERPRINT_SCOPE",
     "FINGERPRINT_VERSION",
     "SCORE_SCHEMA_VERSION",
     "eligibility_result_to_dict",

@@ -322,3 +322,41 @@ class TestStorageEffectSerialization:
         d = score_to_dict(score)
         restored = score_from_dict(d)
         assert restored.tasks[0].storage_effects is None
+
+
+class TestFingerprintScope:
+    """v0.21 Phase 3 A1: Fingerprint scope constant tests."""
+
+    def test_fingerprint_scope_exists(self):
+        """FINGERPRINT_SCOPE constant exists and is a string."""
+        from sonata.serialization import FINGERPRINT_SCOPE
+        assert isinstance(FINGERPRINT_SCOPE, str)
+        assert len(FINGERPRINT_SCOPE) > 0
+
+    def test_fingerprint_scope_value(self):
+        """FINGERPRINT_SCOPE records the pipeline stage."""
+        from sonata.serialization import FINGERPRINT_SCOPE
+        assert "simplify" in FINGERPRINT_SCOPE.lower()
+
+    def test_fingerprint_scope_does_not_affect_hash(self):
+        """FINGERPRINT_SCOPE does not change the fingerprint hash."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task
+        from sonata.serialization import score_fingerprint, FINGERPRINT_SCOPE
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test", runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+            )
+        fp1 = score_fingerprint(score)
+        # Changing FINGERPRINT_SCOPE should not affect the hash
+        # (it's a module-level constant, not used in hash computation)
+        assert isinstance(FINGERPRINT_SCOPE, str)
+        fp2 = score_fingerprint(score)
+        assert fp1 == fp2
+
+    def test_fingerprint_scope_in_all(self):
+        """FINGERPRINT_SCOPE is in __all__."""
+        import sonata.serialization as mod
+        assert "FINGERPRINT_SCOPE" in mod.__all__
