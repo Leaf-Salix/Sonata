@@ -161,3 +161,64 @@ class TestMultiOutputLiveness:
         lifetimes = compute_lifetimes(tasks)
         keys = [lt.storage_key for lt in lifetimes]
         assert keys.count("buf_x") == 1
+
+
+class TestOutputDefsLiveness:
+    """v0.21 Phase 4 A2: compute_lifetimes uses output_defs when available."""
+
+    def test_output_defs_tracked_as_writes(self):
+        """Task with output_defs → buffers tracked as writes."""
+        from sonata.liveness import compute_lifetimes
+        from sonata.score import Task, OutputDef
+        tasks = (
+            Task(task_id=0, func_id=1, core_type="aic",
+                 output_defs=(
+                     OutputDef(buffer_id="out_a", dtype="fp16"),
+                     OutputDef(buffer_id="out_b", dtype="fp32"),
+                 )),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        by_key = {lt.storage_key: lt for lt in lifetimes}
+        assert "out_a" in by_key
+        assert "out_b" in by_key
+        assert by_key["out_a"].birth == 0
+        assert by_key["out_a"].death == 0
+
+    def test_output_defs_with_reads(self):
+        """output_defs outputs + arg reads → correct lifetime."""
+        from sonata.liveness import compute_lifetimes
+        from sonata.score import Task, OutputDef
+        tasks = (
+            Task(task_id=0, func_id=1, core_type="aic",
+                 output_defs=(OutputDef(buffer_id="out_a"),)),
+            Task(task_id=1, func_id=2, core_type="aic",
+                 args=("out_a",), arg_directions=("Input",),
+                 arg_storage_keys=("out_a",)),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        by_key = {lt.storage_key: lt for lt in lifetimes}
+        assert by_key["out_a"].birth == 0
+        assert by_key["out_a"].death == 1  # read by task 1
+
+    def test_output_defs_none_fallback(self):
+        """Task with output_defs=None → falls back to outputs/arg_directions."""
+        from sonata.liveness import compute_lifetimes
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=1, core_type="aic",
+                 outputs=("buf_x",), output_defs=None),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        by_key = {lt.storage_key: lt for lt in lifetimes}
+        assert "buf_x" in by_key
+
+    def test_output_defs_empty_tuple(self):
+        """Task with output_defs=() → no extra outputs tracked."""
+        from sonata.liveness import compute_lifetimes
+        from sonata.score import Task
+        tasks = (
+            Task(task_id=0, func_id=1, core_type="aic",
+                 output_defs=()),
+        )
+        lifetimes = compute_lifetimes(tasks)
+        assert len(lifetimes) == 0

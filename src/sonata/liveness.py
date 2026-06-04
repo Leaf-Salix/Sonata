@@ -80,6 +80,14 @@ def compute_lifetimes(tasks: tuple[Task, ...]) -> tuple[BufferLifetime, ...]:
                 births[out_key] = task.task_id
             deaths[out_key] = max(deaths.get(out_key, task.task_id), task.task_id)
 
+        # v0.21 Phase 4 A2: Typed output_defs for precise liveness
+        if task.output_defs is not None:
+            for out_def in task.output_defs:
+                key = out_def.buffer_id
+                if key not in births:
+                    births[key] = task.task_id
+                deaths[key] = max(deaths.get(key, task.task_id), task.task_id)
+
     result: list[BufferLifetime] = []
     for key in sorted(births.keys()):
         result.append(BufferLifetime(
