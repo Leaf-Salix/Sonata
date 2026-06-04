@@ -256,6 +256,26 @@ def derive_storage_effects(task: Task) -> tuple["StorageEffect", ...]:
     return tuple(effects)
 
 
+def infer_side_effect(task: Task) -> bool:
+    """Infer whether a Task is side-effecting from its arg_directions.
+
+    v0.20 Phase 4 A2: Side-effect inference.
+
+    A task is side-effecting if it has any output or inout arg_directions.
+    Input-only and scalar/nodep tasks are not side-effecting.
+
+    Returns False if Task has no arg_directions.
+    """
+    if not task.arg_directions:
+        return False
+
+    for direction in task.arg_directions:
+        normalized = normalize_direction(direction)
+        if normalized in WRITE_DIRECTIONS:
+            return True
+    return False
+
+
 __all__ = [
     "DEPENDENCY_POLICY_DATAFLOW_V0",
     "DEPENDENCY_POLICY_SEQUENTIAL_V0",
@@ -266,5 +286,6 @@ __all__ = [
     "build_sequential_dependencies",
     "dataflow_dependency_fallback_code",
     "derive_storage_effects",
+    "infer_side_effect",
     "supports_dataflow_dependencies",
 ]

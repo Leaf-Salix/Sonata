@@ -53,6 +53,8 @@ class Task:
     outputs: tuple[str, ...] = ()
     # v0.17 Phase 3 A2: Storage identity for liveness analysis
     storage_effects: tuple["StorageEffect", ...] | None = None
+    # v0.20 Phase 4 A1: Side-effect marking for ordering dependencies
+    is_side_effecting: bool = False
 
 
 class DependencyKind(str, Enum):

@@ -293,5 +293,56 @@ class TestDeriveStorageEffects:
         assert effects[0].kind == "write"
 
 
+class TestInferSideEffect:
+    """v0.20 Phase 4 A1-A3: side-effect inference tests."""
+
+    def test_output_is_side_effecting(self):
+        from sonata.dependencies import infer_side_effect
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("output",),
+                 arg_storage_keys=("buf:x",))
+        assert infer_side_effect(t) is True
+
+    def test_inout_is_side_effecting(self):
+        from sonata.dependencies import infer_side_effect
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("inout",),
+                 arg_storage_keys=("buf:x",))
+        assert infer_side_effect(t) is True
+
+    def test_input_only_not_side_effecting(self):
+        from sonata.dependencies import infer_side_effect
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("x",), arg_directions=("input",),
+                 arg_storage_keys=("buf:x",))
+        assert infer_side_effect(t) is False
+
+    def test_scalar_not_side_effecting(self):
+        from sonata.dependencies import infer_side_effect
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 args=("n",), arg_directions=("scalar",),)
+        assert infer_side_effect(t) is False
+
+    def test_no_directions_not_side_effecting(self):
+        from sonata.dependencies import infer_side_effect
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic")
+        assert infer_side_effect(t) is False
+
+    def test_task_field_default_false(self):
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic")
+        assert t.is_side_effecting is False
+
+    def test_task_field_can_be_set(self):
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic", is_side_effecting=True)
+        assert t.is_side_effecting is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
