@@ -55,6 +55,22 @@ class Task:
     storage_effects: tuple["StorageEffect", ...] | None = None
     # v0.20 Phase 4 A1: Side-effect marking for ordering dependencies
     is_side_effecting: bool = False
+    # v0.21 Phase 4 A1: Typed output definitions for precise liveness
+    output_defs: tuple["OutputDef", ...] | None = None
+
+
+@dataclass(frozen=True)
+class OutputDef:
+    """Typed output definition for a Task.
+
+    v0.21 Phase 4 A1: Provides precise output metadata for liveness analysis.
+    When available, ``compute_lifetimes()`` uses OutputDef instead of
+    inferring outputs from arg_directions.
+    """
+
+    buffer_id: str
+    dtype: str = "unknown"
+    shape: tuple[int, ...] = ()
 
 
 class DependencyKind(str, Enum):

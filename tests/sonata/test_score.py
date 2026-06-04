@@ -587,5 +587,52 @@ class TestStorageEffectBackwardCompat:
         assert restored.tasks[0].task_id == 0
 
 
+class TestOutputDef:
+    """v0.21 Phase 4 A1: OutputDef and Task.output_defs tests."""
+
+    def test_output_def_construction(self):
+        from sonata.score import OutputDef
+        od = OutputDef(buffer_id="buf_x", dtype="fp16", shape=(128, 128))
+        assert od.buffer_id == "buf_x"
+        assert od.dtype == "fp16"
+        assert od.shape == (128, 128)
+
+    def test_output_def_frozen(self):
+        from sonata.score import OutputDef
+        import pytest
+        od = OutputDef(buffer_id="buf_x")
+        with pytest.raises(AttributeError):
+            od.buffer_id = "buf_y"
+
+    def test_output_def_defaults(self):
+        from sonata.score import OutputDef
+        od = OutputDef(buffer_id="buf_x")
+        assert od.dtype == "unknown"
+        assert od.shape == ()
+
+    def test_task_output_defs_default_none(self):
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic")
+        assert t.output_defs is None
+
+    def test_task_with_output_defs(self):
+        from sonata.score import Task, OutputDef
+        defs = (
+            OutputDef(buffer_id="out_a", dtype="fp16", shape=(64,)),
+            OutputDef(buffer_id="out_b", dtype="fp32", shape=(32,)),
+        )
+        t = Task(task_id=0, func_id=0, core_type="aic", output_defs=defs)
+        assert len(t.output_defs) == 2
+        assert t.output_defs[0].dtype == "fp16"
+
+    def test_output_def_backward_compat(self):
+        """Task with output_defs=None still works with existing outputs field."""
+        from sonata.score import Task
+        t = Task(task_id=0, func_id=0, core_type="aic",
+                 outputs=("buf_x",), output_defs=None)
+        assert t.outputs == ("buf_x",)
+        assert t.output_defs is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
