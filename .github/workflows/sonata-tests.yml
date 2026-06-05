@@ -24,12 +24,26 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Cache pypto wheel
+        uses: actions/cache@v4
+        with:
+          path: ~/pypto-wheels
+          key: pypto-wheel-${{ runner.os }}-${{ hashFiles('upstream/pypto/pyproject.toml') }}
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-xdist
           if [ -f upstream/pypto/pyproject.toml ]; then
-            pip install upstream/pypto/ 2>/dev/null || echo "pypto C++ build skipped"
+            WHEEL=$(ls ~/pypto-wheels/pypto-*.whl 2>/dev/null | head -1)
+            if [ -n "$WHEEL" ]; then
+              echo "Using cached wheel: $WHEEL"
+              pip install "$WHEEL"
+            else
+              echo "Building pypto wheel..."
+              pip wheel upstream/pypto/ --no-deps -w ~/pypto-wheels
+              pip install ~/pypto-wheels/pypto-*.whl
+            fi
           fi
 
       - name: Run sonata unit tests
@@ -53,11 +67,27 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Cache pypto wheel
+        uses: actions/cache@v4
+        with:
+          path: ~/pypto-wheels
+          key: pypto-wheel-${{ runner.os }}-${{ hashFiles('upstream/pypto/pyproject.toml') }}
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          pip install upstream/pypto/ 2>/dev/null || echo "pypto C++ build skipped"
+          if [ -f upstream/pypto/pyproject.toml ]; then
+            WHEEL=$(ls ~/pypto-wheels/pypto-*.whl 2>/dev/null | head -1)
+            if [ -n "$WHEEL" ]; then
+              echo "Using cached wheel: $WHEEL"
+              pip install "$WHEEL"
+            else
+              echo "Building pypto wheel..."
+              pip wheel upstream/pypto/ --no-deps -w ~/pypto-wheels
+              pip install ~/pypto-wheels/pypto-*.whl
+            fi
+          fi
 
       - name: Run pypto_cases tests
         env:
