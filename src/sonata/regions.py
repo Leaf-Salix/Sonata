@@ -153,6 +153,10 @@ class RegionTreeNode:
             "node_count": self.region.node_count,
         }
 
+        # Include control_flow_kind to distinguish ForStmt vs IfStmt vs WhileStmt
+        if self.region.control_flow_kind is not None:
+            base_identity["control_flow_kind"] = self.region.control_flow_kind
+
         # Add score-based identity if available — use full score_fingerprint
         # to include task/dependency/guard content (not just counts)
         if self.score is not None:
@@ -189,17 +193,21 @@ class RegionTreeNode:
     
     def update_score(self, new_score: Score) -> "RegionTreeNode":
         """Create a new node with updated score and fingerprint.
-        
+
         Returns a new frozen instance with the score and recomputed fingerprint.
+        Uses _compute_fingerprint() for consistency with the region-tree
+        identity payload (not raw score_fingerprint).
         """
-        new_fp = score_fingerprint(new_score)
-        return RegionTreeNode(
+        new_node = RegionTreeNode(
             region=self.region,
             children=self.children,
             score=new_score,
-            _fingerprint_cache=new_fp,
         )
-    
+        # Compute fingerprint using the same method as the property
+        new_fp = new_node._compute_fingerprint()
+        object.__setattr__(new_node, '_fingerprint_cache', new_fp)
+        return new_node
+
     def update_children(self, new_children: tuple["RegionTreeNode", ...]) -> "RegionTreeNode":
         """Create a new node with updated children."""
         return RegionTreeNode(

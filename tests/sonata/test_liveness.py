@@ -85,9 +85,10 @@ class TestBufferLifetime:
         assert not a.overlaps(b)
 
     def test_overlaps_adjacent(self):
+        """Touching lifetimes (death==birth) do NOT overlap — PyPTO semantics."""
         a = BufferLifetime("a", birth=0, death=2)
         b = BufferLifetime("b", birth=2, death=4)
-        assert a.overlaps(b)
+        assert not a.overlaps(b)
 
     def test_overlaps_contained(self):
         a = BufferLifetime("a", birth=0, death=10)

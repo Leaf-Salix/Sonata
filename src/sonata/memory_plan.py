@@ -317,11 +317,12 @@ def solve_memory(
         elapsed = time.monotonic() - start
         if elapsed > timeout_seconds:
             warnings.warn(
-                f"Primary solver took {elapsed:.2f}s (>{timeout_seconds}s). "
-                "Consider using GreedySolver for large graphs.",
+                f"Primary solver took {elapsed:.2f}s (>{timeout_seconds}s), "
+                "falling back to GreedySolver.",
                 UserWarning,
                 stacklevel=2,
             )
+            return fallback.solve(conflict_matrix, sizes, device_memory_limit)
         return result
     except Exception:
         warnings.warn(

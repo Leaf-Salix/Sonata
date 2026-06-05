@@ -36,8 +36,10 @@ class OperatorProfile:
         dtype: Data type string, e.g. "fp16".
         core_type: Core type, e.g. "aic".
         mean_latency_us: Mean execution time in microseconds.
-        std_latency_us: Standard deviation of execution time.
+        std_latency_us: Population standard deviation of execution time.
         sample_count: Number of recorded samples.
+        _m2: Internal Welford accumulator (sum of squared deviations).
+             Not serialized; derived from std on load.
     """
 
     op_signature: str
@@ -48,6 +50,7 @@ class OperatorProfile:
     mean_latency_us: float
     std_latency_us: float
     sample_count: int
+    _m2: float = 0.0
 
 
 def _make_signature(op_type: str, shape: tuple[int, ...], dtype: str) -> str:
@@ -95,6 +98,7 @@ class ProfileDatabase:
                 mean_latency_us=latency_us,
                 std_latency_us=0.0,
                 sample_count=1,
+                _m2=0.0,
             )
             return
 
@@ -102,10 +106,10 @@ class ProfileDatabase:
         n = existing.sample_count + 1
         old_mean = existing.mean_latency_us
         new_mean = old_mean + (latency_us - old_mean) / n
-        # For std, we approximate: new variance ≈ old variance + delta
-        old_var = existing.std_latency_us ** 2
-        new_var = old_var + (latency_us - old_mean) * (latency_us - new_mean)
-        new_std = math.sqrt(new_var / n) if n > 1 else 0.0
+        # Welford recurrence: new_m2 = old_m2 + (x - old_mean)(x - new_mean)
+        old_m2 = existing._m2
+        new_m2 = old_m2 + (latency_us - old_mean) * (latency_us - new_mean)
+        new_std = math.sqrt(new_m2 / n) if n > 1 else 0.0
 
         self._profiles[sig] = OperatorProfile(
             op_signature=sig,
@@ -116,6 +120,7 @@ class ProfileDatabase:
             mean_latency_us=new_mean,
             std_latency_us=new_std,
             sample_count=n,
+            _m2=new_m2,
         )
 
     def all_profiles(self) -> tuple[OperatorProfile, ...]:
@@ -130,10 +135,16 @@ class ProfileDatabase:
             "schema_version": 1,
             "profiles": [
                 {
-                    **asdict(profile),
-                    "shape": list(profile.shape),
+                    "op_signature": p.op_signature,
+                    "op_type": p.op_type,
+                    "shape": list(p.shape),
+                    "dtype": p.dtype,
+                    "core_type": p.core_type,
+                    "mean_latency_us": p.mean_latency_us,
+                    "std_latency_us": p.std_latency_us,
+                    "sample_count": p.sample_count,
                 }
-                for profile in self._profiles.values()
+                for p in self._profiles.values()
             ],
         }
         p.write_text(json.dumps(data, indent=2, sort_keys=True))
@@ -146,6 +157,10 @@ class ProfileDatabase:
             return
         data = json.loads(p.read_text())
         for entry in data.get("profiles", []):
+            n = entry["sample_count"]
+            std = entry["std_latency_us"]
+            # Reconstruct _m2 from population std: std = sqrt(m2/n) → m2 = std^2 * n
+            m2 = (std ** 2) * n if n > 1 else 0.0
             profile = OperatorProfile(
                 op_signature=entry["op_signature"],
                 op_type=entry["op_type"],
@@ -153,8 +168,9 @@ class ProfileDatabase:
                 dtype=entry["dtype"],
                 core_type=entry["core_type"],
                 mean_latency_us=entry["mean_latency_us"],
-                std_latency_us=entry["std_latency_us"],
-                sample_count=entry["sample_count"],
+                std_latency_us=std,
+                sample_count=n,
+                _m2=m2,
             )
             self._profiles[profile.op_signature] = profile
 

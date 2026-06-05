@@ -9,9 +9,13 @@
 
 """Buffer liveness analysis for Sonata v0.3 storage model.
 
-Computes the task-level lifetime interval [birth, death) for each storage
+Computes the task-level lifetime interval [birth, death] for each storage
 key, where birth is the first task that writes the buffer and death is the
 last task that reads it. This is a graph-level analysis, not kernel-level.
+
+Touching lifetimes (death of A == birth of B) can share memory,
+matching PyPTO MemoryReuse semantics: within a single statement,
+inputs are consumed before outputs are produced.
 """
 
 from dataclasses import dataclass
@@ -29,8 +33,12 @@ class BufferLifetime:
     death: int
 
     def overlaps(self, other: "BufferLifetime") -> bool:
-        """Return whether two lifetimes overlap (both alive at the same time)."""
-        return self.birth <= other.death and other.birth <= self.death
+        """Return whether two lifetimes overlap (both alive at the same time).
+
+        Touching lifetimes (self.death == other.birth) do NOT overlap,
+        matching PyPTO MemoryReuse: inputs consumed before outputs produced.
+        """
+        return self.birth < other.death and other.birth < self.death
 
 
 @dataclass(frozen=True)
