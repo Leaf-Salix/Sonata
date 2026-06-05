@@ -30,7 +30,7 @@ def _write_sonata_plan(work_dir: Path, eligible: bool = True,
     """Write a minimal sonata_plan.json for testing."""
     plan = {
         "eligible": eligible,
-        "region_statuses": region_statuses or {"region_0": "static"},
+        "region_statuses": region_statuses if region_statuses is not None else {"region_0": "static"},
     }
     if shape_assumptions:
         plan["score"] = {
@@ -168,12 +168,15 @@ class TestRunnerHookEndToEnd:
         """Empty region_statuses → hook returns original params (no scheduling)."""
         from sonata.runtime_hook import apply_sonata_runtime_hints
 
-        # Verified manually: empty region_statuses → reason="no_regions"
-        # Test skipped due to pytest isolation issue with tempfile + hook caching
-        # Manual verification:
-        #   apply_sonata_runtime_hints(work_dir=tmpdir, block_dim=4, ...) →
-        #   SonataRuntimeHints(block_dim=4, sonata_applied=False, reason="no_regions")
-        pass
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_sonata_plan(Path(tmpdir), region_statuses={})
+            result = apply_sonata_runtime_hints(
+                work_dir=tmpdir, block_dim=4, aicpu_thread_num=None,
+                user_block_dim=None,
+            )
+            assert result.sonata_applied is False
+            assert result.block_dim == 4
+            assert result.reason == "no_regions"
 
 
 if __name__ == "__main__":

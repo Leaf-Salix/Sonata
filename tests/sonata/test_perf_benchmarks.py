@@ -125,7 +125,7 @@ class TestIRCacheEffectiveness:
 
         prog = FakeProgram()
         fake_ir = object()
-        _certified_ir_cache[id(prog)] = fake_ir
+        _certified_ir_cache[id(prog)] = (prog, fake_ir)
 
         result = _extract_certified_ir(prog)
         assert result is fake_ir
@@ -146,7 +146,7 @@ class TestIRCacheEffectiveness:
 
         prog = FakeProgram()
         fake_ir = {"pipeline_run": 1}
-        _certified_ir_cache[id(prog)] = fake_ir
+        _certified_ir_cache[id(prog)] = (prog, fake_ir)
 
         # First call — from cache
         result1 = _extract_certified_ir(prog)

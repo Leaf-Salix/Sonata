@@ -87,6 +87,10 @@ def check_static_eligibility(
     require_certified: bool = False,
 ) -> EligibilityResult:
     """Return whether ``node`` is eligible for an initial Sonata static score."""
+    # Clear walk cache to prevent unbounded growth across calls
+    # (id() keys are safe within a single synchronous call)
+    _walk_cache.clear()
+
     reasons: list[FallbackReason] = []
     adapter = PostSimplifyPyPTOInputAdapter(node, entry_name=entry_name)
     root_kind = _kind(node)

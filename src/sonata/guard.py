@@ -62,23 +62,30 @@ import warnings
 @dataclass(frozen=True)
 class GuardSeverity:
     """Classification of guard invalidation severity.
-    
+
     Attributes:
         value: String representation of the severity level.
+            Must be "soft" or "hard".
         soft: Parameter-level change that can be handled by in-place update
             of plan handle. Does not require full replan.
         hard: Structure-level change that requires rebuilding the plan handle
             or full replanning from Score.
     """
-    
+
     value: str
-    
+
+    def __post_init__(self) -> None:
+        if self.value not in ("soft", "hard"):
+            raise ValueError(
+                f"GuardSeverity.value must be 'soft' or 'hard', got {self.value!r}"
+            )
+
     def __str__(self) -> str:
         return self.value
-    
+
     def __repr__(self) -> str:
         return f"GuardSeverity({self.value!r})"
-    
+
     @property
     def requires_replan(self) -> bool:
         """Return True if this severity requires full replanning."""

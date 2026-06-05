@@ -33,10 +33,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Module-level certified IR cache: program id → certified IR
-# Avoids re-running the pass pipeline when the same program is analyzed
-# multiple times (e.g. in sonata_compile + standalone analysis).
-_certified_ir_cache: dict[int, Any] = {}
+# Module-level certified IR cache: program id → (program_ref, certified IR)
+# Holds a strong reference to program to prevent GC and id() reuse collision.
+_certified_ir_cache: dict[int, tuple[Any, Any]] = {}
 
 
 def _clear_ir_cache() -> None:
@@ -51,11 +50,12 @@ def _extract_certified_ir(program: object) -> Any | None:
     """Extract certified IR (post-Simplify) from a program.
 
     Uses a module-level cache keyed by program id to avoid re-running
-    the pass pipeline for the same program.
+    the pass pipeline for the same program. Holds a strong reference
+    to the program to prevent GC and id() reuse collision.
     """
     prog_id = id(program)
     if prog_id in _certified_ir_cache:
-        return _certified_ir_cache[prog_id]
+        return _certified_ir_cache[prog_id][1]
 
     from pypto.ir.pass_manager import OptimizationStrategy, PassManager
     from pypto.pypto_core import passes as _core_passes
@@ -80,7 +80,7 @@ def _extract_certified_ir(program: object) -> Any | None:
     except Exception:
         certified_ir = None
 
-    _certified_ir_cache[prog_id] = certified_ir
+    _certified_ir_cache[prog_id] = (program, certified_ir)
     return certified_ir
 
 from .eligibility import check_static_eligibility

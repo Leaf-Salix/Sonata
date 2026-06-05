@@ -209,13 +209,15 @@ class RegionTreeNode:
         return new_node
 
     def update_children(self, new_children: tuple["RegionTreeNode", ...]) -> "RegionTreeNode":
-        """Create a new node with updated children."""
-        return RegionTreeNode(
+        """Create a new node with updated children and recomputed fingerprint."""
+        new_node = RegionTreeNode(
             region=self.region,
             children=new_children,
             score=self.score,
-            _fingerprint_cache=self._compute_fingerprint(),
         )
+        new_fp = new_node._compute_fingerprint()
+        object.__setattr__(new_node, '_fingerprint_cache', new_fp)
+        return new_node
 
 
 @dataclass(frozen=True)
