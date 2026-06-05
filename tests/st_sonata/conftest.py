@@ -177,6 +177,35 @@ def _make_patched_compile(original_compile):
     return patched_compile
 
 
+def _make_patched_execute(original_execute):
+    """Wrap execute_compiled to apply Sonata runtime hook.
+
+    v0.21: Replaces the previous block_dim monkeypatch with the
+    formal runtime_hook.apply_sonata_runtime_hints() integration.
+    """
+    @functools.wraps(original_execute)
+    def patched_execute(work_dir, *args, **kwargs):
+        # Apply Sonata runtime hints before execution
+        try:
+            from sonata.runtime_hook import apply_sonata_runtime_hints
+            hints = apply_sonata_runtime_hints(
+                work_dir=str(work_dir),
+                block_dim=kwargs.get("block_dim"),
+                aicpu_thread_num=kwargs.get("aicpu_thread_num"),
+                user_block_dim=kwargs.get("block_dim"),
+            )
+            if hints.sonata_applied:
+                if "block_dim" not in kwargs or kwargs["block_dim"] is None:
+                    kwargs["block_dim"] = hints.block_dim
+                log.info("[SONATA] hook applied: block_dim=%d (%s)", hints.block_dim, hints.reason)
+            else:
+                log.info("[SONATA] hook not applied: %s", hints.reason)
+        except Exception as e:
+            log.warning("[SONATA] hook failed: %s", e)
+        return original_execute(work_dir, *args, **kwargs)
+    return patched_execute
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Before each test, monkeypatch compile_program and log analysis."""
@@ -197,6 +226,15 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             break
         except (ImportError, AttributeError, ValueError):
             continue
+
+    # Monkeypatch execute_compiled to apply Sonata runtime hook
+    try:
+        from pypto.runtime import runner as runner_mod
+        if not getattr(runner_mod.execute_compiled, "_sonata_patched", False):
+            runner_mod.execute_compiled = _make_patched_execute(runner_mod.execute_compiled)
+            runner_mod.execute_compiled._sonata_patched = True
+    except (ImportError, AttributeError):
+        pass
 
     # Standalone analysis for logging
     module = getattr(item, "module", None)
