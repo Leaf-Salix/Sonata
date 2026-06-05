@@ -263,10 +263,10 @@ def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
     If *path* is a directory, looks for ``sonata_plan.json`` inside it.
     Returns None if the file does not exist.
 
-    v0.20: Also loads shape_assumptions from the score section for
-    guard checking in execute_with_sonata().
+    Uses score_from_dict() for full Score reconstruction (tasks,
+    dependencies, shape_assumptions, metadata all preserved).
     """
-    from .score import Score, RuntimeTarget, ShapeAssumption
+    from .deserialization import score_from_dict
 
     p = Path(path)
     if p.is_dir():
@@ -275,27 +275,31 @@ def load_sonata_plan(path: str | Path) -> SonataAnalysisResult | None:
         return None
     data = json.loads(p.read_text())
 
-    # Reconstruct Score with shape_assumptions for guard checking
-    from .guard import GUARD_SEVERITY_HARD, GUARD_SEVERITY_SOFT
-
+    # Reconstruct full Score from JSON (preserves all fields)
     score = None
     score_data = data.get("score")
     if score_data and isinstance(score_data, dict):
-        shape_data = score_data.get("shape_assumptions", [])
-        shape_assumptions = tuple(
-            ShapeAssumption(
-                symbol=s.get("symbol", ""),
-                dims=tuple(s.get("dims", ())),
-                severity=GUARD_SEVERITY_SOFT if s.get("severity") == "soft" else GUARD_SEVERITY_HARD,
+        try:
+            score = score_from_dict(score_data)
+        except Exception:
+            # Fallback: minimal Score for guard checking
+            from .score import Score, RuntimeTarget, ShapeAssumption
+            from .guard import GUARD_SEVERITY_HARD, GUARD_SEVERITY_SOFT
+            shape_data = score_data.get("shape_assumptions", [])
+            shape_assumptions = tuple(
+                ShapeAssumption(
+                    symbol=s.get("symbol", ""),
+                    dims=tuple(s.get("dims", ())),
+                    severity=GUARD_SEVERITY_SOFT if s.get("severity") == "soft" else GUARD_SEVERITY_HARD,
+                )
+                for s in shape_data
+                if isinstance(s, dict) and s.get("symbol")
             )
-            for s in shape_data
-            if isinstance(s, dict) and s.get("symbol")
-        )
-        score = Score(
-            name=score_data.get("name", "loaded"),
-            runtime_target=RuntimeTarget(),
-            shape_assumptions=shape_assumptions,
-        )
+            score = Score(
+                name=score_data.get("name", "loaded"),
+                runtime_target=RuntimeTarget(),
+                shape_assumptions=shape_assumptions,
+            )
 
     return SonataAnalysisResult(
         eligible=data.get("eligible", False),

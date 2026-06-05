@@ -604,3 +604,82 @@ class TestPerRegionGuardStats:
         result = SonataAnalysisResult(eligible=True, region_statuses={"r0": "static"})
         d = result.to_dict()
         assert "region_guard_stats" not in d
+
+
+class TestLoadSonataPlanFullRoundTrip:
+    """Verify load_sonata_plan preserves all Score fields."""
+
+    def test_load_preserves_tasks_and_dependencies(self):
+        """load_sonata_plan() reconstructs Score with tasks and dependencies."""
+        import json
+        import tempfile
+        import warnings
+        from pathlib import Path
+        from sonata.score import Score, RuntimeTarget, Task, Dependency, DependencyKind
+        from sonata.serialization import score_to_dict
+        from sonata.pipeline import load_sonata_plan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="full_test",
+                runtime_target=RuntimeTarget(),
+                tasks=(
+                    Task(task_id=0, func_id=0, core_type="aic", name="kernel_a"),
+                    Task(task_id=1, func_id=1, core_type="aiv", name="kernel_b"),
+                ),
+                dependencies=(
+                    Dependency(producer=0, consumer=1, kind=DependencyKind.DATA),
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = {
+                "eligible": True,
+                "region_statuses": {"region_0": "static"},
+                "score": score_to_dict(score),
+            }
+            (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+            loaded = load_sonata_plan(tmpdir)
+
+            assert loaded is not None
+            assert loaded.score is not None
+            assert len(loaded.score.tasks) == 2
+            assert loaded.score.tasks[0].name == "kernel_a"
+            assert loaded.score.tasks[1].name == "kernel_b"
+            assert len(loaded.score.dependencies) == 1
+            assert loaded.score.dependencies[0].kind == DependencyKind.DATA
+
+    def test_load_preserves_severity(self):
+        """load_sonata_plan() preserves soft/hard severity."""
+        import json
+        import tempfile
+        import warnings
+        from pathlib import Path
+        from sonata.score import Score, RuntimeTarget, Task, ShapeAssumption
+        from sonata.guard import GUARD_SEVERITY_SOFT
+        from sonata.serialization import score_to_dict
+        from sonata.pipeline import load_sonata_plan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="severity_test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,), severity=GUARD_SEVERITY_SOFT),
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = {
+                "eligible": True,
+                "region_statuses": {"region_0": "static"},
+                "score": score_to_dict(score),
+            }
+            (Path(tmpdir) / "sonata_plan.json").write_text(json.dumps(plan))
+            loaded = load_sonata_plan(tmpdir)
+
+            assert loaded.score is not None
+            assert loaded.score.shape_assumptions[0].severity == GUARD_SEVERITY_SOFT
