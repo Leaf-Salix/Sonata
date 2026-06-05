@@ -242,6 +242,45 @@ class SonataAnalysisResult:
 
         return data
 
+    def to_runtime_config(self) -> "SonataRuntimeConfig":
+        """Convert to SonataRuntimeConfig for embedding in RUNTIME_CONFIG.
+
+        v0.22 Phase 1 A2: Computes scheduling hints from dispatch regions,
+        extracts memory peak from memory_plan, and guard stats from score.
+        """
+        from .runtime_config import SonataRuntimeConfig
+
+        # Compute scheduling hints
+        suggested_block_dim = None
+        if self.region_statuses:
+            dispatch = dispatch_regions(self)
+            instructions = compute_scheduling_instructions(dispatch)
+            if instructions:
+                suggested_block_dim = instructions[0].block_dim
+
+        # Extract memory peak
+        memory_peak = None
+        if self.memory_plan is not None:
+            memory_peak = self.memory_plan.peak_memory
+
+        # Extract guard stats
+        guard_count = 0
+        guard_symbols: tuple[str, ...] = ()
+        if self.score is not None and self.score.shape_assumptions:
+            assumptions = self.score.shape_assumptions
+            guard_count = len(assumptions)
+            guard_symbols = tuple(sorted({a.symbol for a in assumptions}))
+
+        return SonataRuntimeConfig(
+            eligible=self.eligible,
+            task_count=self.task_count,
+            suggested_block_dim=suggested_block_dim,
+            memory_peak_bytes=memory_peak,
+            region_statuses=dict(self.region_statuses),
+            guard_count=guard_count,
+            guard_symbols=guard_symbols,
+        )
+
     def save(self, path: str | Path) -> Path:
         """Write sonata_plan.json to the given path.
 

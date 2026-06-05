@@ -83,5 +83,83 @@ class TestSonataRuntimeConfig:
         assert d["guard_symbols"] == ["a", "b"]
 
 
+class TestToRuntimeConfig:
+    """v0.22 Phase 1 A2: SonataAnalysisResult.to_runtime_config() tests."""
+
+    def test_eligible_result_produces_config(self):
+        """Eligible result with score produces valid SonataRuntimeConfig."""
+        import warnings
+        from sonata.score import Score, RuntimeTarget, Task, ShapeAssumption
+        from sonata.pipeline import SonataAnalysisResult
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(
+                    Task(task_id=0, func_id=0, core_type="aic", name="kernel"),
+                    Task(task_id=1, func_id=1, core_type="aiv", name="add"),
+                ),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="batch", dims=(32,)),
+                ),
+            )
+        result = SonataAnalysisResult(
+            eligible=True,
+            score=score,
+            region_statuses={"region_0": "static"},
+        )
+        cfg = result.to_runtime_config()
+        assert cfg.eligible is True
+        assert cfg.task_count == 2
+        assert cfg.suggested_block_dim == 32  # static region
+        assert cfg.guard_count == 1
+        assert cfg.guard_symbols == ("batch",)
+        assert cfg.region_statuses == {"region_0": "static"}
+
+    def test_ineligible_result_produces_config(self):
+        """Ineligible result produces config with eligible=False."""
+        from sonata.pipeline import SonataAnalysisResult
+
+        result = SonataAnalysisResult(eligible=False)
+        cfg = result.to_runtime_config()
+        assert cfg.eligible is False
+        assert cfg.task_count == 0
+        assert cfg.suggested_block_dim is None
+
+    def test_config_includes_memory_peak(self):
+        """Config includes memory_peak_bytes from memory_plan."""
+        from sonata.pipeline import SonataAnalysisResult
+        from sonata.memory_plan import MemoryPlan
+
+        mp = MemoryPlan(allocations=(), peak_memory=2048)
+        result = SonataAnalysisResult(eligible=True, memory_plan=mp)
+        cfg = result.to_runtime_config()
+        assert cfg.memory_peak_bytes == 2048
+
+    def test_config_no_memory_plan(self):
+        """Config with no memory_plan → memory_peak_bytes is None."""
+        from sonata.pipeline import SonataAnalysisResult
+
+        result = SonataAnalysisResult(eligible=True)
+        cfg = result.to_runtime_config()
+        assert cfg.memory_peak_bytes is None
+
+    def test_config_to_dict_roundtrip(self):
+        """Config to_dict produces valid JSON-serializable dict."""
+        from sonata.runtime_config import SonataRuntimeConfig
+
+        cfg = SonataRuntimeConfig(
+            eligible=True, task_count=5,
+            suggested_block_dim=24, guard_count=2,
+            guard_symbols=("batch", "seq"),
+        )
+        d = cfg.to_run_config_dict()
+        assert d["eligible"] is True
+        assert d["suggested_block_dim"] == 24
+        assert isinstance(d["guard_symbols"], list)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
