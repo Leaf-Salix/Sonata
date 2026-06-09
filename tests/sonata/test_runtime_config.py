@@ -161,5 +161,78 @@ class TestToRuntimeConfig:
         assert isinstance(d["guard_symbols"], list)
 
 
+class TestPatchKernelConfig:
+    """v0.22 Phase 1 A3: _patch_kernel_config_sonata() tests."""
+
+    def test_injects_sonata_key(self):
+        """Injects sonata dict into RUNTIME_CONFIG."""
+        from tests.st_sonata.conftest import _patch_kernel_config_sonata
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "kernel_config.py"
+            config_path.write_text(
+                'RUNTIME_CONFIG = {\n'
+                '\t"runtime": "tensormap_and_ringbuffer",\n'
+                '\t"block_dim": 32,\n'
+                '}\n'
+            )
+            sonata_dict = {"eligible": True, "task_count": 5}
+            _patch_kernel_config_sonata(Path(tmpdir), sonata_dict)
+
+            result = config_path.read_text()
+            assert '"sonata"' in result
+            assert "eligible" in result
+            assert "task_count" in result
+            # Check Python-native types (True, not true)
+            assert "True" in result
+            assert "true" not in result
+
+    def test_no_config_file_does_not_crash(self):
+        """Missing kernel_config.py → no crash, just returns."""
+        from tests.st_sonata.conftest import _patch_kernel_config_sonata
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No kernel_config.py
+            _patch_kernel_config_sonata(Path(tmpdir), {"eligible": True})
+            # Should not raise
+
+    def test_no_runtime_config_does_not_crash(self):
+        """kernel_config.py without RUNTIME_CONFIG → no crash."""
+        from tests.st_sonata.conftest import _patch_kernel_config_sonata
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "kernel_config.py"
+            config_path.write_text("# no runtime config here\n")
+            _patch_kernel_config_sonata(Path(tmpdir), {"eligible": True})
+            # Should not raise
+
+    def test_preserves_existing_config(self):
+        """Existing RUNTIME_CONFIG keys are preserved."""
+        from tests.st_sonata.conftest import _patch_kernel_config_sonata
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "kernel_config.py"
+            config_path.write_text(
+                'RUNTIME_CONFIG = {\n'
+                '\t"runtime": "tensormap_and_ringbuffer",\n'
+                '\t"block_dim": 32,\n'
+                '}\n'
+            )
+            _patch_kernel_config_sonata(Path(tmpdir), {"eligible": True})
+
+            result = config_path.read_text()
+            assert '"runtime"' in result
+            assert '"block_dim"' in result
+            assert '"sonata"' in result
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

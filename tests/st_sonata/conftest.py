@@ -13,6 +13,10 @@ Hooks into the PyPTO st test infrastructure to run Sonata analysis on
 the certified IR dump (after Simplify pass) and write ``sonata_plan.json``
 alongside compiled artifacts — without modifying any upstream test files.
 
+v0.22: Also injects ``RUNTIME_CONFIG["sonata"]`` into ``kernel_config.py``
+via the compile hook, so downstream runtime consumers (runtime_hook,
+execute_with_sonata) can read Sonata hints from the standard config.
+
 The hook monkeypatches ``compile_program`` so that after the real
 compilation completes, Sonata analysis runs on the same program and
 writes ``sonata_plan.json`` into the compilation work directory.
@@ -114,6 +118,8 @@ def _make_patched_compile(original_compile):
 
     Uses cached analysis from pytest_runtest_setup when available,
     avoiding a second pipeline replay.
+
+    v0.22: Also injects RUNTIME_CONFIG["sonata"] into kernel_config.py.
     """
     @functools.wraps(original_compile)
     def patched_compile(program, work_dir, **kwargs):
@@ -161,6 +167,10 @@ def _make_patched_compile(original_compile):
                 persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
                 log.info("[SONATA] persistent copy: %s", persistent_path)
 
+                # v0.22: Inject RUNTIME_CONFIG["sonata"] into kernel_config.py
+                sonata_cfg = sonata_result.to_runtime_config()
+                _patch_kernel_config_sonata(Path(str(work_dir)), sonata_cfg.to_run_config_dict())
+
                 # Run region dispatch (informational)
                 from sonata.pipeline import dispatch_regions
                 dispatch = dispatch_regions(sonata_result)
@@ -175,6 +185,73 @@ def _make_patched_compile(original_compile):
 
         return result
     return patched_compile
+
+
+def _patch_kernel_config_sonata(work_dir: Path, sonata_dict: dict) -> None:
+    """Inject sonata dict into RUNTIME_CONFIG in kernel_config.py.
+
+    v0.22 Phase 1 A3: Extends kernel_config.py with a "sonata" key
+    in the RUNTIME_CONFIG dict. Uses repr() (not json.dumps) because
+    kernel_config.py is Python source loaded via importlib.util, not JSON.
+
+    Atomic write: writes to temp file, then renames.
+    """
+    import contextlib
+    import os
+    import tempfile
+
+    config_path = work_dir / "kernel_config.py"
+    if not config_path.exists():
+        log.warning("[SONATA] kernel_config.py not found, skipping sonata injection")
+        return
+
+    content = config_path.read_text(encoding="utf-8")
+
+    # Find RUNTIME_CONFIG = { ... }
+    marker = "RUNTIME_CONFIG"
+    idx = content.find(marker)
+    if idx < 0:
+        log.warning("[SONATA] RUNTIME_CONFIG not found in kernel_config.py")
+        return
+
+    # Find the closing "}" of the RUNTIME_CONFIG block
+    brace_count = 0
+    close_idx = -1
+    for i in range(idx, len(content)):
+        if content[i] == "{":
+            brace_count += 1
+        elif content[i] == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                close_idx = i
+                break
+    if close_idx < 0:
+        log.warning("[SONATA] Could not find RUNTIME_CONFIG closing brace")
+        return
+
+    # Use repr() for Python-native types, NOT json.dumps
+    # repr() produces True/False/None, json.dumps produces true/false/null
+    sonata_repr = repr(sonata_dict)
+    sonata_line = f'\t"sonata": {sonata_repr},\n'
+
+    new_content = content[:close_idx] + sonata_line + content[close_idx:]
+
+    # Atomic write: write to temp, then replace
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(work_dir), prefix="kernel_config_", suffix=".py.tmp"
+    )
+    try:
+        os.write(fd, new_content.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp_path, str(config_path))
+        log.info("[SONATA] RUNTIME_CONFIG['sonata'] injected into kernel_config.py")
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def _make_patched_execute(original_execute):
