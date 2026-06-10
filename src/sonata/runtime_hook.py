@@ -213,7 +213,7 @@ def _apply_from_kernel_config(
     new_aicpu = sonata_cfg.suggested_aicpu_thread_num if sonata_cfg.suggested_aicpu_thread_num is not None else aicpu_thread_num
 
     log.info(
-        "[Sonata] hook from kernel_config: block_dim=%d, aicpu_thread_num=%d",
+        "[Sonata] hook from kernel_config: block_dim=%s, aicpu_thread_num=%s",
         new_block_dim, new_aicpu,
     )
     return SonataRuntimeHints(
