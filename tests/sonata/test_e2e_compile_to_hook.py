@@ -124,7 +124,7 @@ class TestE2ECompileToHook:
             assert result.block_dim == 8
 
     def test_malformed_plan_fail_open(self):
-        """Malformed JSON → fail open, original params returned."""
+        """Malformed plan.json → falls through to kernel_config (or no_sonata_data)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / "sonata_plan.json").write_text("not valid json{{{")
             result = apply_sonata_runtime_hints(
@@ -134,7 +134,7 @@ class TestE2ECompileToHook:
             assert result.sonata_applied is False
             assert result.block_dim == 8
             assert result.aicpu_thread_num == 2
-            assert "hook_error" in result.reason
+            assert result.reason == "no_sonata_data"
 
     def test_full_chain_plan_written_then_consumed(self):
         """Full chain: write plan → hook reads → correct block_dim."""

@@ -138,19 +138,20 @@ class TestRunnerHookEndToEnd:
             assert result.block_dim == 16
 
     def test_malformed_plan_fail_open(self):
-        """Malformed JSON → fail open, original params returned."""
+        """Malformed sonata_plan.json → falls through to kernel_config (or no_sonata_data)."""
         from sonata.runtime_hook import apply_sonata_runtime_hints
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "sonata_plan.json").write_text("not valid json{{{")
+            plan_path = Path(tmpdir) / "sonata_plan.json"
+            plan_path.write_text("not valid {{{ json")
             result = apply_sonata_runtime_hints(
                 work_dir=tmpdir, block_dim=8, aicpu_thread_num=2,
-                user_block_dim=None,
             )
             assert result.sonata_applied is False
             assert result.block_dim == 8
             assert result.aicpu_thread_num == 2
-            assert "hook_error" in result.reason
+            # Corrupted plan falls through; no kernel_config → no_sonata_data
+            assert result.reason == "no_sonata_data"
 
     def test_aicpu_thread_num_preserved(self):
         """aicpu_thread_num passes through unchanged."""

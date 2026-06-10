@@ -100,11 +100,18 @@ def _do_apply(
 
     # Strategy 1: Read sonata_plan.json (preferred — full data)
     if plan_path.exists():
-        hints = _apply_from_plan_json(
-            plan_path, block_dim, aicpu_thread_num, user_block_dim,
-        )
-        if hints is not None:
-            return hints
+        try:
+            hints = _apply_from_plan_json(
+                plan_path, block_dim, aicpu_thread_num, user_block_dim,
+            )
+            if hints is not None:
+                return hints
+        except Exception:
+            log.warning(
+                "[Sonata] plan.json read failed, trying kernel_config fallback",
+                exc_info=True,
+            )
+            # Fall through to strategy 2
 
     # Strategy 2: Read RUNTIME_CONFIG["sonata"] from kernel_config.py
     config_path = work_path / "kernel_config.py"
@@ -133,6 +140,7 @@ def _apply_from_plan_json(
     if user_block_dim is not None:
         return _unchanged(block_dim, aicpu_thread_num, "user_supplied_block_dim")
 
+    # Lazy import to avoid circular dependency: pipeline.py imports runtime_hook.py
     from .pipeline import SonataAnalysisResult, compute_scheduling_instructions, dispatch_regions
 
     region_statuses = plan_data.get("region_statuses", {})
@@ -154,7 +162,7 @@ def _apply_from_plan_json(
     reason = instructions[0].reason
 
     log.info(
-        "[Sonata] hook from plan json: block_dim=%d (%s)", suggested_block_dim, reason,
+        "[Sonata] hook from plan_json: block_dim=%d (%s)", suggested_block_dim, reason,
     )
     return SonataRuntimeHints(
         block_dim=suggested_block_dim,
@@ -170,7 +178,11 @@ def _apply_from_kernel_config(
     aicpu_thread_num: int | None,
     user_block_dim: int | None,
 ) -> SonataRuntimeHints:
-    """Read RUNTIME_CONFIG["sonata"] from kernel_config.py."""
+    """Read RUNTIME_CONFIG["sonata"] from kernel_config.py.
+
+    Uses exec_module() to load kernel_config.py — only call on trusted paths
+    (the compiled artifacts directory, written by the project's own codegen).
+    """
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location("_kc", str(config_path))
@@ -197,11 +209,11 @@ def _apply_from_kernel_config(
     if sonata_cfg.suggested_block_dim is None and sonata_cfg.suggested_aicpu_thread_num is None:
         return _unchanged(block_dim, aicpu_thread_num, "no_suggestions")
 
-    new_block_dim = sonata_cfg.suggested_block_dim or block_dim
-    new_aicpu = sonata_cfg.suggested_aicpu_thread_num or aicpu_thread_num
+    new_block_dim = sonata_cfg.suggested_block_dim if sonata_cfg.suggested_block_dim is not None else block_dim
+    new_aicpu = sonata_cfg.suggested_aicpu_thread_num if sonata_cfg.suggested_aicpu_thread_num is not None else aicpu_thread_num
 
     log.info(
-        "[Sonata] hook from kernel_config: block_dim=%s, aicpu_thread_num=%s",
+        "[Sonata] hook from kernel_config: block_dim=%d, aicpu_thread_num=%d",
         new_block_dim, new_aicpu,
     )
     return SonataRuntimeHints(

@@ -131,7 +131,7 @@ class TestApplySonataRuntimeHints:
             assert result.reason == "no_regions"
 
     def test_malformed_json_fail_open(self):
-        """Malformed JSON → fail open, original params."""
+        """Malformed plan.json → falls through to kernel_config (or no_sonata_data)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_path = Path(tmpdir) / "sonata_plan.json"
             plan_path.write_text("not valid json{{{")
@@ -141,7 +141,8 @@ class TestApplySonataRuntimeHints:
             assert result.sonata_applied is False
             assert result.block_dim == 8
             assert result.aicpu_thread_num == 2
-            assert "hook_error" in result.reason
+            # Corrupted plan falls through; no kernel_config → no_sonata_data
+            assert result.reason == "no_sonata_data"
 
     def test_preserves_aicpu_thread_num(self):
         """aicpu_thread_num is preserved through the hook."""
@@ -285,6 +286,23 @@ class TestKernelConfigFallback:
             )
             assert result.sonata_applied is True
             assert result.block_dim == 32  # from plan dispatch, not 999
+
+    def test_corrupted_plan_with_kernel_config_fallback(self):
+        """Corrupted plan.json falls through to valid kernel_config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Corrupted plan.json
+            (Path(tmpdir) / "sonata_plan.json").write_text("{{{bad json}}")
+            # Valid kernel_config with fallback data
+            self._write_kernel_config(tmpdir, {
+                "schema_version": 1, "eligible": True, "task_count": 5,
+                "suggested_block_dim": 32,
+            })
+            result = apply_sonata_runtime_hints(
+                work_dir=tmpdir, block_dim=16, aicpu_thread_num=None,
+            )
+            assert result.sonata_applied is True
+            assert result.block_dim == 32
+            assert result.reason == "runtime_config_sonata"
 
     def test_kernel_config_bad_file_fail_open(self):
         """Malformed kernel_config.py → fail open."""

@@ -99,7 +99,7 @@ class SonataRuntimeConfig:
                 suggested_block_dim=d.get("suggested_block_dim"),
                 suggested_aicpu_thread_num=d.get("suggested_aicpu_thread_num"),
                 memory_peak_bytes=d.get("memory_peak_bytes"),
-                region_statuses=d.get("region_statuses", {}),
+                region_statuses=d.get("region_statuses", {}) or {},
                 guard_count=d.get("guard_count", 0),
                 guard_symbols=tuple(d.get("guard_symbols", ())),
                 schema_version=version,
