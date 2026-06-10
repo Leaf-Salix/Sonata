@@ -32,6 +32,13 @@ SONATA_RUNTIME_CONFIG_SCHEMA_VERSION = 1
 class SonataRuntimeConfig:
     """Sonata analysis results embedded in RUNTIME_CONFIG.
 
+    This class carries scheduling hints (block_dim, aicpu_thread_num)
+    for the advisory ``apply_sonata_runtime_hints()`` hook.
+
+    Note: Guard metadata (guard_count, guard_symbols) is informational only.
+    Runtime guard evaluation (HARD → skip, STALE → rebuild) is handled by
+    ``execute_with_sonata()``, not by this config class.
+
     Attributes:
         eligible: Whether the program is eligible for Sonata optimization.
         task_count: Number of tasks in the Score.
@@ -39,8 +46,8 @@ class SonataRuntimeConfig:
         suggested_aicpu_thread_num: Suggested AICPU thread count.
         memory_peak_bytes: Peak memory from memory plan.
         region_statuses: Per-region status map (region_id → "static"/"dynamic"/"mixed").
-        guard_count: Number of shape assumptions (guards).
-        guard_symbols: Unique guard symbol names.
+        guard_count: Number of shape assumptions (guards) — informational only.
+        guard_symbols: Unique guard symbol names — informational only.
         schema_version: Schema version for forward compatibility.
     """
 
@@ -76,6 +83,29 @@ class SonataRuntimeConfig:
             d["guard_count"] = self.guard_count
             d["guard_symbols"] = list(self.guard_symbols)
         return d
+
+    @classmethod
+    def from_dict(cls, d: Any) -> SonataRuntimeConfig | None:
+        """Load from RUNTIME_CONFIG["sonata"] dict. Returns None on error."""
+        if not isinstance(d, dict):
+            return None
+        version = d.get("schema_version", 0)
+        if version < 1 or version > SONATA_RUNTIME_CONFIG_SCHEMA_VERSION:
+            return None
+        try:
+            return cls(
+                eligible=d.get("eligible", False),
+                task_count=d.get("task_count", 0),
+                suggested_block_dim=d.get("suggested_block_dim"),
+                suggested_aicpu_thread_num=d.get("suggested_aicpu_thread_num"),
+                memory_peak_bytes=d.get("memory_peak_bytes"),
+                region_statuses=d.get("region_statuses", {}),
+                guard_count=d.get("guard_count", 0),
+                guard_symbols=tuple(d.get("guard_symbols", ())),
+                schema_version=version,
+            )
+        except (TypeError, ValueError):
+            return None
 
 
 __all__ = [

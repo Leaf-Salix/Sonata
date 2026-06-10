@@ -10,15 +10,21 @@
 """Sonata runtime hook — thin advisory layer consumed by PyPTO runner.
 
 This module is the ONLY Sonata entry point that PyPTO's ``execute_compiled()``
-imports. It loads ``sonata_plan.json`` from the work directory and computes
-runtime hints (block_dim, aicpu_thread_num) without touching simpler C++ or
-PyPTO internals.
+imports. It reads Sonata hints from two possible sources (in priority order):
+
+1. ``sonata_plan.json`` — full Sonata analysis result (preferred)
+2. ``RUNTIME_CONFIG["sonata"]`` in ``kernel_config.py`` — compact config field
+
+In both cases it computes runtime hints (block_dim, aicpu_thread_num) without
+touching simpler C++ or PyPTO internals.
 
 Design constraints:
 - No import of simpler or PyPTO C++ bindings
 - No modification of CallConfig wire layout
 - Fail-open: any error returns original parameters unchanged
 - User-supplied block_dim always takes precedence
+- Guard metadata is informational only; guard evaluation is handled by
+  ``execute_with_sonata()``, not by this advisory hook
 """
 
 from __future__ import annotations
@@ -89,44 +95,49 @@ def _do_apply(
     aicpu_thread_num: int | None,
     user_block_dim: int | None,
 ) -> SonataRuntimeHints:
-    plan_path = Path(work_dir) / "sonata_plan.json"
-    if not plan_path.exists():
-        return SonataRuntimeHints(
-            block_dim=block_dim,
-            aicpu_thread_num=aicpu_thread_num,
-            sonata_applied=False,
-            reason="no_sonata_plan",
+    work_path = Path(work_dir)
+    plan_path = work_path / "sonata_plan.json"
+
+    # Strategy 1: Read sonata_plan.json (preferred — full data)
+    if plan_path.exists():
+        hints = _apply_from_plan_json(
+            plan_path, block_dim, aicpu_thread_num, user_block_dim,
         )
+        if hints is not None:
+            return hints
+
+    # Strategy 2: Read RUNTIME_CONFIG["sonata"] from kernel_config.py
+    config_path = work_path / "kernel_config.py"
+    if config_path.exists():
+        return _apply_from_kernel_config(
+            config_path, block_dim, aicpu_thread_num, user_block_dim,
+        )
+
+    return _unchanged(block_dim, aicpu_thread_num, "no_sonata_data")
+
+
+def _apply_from_plan_json(
+    plan_path: Path,
+    block_dim: int | None,
+    aicpu_thread_num: int | None,
+    user_block_dim: int | None,
+) -> SonataRuntimeHints | None:
+    """Read Sonata hints from sonata_plan.json. Returns None if absent."""
+    if not plan_path.exists():
+        return None
 
     plan_data = json.loads(plan_path.read_text())
     if not plan_data.get("eligible", False):
-        return SonataRuntimeHints(
-            block_dim=block_dim,
-            aicpu_thread_num=aicpu_thread_num,
-            sonata_applied=False,
-            reason="plan_not_eligible",
-        )
+        return _unchanged(block_dim, aicpu_thread_num, "plan_not_eligible")
 
-    # User explicitly supplied block_dim — don't override
     if user_block_dim is not None:
-        return SonataRuntimeHints(
-            block_dim=block_dim,
-            aicpu_thread_num=aicpu_thread_num,
-            sonata_applied=False,
-            reason="user_supplied_block_dim",
-        )
+        return _unchanged(block_dim, aicpu_thread_num, "user_supplied_block_dim")
 
-    # Build a minimal result for dispatch_regions
     from .pipeline import SonataAnalysisResult, compute_scheduling_instructions, dispatch_regions
 
     region_statuses = plan_data.get("region_statuses", {})
     if not region_statuses:
-        return SonataRuntimeHints(
-            block_dim=block_dim,
-            aicpu_thread_num=aicpu_thread_num,
-            sonata_applied=False,
-            reason="no_regions",
-        )
+        return _unchanged(block_dim, aicpu_thread_num, "no_regions")
 
     temp_result = SonataAnalysisResult(
         eligible=True,
@@ -137,24 +148,80 @@ def _do_apply(
     instructions = compute_scheduling_instructions(dispatch)
 
     if not instructions:
-        return SonataRuntimeHints(
-            block_dim=block_dim,
-            aicpu_thread_num=aicpu_thread_num,
-            sonata_applied=False,
-            reason="no_scheduling_instructions",
-        )
+        return _unchanged(block_dim, aicpu_thread_num, "no_scheduling_instructions")
 
     suggested_block_dim = instructions[0].block_dim
     reason = instructions[0].reason
 
     log.info(
-        "[Sonata] hook applied: block_dim=%d (%s)", suggested_block_dim, reason,
+        "[Sonata] hook from plan json: block_dim=%d (%s)", suggested_block_dim, reason,
     )
-
     return SonataRuntimeHints(
         block_dim=suggested_block_dim,
         aicpu_thread_num=aicpu_thread_num,
         sonata_applied=True,
+        reason=reason,
+    )
+
+
+def _apply_from_kernel_config(
+    config_path: Path,
+    block_dim: int | None,
+    aicpu_thread_num: int | None,
+    user_block_dim: int | None,
+) -> SonataRuntimeHints:
+    """Read RUNTIME_CONFIG["sonata"] from kernel_config.py."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_kc", str(config_path))
+        if spec is None or spec.loader is None:
+            return _unchanged(block_dim, aicpu_thread_num, "config_load_failed")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        sonata_raw = getattr(mod, "RUNTIME_CONFIG", {}).get("sonata")
+    except Exception as exc:
+        log.warning("[Sonata] kernel_config load failed: %s", exc)
+        return _unchanged(block_dim, aicpu_thread_num, f"config_load_error: {exc}")
+
+    from .runtime_config import SonataRuntimeConfig
+    sonata_cfg = SonataRuntimeConfig.from_dict(sonata_raw)
+    if sonata_cfg is None:
+        return _unchanged(block_dim, aicpu_thread_num, "invalid_sonata_config")
+
+    if not sonata_cfg.eligible:
+        return _unchanged(block_dim, aicpu_thread_num, "plan_not_eligible")
+
+    if user_block_dim is not None:
+        return _unchanged(block_dim, aicpu_thread_num, "user_supplied_block_dim")
+
+    if sonata_cfg.suggested_block_dim is None and sonata_cfg.suggested_aicpu_thread_num is None:
+        return _unchanged(block_dim, aicpu_thread_num, "no_suggestions")
+
+    new_block_dim = sonata_cfg.suggested_block_dim or block_dim
+    new_aicpu = sonata_cfg.suggested_aicpu_thread_num or aicpu_thread_num
+
+    log.info(
+        "[Sonata] hook from kernel_config: block_dim=%s, aicpu_thread_num=%s",
+        new_block_dim, new_aicpu,
+    )
+    return SonataRuntimeHints(
+        block_dim=new_block_dim,
+        aicpu_thread_num=new_aicpu,
+        sonata_applied=True,
+        reason="runtime_config_sonata",
+    )
+
+
+def _unchanged(
+    block_dim: int | None,
+    aicpu_thread_num: int | None,
+    reason: str,
+) -> SonataRuntimeHints:
+    """Return original params unchanged with a reason."""
+    return SonataRuntimeHints(
+        block_dim=block_dim,
+        aicpu_thread_num=aicpu_thread_num,
+        sonata_applied=False,
         reason=reason,
     )
 

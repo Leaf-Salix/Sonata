@@ -83,6 +83,61 @@ class TestSonataRuntimeConfig:
         assert d["guard_symbols"] == ["a", "b"]
 
 
+class TestSonataRuntimeConfigFromDict:
+    """SonataRuntimeConfig.from_dict() tests (v0.22 Phase 2 B1)."""
+
+    def test_from_dict_roundtrip(self):
+        """to_run_config_dict → from_dict preserves data."""
+        cfg = SonataRuntimeConfig(
+            eligible=True, task_count=49,
+            suggested_block_dim=24,
+            suggested_aicpu_thread_num=4,
+            memory_peak_bytes=1048576,
+            region_statuses={"root": "static"},
+            guard_count=3,
+            guard_symbols=("batch_size", "seq_len", "hidden"),
+        )
+        d = cfg.to_run_config_dict()
+        restored = SonataRuntimeConfig.from_dict(d)
+        assert restored is not None
+        assert restored.eligible is True
+        assert restored.task_count == 49
+        assert restored.suggested_block_dim == 24
+        assert restored.suggested_aicpu_thread_num == 4
+        assert restored.memory_peak_bytes == 1048576
+        assert restored.region_statuses == {"root": "static"}
+        assert restored.guard_count == 3
+        assert restored.guard_symbols == ("batch_size", "seq_len", "hidden")
+
+    def test_from_dict_minimal(self):
+        """Minimal dict round-trips correctly."""
+        d = {"schema_version": 1, "eligible": True, "task_count": 5}
+        restored = SonataRuntimeConfig.from_dict(d)
+        assert restored is not None
+        assert restored.eligible is True
+        assert restored.task_count == 5
+        assert restored.suggested_block_dim is None
+        assert restored.region_statuses == {}
+
+    def test_from_dict_unknown_schema_version(self):
+        """Unknown schema version returns None."""
+        d = {"schema_version": 999, "eligible": True, "task_count": 5}
+        assert SonataRuntimeConfig.from_dict(d) is None
+
+    def test_from_dict_non_dict(self):
+        """Non-dict input returns None."""
+        assert SonataRuntimeConfig.from_dict(None) is None
+        assert SonataRuntimeConfig.from_dict("string") is None
+        assert SonataRuntimeConfig.from_dict(42) is None
+
+    def test_from_dict_bad_data(self):
+        """Malformed values return None."""
+        d = {"schema_version": 1, "eligible": True, "task_count": 5,
+             "guard_symbols": None}
+        result = SonataRuntimeConfig.from_dict(d)
+        assert result is None
+
+
 class TestToRuntimeConfig:
     """v0.22 Phase 1 A2: SonataAnalysisResult.to_runtime_config() tests."""
 

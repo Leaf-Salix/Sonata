@@ -269,11 +269,10 @@ def _make_patched_execute(original_execute):
                 work_dir=str(work_dir),
                 block_dim=kwargs.get("block_dim"),
                 aicpu_thread_num=kwargs.get("aicpu_thread_num"),
-                user_block_dim=kwargs.get("block_dim"),
+                user_block_dim=None,  # kwargs block_dim comes from RUNTIME_CONFIG, not user
             )
             if hints.sonata_applied:
-                if "block_dim" not in kwargs or kwargs["block_dim"] is None:
-                    kwargs["block_dim"] = hints.block_dim
+                kwargs["block_dim"] = hints.block_dim
                 log.info("[SONATA] hook applied: block_dim=%d (%s)", hints.block_dim, hints.reason)
             else:
                 log.info("[SONATA] hook not applied: %s", hints.reason)

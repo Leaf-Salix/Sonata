@@ -85,7 +85,7 @@ class TestRunnerHookEndToEnd:
             assert result.block_dim == 32  # overrides RUNTIME_CONFIG value
 
     def test_no_plan_returns_original_params(self):
-        """No sonata_plan.json → hook returns original params unchanged."""
+        """No sonata data → hook returns original params unchanged."""
         from sonata.runtime_hook import apply_sonata_runtime_hints
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -96,7 +96,7 @@ class TestRunnerHookEndToEnd:
             assert result.sonata_applied is False
             assert result.block_dim == 8
             assert result.aicpu_thread_num == 4
-            assert result.reason == "no_sonata_plan"
+            assert result.reason == "no_sonata_data"
 
     def test_ineligible_plan_returns_original(self):
         """Ineligible plan → hook returns original params."""
