@@ -586,30 +586,39 @@ def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
         if program is None:
             return None
 
-        # Find a suitable function for orchestration codegen
-        # Prefer entry_function, then look for Orchestration-type functions
-        entry_func = None
-        if hasattr(program, "entry_function") and program.entry_function is not None:
-            entry_func = program.entry_function
-        else:
-            functions = getattr(program, "functions", None) or []
-            for f in functions:
-                ft = getattr(f, "func_type_", None)
-                if ft is not None:
-                    ft_str = str(ft)
-                    if "orchestration" in ft_str.lower() or "orch" in ft_str.lower():
-                        entry_func = f
-                        break
-            if entry_func is None and functions:
-                entry_func = functions[0]
+        # Resolve GlobalVar -> Function via program.get_function(name)
+        functions = getattr(program, "functions", None) or []
+        get_func = getattr(program, "get_function", None)
 
-        if entry_func is None:
-            return None
+        # Try orchestration functions first (they are the ones that
+        # generate orchestrator code with func_name_to_id).
+        for gv in functions:
+            name = getattr(gv, "name", None)
+            if name is None:
+                continue
+            func = get_func(name) if get_func else gv
+            ft = getattr(func, "func_type_", None)
+            if ft is not None:
+                ft_str = str(ft).lower()
+                if "orch" in ft_str:
+                    result = generate_orchestration(program, func)
+                    raw = getattr(result, "func_name_to_id", None)
+                    if raw is not None:
+                        return dict(raw)
 
-        orch_result = generate_orchestration(program, entry_func)
-        raw = getattr(orch_result, "func_name_to_id", None)
-        if raw is not None:
-            return dict(raw)
+        # Fallback: try each function until one works
+        for gv in functions:
+            name = getattr(gv, "name", None)
+            if name is None:
+                continue
+            func = get_func(name) if get_func else gv
+            try:
+                result = generate_orchestration(program, func)
+                raw = getattr(result, "func_name_to_id", None)
+                if raw is not None and len(raw) > 0:
+                    return dict(raw)
+            except Exception:
+                continue
     except Exception:
         pass
     return None
