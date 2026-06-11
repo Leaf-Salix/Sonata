@@ -12,11 +12,9 @@
 from .adapters import (
     AdapterCapability,
     AdapterDescriptor,
-    AdapterRegistry,
     POST_SIMPLIFY,
     POST_SIMPLIFY_WITH_SCOPE,
     PRE_RUNTIME,
-    default_registry,
 )
 from .alias import (
     ALIAS_ALIAS,
@@ -84,6 +82,25 @@ from .score import (
     ShapeAssumption,
     Task,
 )
+from . import audit
+from . import profile
+from .audit import build_score_metadata, build_task_storage_metadata
+from .profile import OperatorProfile, ProfileDatabase
+from .schedule import (
+    ArgBinding,
+    FallbackPolicy,
+    RUNTIME_CONTRACT,
+    RegionBoundary,
+    ScheduleDep,
+    ScheduleGuard,
+    ScheduledRegion,
+    ScheduledTask,
+    SonataScheduleContract,
+    SONATA_SCHEDULE_SCHEMA_VERSION,
+    build_schedule,
+)
+from .schedule_validator import validate_schedule
+from .backends.hbg_backend import HBGScheduleBackend, HBGScheduleResult
 from .serialization import (
     ELIGIBILITY_RESULT_SCHEMA_VERSION,
     FINGERPRINT_VERSION,
@@ -95,7 +112,7 @@ from .serialization import (
     score_to_dict,
     score_to_json,
 )
-from .storage import STORAGE_COVERAGE_REJECT_THRESHOLD, STORAGE_COVERAGE_WARN_THRESHOLD
+from .storage import STORAGE_COVERAGE_WARN_THRESHOLD
 from .version import (
     DeprecatedField,
     SONATA_VERSION,
@@ -110,7 +127,6 @@ from .version import (
 __all__ = [
     "AdapterCapability",
     "AdapterDescriptor",
-    "AdapterRegistry",
     "ALIAS_ALIAS",
     "ALIAS_DISJOINT",
     "ALIAS_INPLACE",
@@ -149,7 +165,6 @@ __all__ = [
     "RuntimeTarget",
     "SCORE_SCHEMA_VERSION",
     "SONATA_VERSION",
-    "STORAGE_COVERAGE_REJECT_THRESHOLD",
     "STORAGE_COVERAGE_WARN_THRESHOLD",
     "Score",
     "ScoreCache",
@@ -173,7 +188,6 @@ __all__ = [
     "code_for_reason",
     "compute_lifetimes",
     "dataflow_dependency_fallback_code",
-    "default_registry",
     "deprecated",
     "eligibility_result_from_dict",
     "eligibility_result_from_json",
@@ -195,4 +209,25 @@ __all__ = [
     "score_to_json",
     "supports_dataflow_dependencies",
     "version_string",
+    # audit module
+    "build_score_metadata",
+    "build_task_storage_metadata",
+    # profile module
+    "OperatorProfile",
+    "ProfileDatabase",
+    # schedule module (v0.23)
+    "ArgBinding",
+    "FallbackPolicy",
+    "RUNTIME_CONTRACT",
+    "RegionBoundary",
+    "ScheduleDep",
+    "ScheduleGuard",
+    "ScheduledRegion",
+    "ScheduledTask",
+    "SonataScheduleContract",
+    "SONATA_SCHEDULE_SCHEMA_VERSION",
+    "build_schedule",
+    "validate_schedule",
+    "HBGScheduleBackend",
+    "HBGScheduleResult",
 ]

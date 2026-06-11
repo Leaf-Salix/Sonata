@@ -39,6 +39,18 @@ class FallbackCode(str, Enum):
     RUNTIME_ADAPTER_FUNC_UNREFERENCED = "runtime_adapter_func_unreferenced"
     RUNTIME_ADAPTER_BINDING_INCOMPLETE = "runtime_adapter_binding_incomplete"
     RUNTIME_ADAPTER_INVALID_EDGE = "runtime_adapter_invalid_edge"
+    # v0.23 schedule validator
+    SCHEDULE_INVALID_DEP = "schedule_invalid_dep"
+    SCHEDULE_DUPLICATE_REGION = "schedule_duplicate_region"
+    SCHEDULE_CYCLE = "schedule_cycle"
+    SCHEDULE_ORPHAN = "schedule_orphan"
+    SCHEDULE_DYNAMIC_DEP = "schedule_dynamic_dep"
+    SCHEDULE_BAD_BOUNDARY = "schedule_bad_boundary"
+    SCHEDULE_BAD_NULLABLE = "schedule_bad_nullable"
+    SCHEDULE_FP_MISMATCH = "schedule_fp_mismatch"
+    SCHEDULE_REPLAY_SPECIFIC = "schedule_replay_specific"
+    SCHEDULE_SELF_EDGE = "schedule_self_edge"
+    SCHEDULE_INVALID_EDGE = "schedule_invalid_edge"
 
 
 def code_for_reason(message: str) -> FallbackCode | None:

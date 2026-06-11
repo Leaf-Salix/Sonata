@@ -1,0 +1,101 @@
+{
+  "boundaries": [
+    {
+      "from_region": "r0",
+      "policy": "materialize",
+      "tensors": [
+        "y"
+      ],
+      "to_region": "r1"
+    }
+  ],
+  "fallback_policy": "partial_fallback",
+  "fingerprint": "golden_fp_001",
+  "guards": [
+    {
+      "dimension": null,
+      "expression": null,
+      "failure_code": null,
+      "failure_message": null,
+      "guard_id": "g0",
+      "kind": "shape_range",
+      "max_value": 128,
+      "min_value": 64,
+      "severity": "hard",
+      "symbolic_name": "x",
+      "target": "*"
+    }
+  ],
+  "max_replans": 8,
+  "memory_plan_fingerprint": null,
+  "memory_plan_ref": null,
+  "metadata": {},
+  "regions": [
+    {
+      "deps": [
+        {
+          "consumer": 1,
+          "kind": "data",
+          "producer": 0
+        }
+      ],
+      "kind": "static",
+      "mode": null,
+      "region_id": "r0",
+      "tasks": [
+        {
+          "args": [
+            {
+              "arg_identity": "x",
+              "runtime_slot": null
+            },
+            {
+              "arg_identity": "w",
+              "runtime_slot": null
+            },
+            {
+              "arg_identity": "y",
+              "runtime_slot": null
+            }
+          ],
+          "core_type": "aic",
+          "func_id": 3,
+          "kernel_identity": "load_tile",
+          "name": "load",
+          "outputs": [
+            "y"
+          ],
+          "task_id": 0
+        },
+        {
+          "args": [
+            {
+              "arg_identity": "y",
+              "runtime_slot": null
+            }
+          ],
+          "core_type": "aiv",
+          "func_id": 5,
+          "kernel_identity": "store_tile",
+          "name": "store",
+          "outputs": [
+            "result"
+          ],
+          "task_id": 1
+        }
+      ]
+    },
+    {
+      "deps": [],
+      "kind": "dynamic",
+      "mode": "backend_dynamic",
+      "region_id": "r1",
+      "tasks": []
+    }
+  ],
+  "runtime_contract": "sonata_schedule_v1",
+  "schema_version": 1,
+  "supported_platforms": [
+    "host_build_graph"
+  ]
+}
