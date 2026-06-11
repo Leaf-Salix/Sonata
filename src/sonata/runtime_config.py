@@ -33,7 +33,8 @@ class SonataRuntimeConfig:
     """Sonata analysis results embedded in RUNTIME_CONFIG.
 
     This class carries scheduling hints (block_dim, aicpu_thread_num)
-    for the advisory ``apply_sonata_runtime_hints()`` hook.
+    for the advisory ``apply_sonata_runtime_hints()`` hook, and a
+    reference to ``sonata_schedule.json`` for optional backend consumption.
 
     Note: Guard metadata (guard_count, guard_symbols) is informational only.
     Runtime guard evaluation (HARD → skip, STALE → rebuild) is handled by
@@ -48,6 +49,8 @@ class SonataRuntimeConfig:
         region_statuses: Per-region status map (region_id → "static"/"dynamic"/"mixed").
         guard_count: Number of shape assumptions (guards) — informational only.
         guard_symbols: Unique guard symbol names — informational only.
+        schedule_path: Path to sonata_schedule.json relative to work_dir.
+            None when no schedule artifact exists (v0.23+).
         schema_version: Schema version for forward compatibility.
     """
 
@@ -59,6 +62,7 @@ class SonataRuntimeConfig:
     region_statuses: dict[str, str] = field(default_factory=dict)
     guard_count: int = 0
     guard_symbols: tuple[str, ...] = ()
+    schedule_path: str | None = None
     schema_version: int = SONATA_RUNTIME_CONFIG_SCHEMA_VERSION
 
     def to_run_config_dict(self) -> dict[str, Any]:
@@ -82,6 +86,8 @@ class SonataRuntimeConfig:
         if self.guard_count > 0:
             d["guard_count"] = self.guard_count
             d["guard_symbols"] = list(self.guard_symbols)
+        if self.schedule_path is not None:
+            d["schedule_path"] = self.schedule_path
         return d
 
     @classmethod
@@ -102,6 +108,7 @@ class SonataRuntimeConfig:
                 region_statuses=d.get("region_statuses", {}) or {},
                 guard_count=d.get("guard_count", 0),
                 guard_symbols=tuple(d.get("guard_symbols", ())),
+                schedule_path=d.get("schedule_path"),
                 schema_version=version,
             )
         except (TypeError, ValueError):

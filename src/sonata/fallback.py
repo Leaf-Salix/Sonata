@@ -51,6 +51,9 @@ class FallbackCode(str, Enum):
     SCHEDULE_REPLAY_SPECIFIC = "schedule_replay_specific"
     SCHEDULE_SELF_EDGE = "schedule_self_edge"
     SCHEDULE_INVALID_EDGE = "schedule_invalid_edge"
+    # v0.24 binding layer
+    BINDING_FUNC_ID_NOT_FOUND = "binding_func_id_not_found"
+    BINDING_MISSING_SLOT = "binding_missing_slot"
 
 
 def code_for_reason(message: str) -> FallbackCode | None:

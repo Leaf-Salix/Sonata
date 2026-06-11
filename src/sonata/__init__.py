@@ -103,6 +103,7 @@ from .schedule import (
 )
 from .schedule_validator import validate_schedule
 from .backends.hbg_backend import HBGScheduleBackend, HBGScheduleResult
+from .binding import bind_func_ids, bind_runtime_slots
 from .serialization import (
     ELIGIBILITY_RESULT_SCHEMA_VERSION,
     FINGERPRINT_VERSION,
@@ -234,4 +235,6 @@ __all__ = [
     "validate_schedule",
     "HBGScheduleBackend",
     "HBGScheduleResult",
+    "bind_func_ids",
+    "bind_runtime_slots",
 ]

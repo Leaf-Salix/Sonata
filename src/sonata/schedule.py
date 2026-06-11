@@ -396,7 +396,7 @@ def _build_static_region(
         ScheduledTask(
             task_id=t.task_id,
             kernel_identity=t.name or f"task_{t.task_id}",
-            func_id=t.func_id if t.func_id is not None else t.task_id,
+            func_id=t.func_id,
             core_type=t.core_type,
             args=tuple(
                 ArgBinding(
