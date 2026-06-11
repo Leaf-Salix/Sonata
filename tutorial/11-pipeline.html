@@ -98,6 +98,9 @@ class SonataAnalysisResult:
     host_build_graph_plan: HostBuildGraphPlan | None = None
     adapter_result: RuntimeAdapterResult | None = None
 
+    # v0.18: Memory plan
+    memory_plan: Any = None
+
     # Metadata
     region_statuses: dict[str, str] = field(default_factory=dict)
     fallback_reasons: tuple[Any, ...] = ()</code></pre>
@@ -108,6 +111,7 @@ class SonataAnalysisResult:
   <tr><td><code>region_tree</code></td><td>RegionTree（层次化区域）</td><td>None</td></tr>
   <tr><td><code>plan_handle</code></td><td>PlanHandle（运行时绑定）</td><td>None</td></tr>
   <tr><td><code>host_build_graph_plan</code></td><td>HostBuildGraphPlan（最终执行计划）</td><td>None</td></tr>
+  <tr><td><code>memory_plan</code></td><td>MemoryPlan（内存规划结果）</td><td>None</td></tr>
   <tr><td><code>fallback_reasons</code></td><td>空</td><td>拒绝原因列表</td></tr>
 </table>
 

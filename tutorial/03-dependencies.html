@@ -66,12 +66,27 @@ Dependency(producer=2, consumer=3)</code></pre>
 写方向（output, outputexisting, inout） → 这个参数是"写"
 忽略方向（scalar, nodep）               → 不参与依赖计算</code></pre>
 
-<p>三种依赖边：</p>
+<p>三种依赖边（v0.13 新增 <code>DependencyKind</code> 枚举）：</p>
 <ul>
-  <li><strong>RAW</strong>（Read After Write）：A 写了 x，B 读了 x → A 必须在 B 之前</li>
-  <li><strong>WAW</strong>（Write After Write）：A 写了 x，B 也写了 x → A 必须在 B 之前</li>
+  <li><strong>DATA</strong>（RAW，Read After Write）：A 写了 x，B 读了 x → A 必须在 B 之前</li>
+  <li><strong>STORAGE</strong>（WAW，Write After Write）：A 写了 x，B 也写了 x → A 必须在 B 之前</li>
   <li><strong>WAR</strong>（Write After Read）：A 读了 x，B 写了 x → A 必须在 B 之前</li>
+  <li><strong>ORDERING</strong>（纯排序约束）：无数据流，仅保证执行顺序</li>
 </ul>
+
+<p>Dependency 类的定义：</p>
+
+<pre><code>class DependencyKind(str, Enum):
+    DATA = "data"        # RAW: read-after-write data flow
+    STORAGE = "storage"  # WAW: write-after-write storage conflict
+    WAR = "war"          # WAR: write-after-read anti-dependency
+    ORDERING = "ordering"  # Pure ordering constraint, no data flow
+
+@dataclass(frozen=True)
+class Dependency:
+    producer: int                    # 生产者 task_id
+    consumer: int                    # 消费者 task_id
+    kind: DependencyKind = DependencyKind.DATA  # v0.13: 依赖类型</code></pre>
 
 <p>用一个具体例子说明：</p>
 
