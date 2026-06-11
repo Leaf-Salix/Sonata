@@ -580,47 +580,40 @@ def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
     except ImportError:
         return None
 
+    # Get the IR Program from the compiled result
+    program = getattr(compiled, "_program", None)
+    if program is None:
+        return None
+
+    functions = getattr(program, "functions", None) or []
+    get_func = getattr(program, "get_function", None)
+
+    for gv in functions:
+        name = getattr(gv, "name", None)
+        if name is None:
+            continue
+        func = get_func(name) if get_func else gv
+        try:
+            result = generate_orchestration(program, func)
+            raw = getattr(result, "func_name_to_id", None)
+            if raw is not None and len(raw) > 0:
+                return dict(raw)
+        except Exception as exc:
+            _region_log.debug(
+                "[SONATA] generate_orchestration failed for %s: %s", name, exc,
+            )
+
+    # If no single function worked, try the whole program
     try:
-        # Get the IR Program from the compiled result
-        program = getattr(compiled, "_program", None)
-        if program is None:
-            return None
+        result = generate_orchestration(program, program)
+        raw = getattr(result, "func_name_to_id", None)
+        if raw is not None and len(raw) > 0:
+            return dict(raw)
+    except Exception as exc:
+        _region_log.debug(
+            "[SONATA] generate_orchestration on whole program failed: %s", exc,
+        )
 
-        # Resolve GlobalVar -> Function via program.get_function(name)
-        functions = getattr(program, "functions", None) or []
-        get_func = getattr(program, "get_function", None)
-
-        # Try orchestration functions first (they are the ones that
-        # generate orchestrator code with func_name_to_id).
-        for gv in functions:
-            name = getattr(gv, "name", None)
-            if name is None:
-                continue
-            func = get_func(name) if get_func else gv
-            ft = getattr(func, "func_type_", None)
-            if ft is not None:
-                ft_str = str(ft).lower()
-                if "orch" in ft_str:
-                    result = generate_orchestration(program, func)
-                    raw = getattr(result, "func_name_to_id", None)
-                    if raw is not None:
-                        return dict(raw)
-
-        # Fallback: try each function until one works
-        for gv in functions:
-            name = getattr(gv, "name", None)
-            if name is None:
-                continue
-            func = get_func(name) if get_func else gv
-            try:
-                result = generate_orchestration(program, func)
-                raw = getattr(result, "func_name_to_id", None)
-                if raw is not None and len(raw) > 0:
-                    return dict(raw)
-            except Exception:
-                continue
-    except Exception:
-        pass
     return None
 
 
