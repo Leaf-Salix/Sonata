@@ -571,23 +571,36 @@ def _write_bound_schedule(
 def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
     """Extract ``func_name_to_id`` map from a compiled PyPTO program.
 
-    Tries ``pypto.pypto_core.codegen.generate_orchestration`` on the compiled
-    program's entry function. Returns ``None`` when codegen output is
-    unavailable (fail-open).
+    Tries two sources (fail-open):
+    1. ``pypto.pypto_core.codegen.generate_orchestration`` if available.
+    2. ``kernel_config.py``'s ``KERNELS`` list written to the output dir.
+
+    Returns ``None`` when neither source is available.
     """
+    # Strategy 1: try generate_orchestration (C++ codegen API)
     try:
         from pypto.pypto_core.codegen import generate_orchestration
+        result = _extract_via_generate_orchestration(compiled, generate_orchestration)
+        if result is not None:
+            return result
     except ImportError:
-        return None
+        pass
 
-    # Get the IR Program from the compiled result
+    # Strategy 2: read kernel_config.py KERNELS list
+    try:
+        return _extract_via_kernel_config(compiled)
+    except Exception:
+        pass
+
+    return None
+
+
+def _extract_via_generate_orchestration(compiled, generate_orchestration):
     program = getattr(compiled, "_program", None)
     if program is None:
         return None
-
     functions = getattr(program, "functions", None) or []
     get_func = getattr(program, "get_function", None)
-
     for gv in functions:
         name = getattr(gv, "name", None)
         if name is None:
@@ -598,23 +611,33 @@ def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
             raw = getattr(result, "func_name_to_id", None)
             if raw is not None and len(raw) > 0:
                 return dict(raw)
-        except Exception as exc:
-            _region_log.debug(
-                "[SONATA] generate_orchestration failed for %s: %s", name, exc,
-            )
-
-    # If no single function worked, try the whole program
-    try:
-        result = generate_orchestration(program, program)
-        raw = getattr(result, "func_name_to_id", None)
-        if raw is not None and len(raw) > 0:
-            return dict(raw)
-    except Exception as exc:
-        _region_log.debug(
-            "[SONATA] generate_orchestration on whole program failed: %s", exc,
-        )
-
+        except Exception:
+            continue
     return None
+
+
+def _extract_via_kernel_config(compiled):
+    """Read KERNELS list from kernel_config.py in the output dir."""
+    output_dir = getattr(compiled, "output_dir", None) or getattr(compiled, "_output_dir", None)
+    if output_dir is None:
+        return None
+    kc_path = Path(output_dir) / "kernel_config.py"
+    if not kc_path.exists():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_kernel_config", str(kc_path))
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    kernels = getattr(mod, "KERNELS", None)
+    if not kernels or not isinstance(kernels, (list, tuple)):
+        return None
+    result = {}
+    for k in kernels:
+        if isinstance(k, dict) and "name" in k and "func_id" in k:
+            result[str(k["name"])] = int(k["func_id"])
+    return result if result else None
 
 
 def _safe_task_count(schedule: Any) -> int:
