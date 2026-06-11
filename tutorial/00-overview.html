@@ -85,6 +85,9 @@ PyPTO 被当作"参考实现"和"测试用例来源"，而不是 Sonata 的内�
 
 <h2>提问：现在和未来是什么流程？</h2>
 
+<p><strong>IR</strong>（Intermediate Representation，中间表示）是编译器领域的术语，指源代码和机器码之间的中间形式。
+在 PyPTO 中，IR 是模型的图形表示，包含了所有的计算操作和依赖关系。</p>
+
 <pre><code>当前路径（AICPU 动态调度）：
   PyPTO IR → AICPU 运行时 → 逐节点分析依赖 → 动态分配内存 → 执行
                  ↑                                                        │
@@ -97,7 +100,55 @@ Sonata 路径（编译时静态计划）：
                                                  运行时直接消费 Score → 执行
                                                  （命中缓存则跳过提取）</code></pre>
 
+<h2>提问：怎么动手试试？</h2>
+
+<h3>方式 1：创建你的第一个 Score（5 行代码）</h3>
+
+<p>这是最简单的体验方式，不需要 PyPTO：</p>
+
+<pre><code># 创建一个简单的 Score 对象
+from sonata.score import Score, Task, Dependency
+
+score = Score(
+    name="my_first_score",
+    tasks=[Task(task_id=0, func_id=0, core_type="aiv")],
+    dependencies=[]
+)
+print(f"Score: {score.name}, {len(score.tasks)} task(s)")
+# 输出: Score: my_first_score, 1 task(s)</code></pre>
+
+<div class="callout success">
+  <strong>恭喜！</strong>你刚刚创建了你的第一个 Sonata Score。
+  这个 Score 包含一个任务，没有依赖关系。
+  在实际使用中，Sonata 会自动从 PyPTO IR 提取这些信息。
+</div>
+
+<h3>方式 2：运行测试套件</h3>
+
+<p>如果你想验证 Sonata 的完整功能，可以运行测试：</p>
+
+<pre><code># 确保 Sonata 已安装
+cd pypto-sonata
+PYTHONPATH=src python -m pytest tests/sonata -q
+
+# 预期输出（类似）:
+# 792 passed in 15.23s</code></pre>
+
+<div class="callout info">
+  <strong>提示：</strong>这个测试不需要 PyPTO，它使用模拟的 IR 对象来验证 Sonata 的核心逻辑。
+  如果你想了解 Sonata 如何处理真实的 PyPTO IR，可以阅读 <a href="07-running-tests.html">Tutorial 7: 运行测试</a>。
+</div>
+
 <h2>提问：现在的进展到哪了？</h2>
+
+<div class="callout success">
+  <strong>v0.0-v0.22 全部完成：</strong>Sonata 已建立完整的静态计划体系——
+  Score 数据模型、Guard 条件系统、RegionTree 层次化区域管理、内存规划、Score 缓存、
+  RUNTIME_CONFIG 注入、端到端运行时验证。792+ 测试全部通过。下一步是 Schedule Contract。
+</div>
+
+<details>
+<summary><strong>点击查看完整版本历史（22 个版本）</strong></summary>
 
 <table>
   <tr><th>版本</th><th>状态</th><th>内容</th><th>与 #1494 的关系</th></tr>
@@ -107,17 +158,24 @@ Sonata 路径（编译时静态计划）：
   <tr><td><strong>v0.7-v0.9</strong></td><td>已完成</td><td>Runtime Contract 稳定、fingerprint 可信、benchmark 基线、500+ 测试</td><td>达到可交付状态</td></tr>
   <tr><td><strong>v0.10</strong></td><td>已完成</td><td>GuardCondition ABC 抽象层、severity 分级（soft/hard）、GuardSelector 防 over-guarding</td><td>guard 系统可扩展</td></tr>
   <tr><td><strong>v0.11</strong></td><td>已完成</td><td>RegionTree 层次化区域管理、per-region 缓存、GuardEvaluator 区域级评估、内存约束求解器（ConstraintSolver/GreedySolver）、冲突矩阵</td><td>支持复杂 IR 的精细规划</td></tr>
-  <tr><td><strong>v0.12</strong></td><td>进行中</td><td>Pipeline 一站式入口（sonata_analyze ✅ / sonata_compile ✅ / execute_with_sonata ✅）、sonata_plan.json 序列化（to_dict ✅ / load 部分实现 ⚠️）、region-aware HostBuildGraphPlan ✅</td><td>打通编译→分析→执行全链路</td></tr>
-  <tr><td><strong>v0.13+</strong></td><td>规划中</td><td>ILP/CP 高级求解器 ❌、per-region Score 提取 ❌、load_sonata_plan 完整反序列化 ❌、PyPTO 主线合入 ❌</td><td>最终目标</td></tr>
+  <tr><td><strong>v0.12</strong></td><td>已完成</td><td>Pipeline 一站式入口（sonata_analyze ✅ / sonata_compile ✅ / execute_with_sonata ✅）、sonata_plan.json 序列化（to_dict ✅ / load 部分实现 ⚠️）、region-aware HostBuildGraphPlan ✅</td><td>打通编译→分析→执行全链路</td></tr>
+  <tr><td><strong>v0.13</strong></td><td>已完成</td><td>性能优化（消除双倍编译）、DependencyKind enum、依赖分析精度提升</td><td>性能优化 + 依赖分析增强</td></tr>
+  <tr><td><strong>v0.14</strong></td><td>已完成</td><td>Runtime Integration：block_dim 影响运行时、pypto-lib 验证</td><td>运行时集成</td></tr>
+  <tr><td><strong>v0.15</strong></td><td>已完成</td><td>更深运行时集成：memory hints、region-aware scheduling、guard invalidation</td><td>运行时深度集成</td></tr>
+  <tr><td><strong>v0.16</strong></td><td>已完成</td><td>更广 pypto-lib 覆盖、SPMD/LLM 覆盖</td><td>扩大覆盖范围</td></tr>
+  <tr><td><strong>v0.17</strong></td><td>已完成</td><td>Production Readiness + Dependency/Storage Foundation</td><td>生产就绪</td></tr>
+  <tr><td><strong>v0.18</strong></td><td>已完成</td><td>Runtime hook、per-region eligibility、loop expansion、profile DB</td><td>运行时钩子 + 区域级资格检查</td></tr>
+  <tr><td><strong>v0.19</strong></td><td>已完成</td><td>CI/CD + Production Hardening</td><td>CI/CD + 生产加固</td></tr>
+  <tr><td><strong>v0.20</strong></td><td>已完成</td><td>Survey Findings Landing：per-region Score、alias、legality、TensorMap tags</td><td>调查结果落地</td></tr>
+  <tr><td><strong>v0.21</strong></td><td>已完成</td><td>Runtime integration tests、guard rebuild、OutputDef/liveness</td><td>运行时集成测试</td></tr>
+  <tr><td><strong>v0.22</strong></td><td>已完成</td><td>RUNTIME_CONFIG 注入、双源 hook、conftest 修复（792 tests passing）</td><td>端到端运行时验证</td></tr>
 </table>
 
-<div class="callout success">
-  <strong>v0.0-v0.11 全部完成：</strong>Sonata 已建立完整的静态计划体系——
-  Score 数据模型、Guard 条件系统、RegionTree 层次化区域管理、内存规划、Score 缓存。
-  500+ 测试全部通过。下一步是端到端 benchmark 和 PyPTO 主线合入。
-</div>
+</details>
 
 <div class="nav">
+  <a href="index.html">返回索引</a>
+  &nbsp;|&nbsp;
   <span class="arrow">&larr;</span> 上一篇：（无）
   &nbsp;|&nbsp;
   <a href="01-core-model.html">下一篇：Score 数据模型 &rarr;</a>
