@@ -520,7 +520,89 @@ def sonata_compile(
         result.save(work_dir / "sonata_plan.json")
         write_memory_hints(result, work_dir)
 
+        # v0.24 A5: Build schedule and bind func_ids from codegen output
+        if result.score is not None:
+            try:
+                _write_bound_schedule(result, compiled, work_dir)
+            except Exception as exc:
+                _region_log.warning(
+                    "[SONATA] schedule binding failed (non-fatal): %s", exc,
+                )
+
     return compiled, result
+
+
+def _write_bound_schedule(
+    result: SonataAnalysisResult,
+    compiled: Any,
+    work_dir: Path,
+) -> None:
+    """Build ``SonataScheduleContract`` and bind ``func_id`` from codegen output.
+
+    Writes ``sonata_schedule.json`` (bound) to work_dir.
+    Fail-open: any error logs a warning but does not raise.
+    """
+    from .schedule import build_schedule
+    from .binding import bind_func_ids
+
+    schedule = build_schedule(result.score, result)
+
+    # Attempt to extract func_name_to_id from codegen
+    func_name_to_id = _extract_func_name_to_id(compiled)
+    if func_name_to_id:
+        bound_schedule, reasons = bind_func_ids(schedule, func_name_to_id)
+        if reasons:
+            _region_log.info(
+                "[SONATA] binding: %d func_ids unresolved (left as None): %s",
+                len(reasons), [r.message[:60] for r in reasons],
+            )
+    else:
+        bound_schedule = schedule
+        _region_log.info("[SONATA] binding skipped: no func_name_to_id from codegen")
+
+    path = work_dir / "sonata_schedule.json"
+    bound_schedule.write_json(path)
+    _region_log.info(
+        "[SONATA] bound schedule written: %s (tasks=%d, regions=%d)",
+        path, _safe_task_count(bound_schedule), len(bound_schedule.regions),
+    )
+
+
+def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
+    """Extract ``func_name_to_id`` map from a compiled PyPTO program.
+
+    Tries ``pypto.pypto_core.codegen.generate_orchestration`` first.
+    Returns ``None`` when codegen output is unavailable (fail-open).
+    """
+    try:
+        from pypto.pypto_core.codegen import generate_orchestration
+    except ImportError:
+        return None
+
+    try:
+        program = getattr(compiled, "_program", compiled)
+        entry_func = getattr(program, "entry_function", None)
+        if entry_func is None:
+            functions = getattr(program, "functions", [])
+            if functions:
+                entry_func = functions[0]
+        if entry_func is None:
+            return None
+
+        orch_result = generate_orchestration(program, entry_func)
+        raw = getattr(orch_result, "func_name_to_id", None)
+        if raw is not None:
+            return dict(raw)
+    except Exception:
+        pass
+    return None
+
+
+def _safe_task_count(schedule: Any) -> int:
+    try:
+        return sum(len(r.tasks) for r in schedule.regions)
+    except Exception:
+        return 0
 
 
 def write_memory_hints(result: SonataAnalysisResult, work_dir: Path) -> Path | None:
