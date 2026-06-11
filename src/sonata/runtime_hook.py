@@ -10,12 +10,13 @@
 """Sonata runtime hook — thin advisory layer consumed by PyPTO runner.
 
 This module is the ONLY Sonata entry point that PyPTO's ``execute_compiled()``
-imports. It reads Sonata hints from two possible sources (in priority order):
+imports. It reads Sonata hints from three possible sources (in priority order):
 
 1. ``sonata_plan.json`` — full Sonata analysis result (preferred)
 2. ``RUNTIME_CONFIG["sonata"]`` in ``kernel_config.py`` — compact config field
+3. ``sonata_schedule.json`` — bound schedule contract (fingerprint verification)
 
-In both cases it computes runtime hints (block_dim, aicpu_thread_num) without
+In all cases it computes runtime hints (block_dim, aicpu_thread_num) without
 touching simpler C++ or PyPTO internals.
 
 Design constraints:
@@ -25,6 +26,7 @@ Design constraints:
 - User-supplied block_dim always takes precedence
 - Guard metadata is informational only; guard evaluation is handled by
   ``execute_with_sonata()``, not by this advisory hook
+- Schedule artifact check is informational; does not override block_dim
 """
 
 from __future__ import annotations
@@ -97,6 +99,10 @@ def _do_apply(
 ) -> SonataRuntimeHints:
     work_path = Path(work_dir)
     plan_path = work_path / "sonata_plan.json"
+    schedule_path = work_path / "sonata_schedule.json"
+
+    # Strategy 0: Verify bound schedule artifact (informational, no hint override)
+    _check_schedule_artifact(schedule_path)
 
     # Strategy 1: Read sonata_plan.json (preferred — full data)
     if plan_path.exists():
@@ -121,6 +127,33 @@ def _do_apply(
         )
 
     return _unchanged(block_dim, aicpu_thread_num, "no_sonata_data")
+
+
+def _check_schedule_artifact(schedule_path: Path) -> None:
+    """Read ``sonata_schedule.json`` and log binding status.
+
+    Informational only — does not override block_dim or other hints.
+    Logs fingerprint and whether func_ids are bound.
+    """
+    if not schedule_path.exists():
+        return
+    try:
+        schedule_data = json.loads(schedule_path.read_text())
+        fingerprint = schedule_data.get("fingerprint", "")
+        regions = schedule_data.get("regions", [])
+        total_tasks = 0
+        bound_tasks = 0
+        for r in regions:
+            for t in r.get("tasks", []):
+                total_tasks += 1
+                if t.get("func_id") is not None:
+                    bound_tasks += 1
+        log.info(
+            "[Sonata] schedule artifact: fingerprint=%s, tasks=%d, bound=%d, regions=%d",
+            fingerprint, total_tasks, bound_tasks, len(regions),
+        )
+    except Exception as exc:
+        log.warning("[Sonata] schedule artifact read failed (non-fatal): %s", exc)
 
 
 def _apply_from_plan_json(
