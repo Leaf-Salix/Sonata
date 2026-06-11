@@ -571,8 +571,9 @@ def _write_bound_schedule(
 def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
     """Extract ``func_name_to_id`` map from a compiled PyPTO program.
 
-    Tries ``pypto.pypto_core.codegen.generate_orchestration`` first.
-    Returns ``None`` when codegen output is unavailable (fail-open).
+    Tries ``pypto.pypto_core.codegen.generate_orchestration`` on the compiled
+    program's entry function. Returns ``None`` when codegen output is
+    unavailable (fail-open).
     """
     try:
         from pypto.pypto_core.codegen import generate_orchestration
@@ -580,12 +581,28 @@ def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
         return None
 
     try:
-        program = getattr(compiled, "_program", compiled)
-        entry_func = getattr(program, "entry_function", None)
-        if entry_func is None:
-            functions = getattr(program, "functions", [])
-            if functions:
+        # Get the IR Program from the compiled result
+        program = getattr(compiled, "_program", None)
+        if program is None:
+            return None
+
+        # Find a suitable function for orchestration codegen
+        # Prefer entry_function, then look for Orchestration-type functions
+        entry_func = None
+        if hasattr(program, "entry_function") and program.entry_function is not None:
+            entry_func = program.entry_function
+        else:
+            functions = getattr(program, "functions", None) or []
+            for f in functions:
+                ft = getattr(f, "func_type_", None)
+                if ft is not None:
+                    ft_str = str(ft)
+                    if "orchestration" in ft_str.lower() or "orch" in ft_str.lower():
+                        entry_func = f
+                        break
+            if entry_func is None and functions:
                 entry_func = functions[0]
+
         if entry_func is None:
             return None
 
