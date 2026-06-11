@@ -254,8 +254,17 @@ PYTHONPATH=src python -m pytest tests/sonata -q</code></pre>
   <tr><th>版本</th><th>状态</th><th>主要内容</th></tr>
   <tr><td>v0.0-v0.11</td><td>已完成</td><td>基础架构：Score、Eligibility、Region、Guard、Memory Plan</td></tr>
   <tr><td>v0.12-v0.22</td><td>已完成</td><td>集成与优化：Pipeline、性能优化、Runtime Integration、RUNTIME_CONFIG</td></tr>
-  <tr><td>v0.23+</td><td>规划中</td><td>Schedule Contract、Binding Layer、TMARB Semantic Mapping</td></tr>
+  <tr><td>v0.23</td><td>规划中</td><td>Schedule Contract：定义 SonataScheduleContract 数据模型和 sonata_schedule.json schema</td></tr>
+  <tr><td>v0.24</td><td>规划中</td><td>Binding Layer：kernel_identity → func_id、arg_identity → runtime arg binding</td></tr>
+  <tr><td>v0.25</td><td>规划中</td><td>TMARB Semantic Mapping：证明 ScheduleContract 能无损映射到 TMARB 语义</td></tr>
+  <tr><td>v0.26</td><td>规划中</td><td>Sonata TensorMap Hybrid Prototype：原型化 production-facing mixed execution consumer</td></tr>
+  <tr><td>v0.27+</td><td>规划中</td><td>Binary Schedule and Upstreamable Hook：收敛成 production/upstream 形式</td></tr>
 </table>
+
+<div class="callout info">
+  <strong>路线说明：</strong>Sonata 的长期目标是成为 PyPTO 原链路上的可插拔 Schedule Contract producer。
+  v0.23-v0.26 是实现这个目标的关键步骤。
+</div>
 </div>
 
 <div class="callout success">

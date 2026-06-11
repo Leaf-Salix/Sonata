@@ -203,9 +203,47 @@ simpler 在执行编译产物时会读取 RUNTIME_CONFIG。</p>
 </div>
 
 <div class="term">
+<h3>ScheduleContract</h3>
+<p>调度契约，Sonata 的目标产物（v0.23+）。描述程序的静态执行计划，包括 static regions、
+dynamic gaps、explicit deps、boundaries、guards、fingerprint、binding placeholders。
+与 Score 不同，ScheduleContract 是 runtime-neutral 的，不绑定特定的运行时实现。</p>
+</div>
+
+<div class="term">
+<h3>Backend Consumer</h3>
+<p>后端消费者，消费 ScheduleContract 的运行时实现。包括：
+<ul>
+  <li><strong>HBG backend</strong>：使用 HostBuildGraph 验证 schedule 拓扑正确性</li>
+  <li><strong>Sonata TensorMap Hybrid backend</strong>：生产环境的混合执行实现</li>
+  <li><strong>Future backend</strong>：未来可能的其他实现</li>
+</ul>
+</p>
+</div>
+
+<div class="term">
+<h3>Mixed Execution</h3>
+<p>混合执行，Sonata 的目标运行模式。静态区域（static region）使用 Sonata 的显式调度，
+动态区域（dynamic region）保留 TensorMap 的自动依赖发现路径。
+通过 <code>sonata_tensormap_hybrid</code> 实现。</p>
+</div>
+
+<div class="term">
 <h3>TensorMap</h3>
 <p>PyPTO 的运行时依赖发现机制，自动管理张量之间的依赖关系。
 Sonata 的静态调度可以替代 TensorMap 的动态发现。</p>
+</div>
+
+<div class="term">
+<h3>TMARB</h3>
+<p><strong>TensorMap and RingBuffer</strong>，PyPTO 的生产运行时系统。
+包括 TensorMap（依赖发现）、RingBuffer（任务调度）、HeapRing（内存管理）等组件。
+Sonata 的 ScheduleContract 必须能无损映射到 TMARB 的语义。</p>
+</div>
+
+<div class="term">
+<h3>HBG</h3>
+<p><strong>HostBuildGraph</strong>，PyPTO 的运行时表示，描述了在主机端构建的任务图。
+Sonata 的 HBG backend 用于验证 schedule 的拓扑正确性。</p>
 </div>
 
 <div class="callout success">

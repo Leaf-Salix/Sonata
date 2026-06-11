@@ -71,6 +71,22 @@
   <tr><td><code>metadata</code></td><td>审计/调试元数据</td><td>—</td></tr>
 </table>
 
+<h2>提问：ScheduleContract 是什么？</h2>
+
+<p><strong>ScheduleContract</strong>（调度契约）是 Sonata 的目标产物（v0.23+），
+一个 runtime-neutral 的执行计划。与 Score 不同，ScheduleContract 不绑定特定的运行时实现，
+可以被不同的 backend consumer 消费：</p>
+
+<ul>
+  <li><strong>HBG backend</strong>：使用 HostBuildGraph 验证 schedule 拓扑正确性</li>
+  <li><strong>Sonata TensorMap Hybrid backend</strong>：生产环境的混合执行实现</li>
+</ul>
+
+<div class="callout info">
+  <strong>当前状态：</strong>Score 是 Sonata 的当前产物，ScheduleContract 是未来目标。
+  两者的关系是：Score 描述"算什么"，ScheduleContract 描述"怎么调度"。
+</div>
+
 <h2>提问：Sonata 和 PyPTO 的关系是什么？</h2>
 
 <pre><code>Sonata（本仓库）
