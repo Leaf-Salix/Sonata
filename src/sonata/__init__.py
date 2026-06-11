@@ -12,9 +12,11 @@
 from .adapters import (
     AdapterCapability,
     AdapterDescriptor,
+    AdapterRegistry,
     POST_SIMPLIFY,
     POST_SIMPLIFY_WITH_SCOPE,
     PRE_RUNTIME,
+    default_registry,
 )
 from .alias import (
     ALIAS_ALIAS,
@@ -127,6 +129,7 @@ from .version import (
 __all__ = [
     "AdapterCapability",
     "AdapterDescriptor",
+    "AdapterRegistry",
     "ALIAS_ALIAS",
     "ALIAS_DISJOINT",
     "ALIAS_INPLACE",
@@ -188,6 +191,7 @@ __all__ = [
     "code_for_reason",
     "compute_lifetimes",
     "dataflow_dependency_fallback_code",
+    "default_registry",
     "deprecated",
     "eligibility_result_from_dict",
     "eligibility_result_from_json",
