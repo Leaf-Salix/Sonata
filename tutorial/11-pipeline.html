@@ -163,7 +163,7 @@ if result.eligible:
 <h2>提问：execute_with_sonata 是什么？</h2>
 
 <p><code>execute_with_sonata()</code> 是运行时执行的包装器——在执行编译产物前，
-先读取 <code>sonata_plan.json</code>：</p>
+先读取 <code>sonata_plan.json</code> 或 <code>RUNTIME_CONFIG["sonata"]</code>：</p>
 
 <pre><code>from sonata.pipeline import execute_with_sonata
 
@@ -176,6 +176,13 @@ else:
 
 <p>向后兼容：如果 <code>output_dir</code> 里没有 <code>sonata_plan.json</code>，
 <code>sonata_plan</code> 返回 None，执行照常进行。</p>
+
+<div class="callout info">
+  <strong>v0.22 新增：</strong>现在 <code>execute_with_sonata()</code> 支持双源读取：
+  优先读取 <code>sonata_plan.json</code>（完整数据），如果不存在则尝试读取
+  <code>RUNTIME_CONFIG["sonata"]</code>（从 <code>kernel_config.py</code> 中）。
+  这使得 Sonata 分析结果可以嵌入到 PyPTO 的 <code>kernel_config.py</code> 中。
+</div>
 
 <h2>提问：sonata_plan.json 的格式是什么？</h2>
 
@@ -214,7 +221,7 @@ if plan is not None:
 <div class="callout warn">
   <strong>⚠️ 部分实现：</strong>当前 <code>load_sonata_plan</code> 只恢复基本字段
   （eligible 和 region_statuses），<strong>不恢复</strong> score、plan_handle、host_build_graph_plan。
-  完整反序列化属于 v0.13+ 规划。
+  完整反序列化属于 v0.23+ 规划（Schedule Contract）。
   <br><br>
   <code>to_dict()</code> / <code>save()</code> 已完整实现（✅），
   输出的 JSON 包含所有字段。但反向的 <code>load</code> 只读取部分字段。
@@ -222,7 +229,7 @@ if plan is not None:
 
 <h2>提问：完整的端到端流程是什么？</h2>
 
-<div class="diagram">PyPTO 编译 + Sonata 分析 + 运行时执行:
+<div class="diagram">PyPTO 编译 + Sonata 分析 + 运行时执行 (v0.22):
 
   ┌─────────────────────────────────────┐
   │  @pl.program                        │
@@ -235,13 +242,16 @@ if plan is not None:
   │    ├─ pypto.ir.compile()            │
   │    ├─ Pass pipeline → Simplify      │
   │    ├─ sonata_analyze(certified_ir)  │
-  │    └─ write sonata_plan.json        │
+  │    ├─ write sonata_plan.json        │
+  │    └─ inject RUNTIME_CONFIG["sonata"]│
+  │       into kernel_config.py         │
   └──────────┬──────────────────────────┘
              │
              ▼
   ┌─────────────────────────────────────┐
   │  output_dir/                        │
   │    ├─ kernel_config.py              │
+  │    │   └─ RUNTIME_CONFIG["sonata"]  │
   │    ├─ sonata_plan.json  ← Sonata   │
   │    └─ ...                           │
   └──────────┬──────────────────────────┘
@@ -249,7 +259,8 @@ if plan is not None:
              ▼
   ┌─────────────────────────────────────┐
   │  execute_with_sonata(output_dir)    │
-  │    ├─ load sonata_plan.json         │
+  │    ├─ load sonata_plan.json (优先)  │
+  │    ├─ 或读取 RUNTIME_CONFIG["sonata"]│
   │    └─ execute_compiled()            │
   └─────────────────────────────────────┘</code></pre>
 
@@ -258,13 +269,17 @@ if plan is not None:
   <code>sonata_analyze</code> 适合测试和验证；
   <code>sonata_compile</code> 适合 PyPTO 集成；
   <code>execute_with_sonata</code> 适合运行时执行。
-  三者配合 <code>sonata_plan.json</code> 形成完整的编译→执行链路。
+  三者配合 <code>sonata_plan.json</code> 和 <code>RUNTIME_CONFIG["sonata"]</code>
+  形成完整的编译→执行链路。v0.22 新增了 RUNTIME_CONFIG 注入，使得 Sonata 分析结果
+  可以嵌入到 PyPTO 的 <code>kernel_config.py</code> 中。
 </div>
 
 <div class="nav">
+  <a href="index.html">返回索引</a>
+  &nbsp;|&nbsp;
   <a href="10-memory-planning.html"><span class="arrow">&larr;</span> 上一篇：内存规划与约束求解</a>
   &nbsp;|&nbsp;
-  <a href="deep-01-score-model.html">Deep Dive：score.py 完整解析 &rarr;</a>
+  <a href="12-runtime-config.html">下一篇：RUNTIME_CONFIG 注入 &rarr;</a>
 </div>
 
 </body>

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 12 - RUNTIME_CONFIG 注入</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 12 - RUNTIME_CONFIG 注入</h1>
+
+<div class="callout warn">
+  <strong>前置知识：</strong>本教程假设你已经了解：
+  <ul>
+    <li>PyPTO 的 <code>kernel_config.py</code> 机制（参见 PyPTO 文档）</li>
+    <li>Python <code>conftest.py</code> 的基本概念（pytest 的配置文件）</li>
+    <li>Sonata Pipeline 的基本用法（参见 <a href="11-pipeline.html">Tutorial 11</a>）</li>
+  </ul>
+  如果你不熟悉这些概念，建议先阅读上述教程。
+</div>
+
+<h2>提问：什么是 RUNTIME_CONFIG？</h2>
+
+<p><code>RUNTIME_CONFIG</code> 是 PyPTO 的运行时配置字典，定义在 <code>kernel_config.py</code> 中。
+它包含三个核心字段：</p>
+
+<pre><code>RUNTIME_CONFIG = {
+    "runtime": "sim",           # 运行时类型
+    "block_dim": 32,            # 块维度
+    "aicpu_thread_num": 4,      # AICPU 线程数
+}</code></pre>
+
+<p>PyPTO 的运行时系统（simpler）在执行编译产物时会读取这个配置。</p>
+
+<h2>提问：Sonata 如何注入 RUNTIME_CONFIG？</h2>
+
+<p>在 v0.22 中，Sonata 可以将分析结果注入到 <code>RUNTIME_CONFIG["sonata"]</code> 中：</p>
+
+<pre><code>RUNTIME_CONFIG = {
+    "runtime": "sim",
+    "block_dim": 32,
+    "aicpu_thread_num": 4,
+    "sonata": {                          # Sonata 注入的字段
+        "schema_version": 1,
+        "eligible": True,
+        "task_count": 5,
+        "suggested_block_dim": 64,
+        "suggested_aicpu_thread_num": 8,
+        "memory_peak_bytes": 1024000,
+        "region_statuses": {
+            "region_0": "static",
+            "region_1": "dynamic",
+        },
+        "guard_count": 2,
+        "guard_symbols": ["batch_size", "seq_len"],
+    },
+}</code></pre>
+
+<div class="callout info">
+  <strong>关键点：</strong>Sonata 不修改 PyPTO 的 <code>_generate_config_file()</code> 函数。
+  而是在编译后，通过 conftest hook 将 <code>sonata</code> 字段注入到已生成的 <code>kernel_config.py</code> 中。
+</div>
+
+<h2>提问：为什么使用 repr() 而不是 json.dumps()？</h2>
+
+<p><code>kernel_config.py</code> 是 Python 源代码，通过 <code>importlib</code> 加载。
+因此必须使用 Python 原生字面量，而不是 JSON：</p>
+
+<table>
+  <tr><th>方法</th><th>输出</th><th>是否有效 Python</th></tr>
+  <tr><td><code>json.dumps({"eligible": True})</code></td><td><code>'{"eligible": true}'</code></td><td>❌ <code>true</code> 不是 Python</td></tr>
+  <tr><td><code>repr({"eligible": True})</code></td><td><code>"{'eligible': True}"</code></td><td>✅ <code>True</code> 是 Python</td></tr>
+</table>
+
+<div class="callout warn">
+  <strong>注意：</strong>如果使用 <code>json.dumps()</code>，<code>kernel_config.py</code> 会报错：
+  <code>NameError: name 'true' is not defined</code>。
+</div>
+
+<h2>提问：SonataRuntimeConfig 是什么？</h2>
+
+<p><code>SonataRuntimeConfig</code> 是 Sonata 分析结果的数据类，定义在 <code>runtime_config.py</code> 中：</p>
+
+<pre><code>@dataclass(frozen=True)
+class SonataRuntimeConfig:
+    eligible: bool
+    task_count: int
+    suggested_block_dim: int | None = None
+    suggested_aicpu_thread_num: int | None = None
+    memory_peak_bytes: int | None = None
+    region_statuses: dict[str, str] = field(default_factory=dict)
+    guard_count: int = 0
+    guard_symbols: tuple[str, ...] = ()
+    schema_version: int = SONATA_RUNTIME_CONFIG_SCHEMA_VERSION</code></pre>
+
+<p>它有两个关键方法：</p>
+<ul>
+  <li><code>to_run_config_dict()</code> — 转换为 Python 字典，用于注入 <code>kernel_config.py</code></li>
+  <li><code>from_dict()</code> — 从字典加载，用于读取 <code>RUNTIME_CONFIG["sonata"]</code></li>
+</ul>
+
+<h2>提问：如何使用 SonataRuntimeConfig？</h2>
+
+<h3>创建 SonataRuntimeConfig</h3>
+
+<pre><code>from sonata.runtime_config import SonataRuntimeConfig
+
+# 创建配置
+config = SonataRuntimeConfig(
+    eligible=True,
+    task_count=5,
+    suggested_block_dim=64,
+    suggested_aicpu_thread_num=8,
+    memory_peak_bytes=1024000,
+    region_statuses={"region_0": "static", "region_1": "dynamic"},
+    guard_count=2,
+    guard_symbols=("batch_size", "seq_len"),
+)
+
+# 转换为字典
+config_dict = config.to_run_config_dict()
+print(config_dict)
+# {'schema_version': 1, 'eligible': True, 'task_count': 5, ...}</code></pre>
+
+<h3>从字典加载</h3>
+
+<pre><code>from sonata.runtime_config import SonataRuntimeConfig
+
+# 从 RUNTIME_CONFIG["sonata"] 加载
+sonata_raw = RUNTIME_CONFIG.get("sonata")
+if sonata_raw:
+    config = SonataRuntimeConfig.from_dict(sonata_raw)
+    if config and config.eligible:
+        print(f"Eligible: {config.task_count} tasks")
+        print(f"Block dim: {config.suggested_block_dim}")</code></pre>
+
+<h2>提问：如何注入 RUNTIME_CONFIG？</h2>
+
+<p>注入过程由 st_sonata conftest 的 compile hook 完成：</p>
+
+<pre><code>def _patch_kernel_config_sonata(work_dir: Path, sonata_dict: dict) -> None:
+    """Inject sonata dict into RUNTIME_CONFIG in kernel_config.py."""
+    config_path = work_dir / "kernel_config.py"
+    if not config_path.exists():
+        return
+
+    content = config_path.read_text(encoding="utf-8")
+    marker = 'RUNTIME_CONFIG'
+    idx = content.find(marker)
+    if idx < 0:
+        return
+
+    # 找到 RUNTIME_CONFIG 块的闭合括号
+    brace_count = 0
+    close_idx = -1
+    for i in range(idx, len(content)):
+        if content[i] == "{":
+            brace_count += 1
+        elif content[i] == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                close_idx = i
+                break
+
+    if close_idx < 0:
+        return
+
+    # 使用 repr() 生成 Python 原生字面量
+    sonata_repr = repr(sonata_dict)
+    sonata_line = f'\t"sonata": {sonata_repr},\n'
+
+    # 插入到 RUNTIME_CONFIG 块中
+    new_content = content[:close_idx] + sonata_line + content[close_idx:]
+
+    # 原子写入：先写临时文件，再重命名
+    import tempfile
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(work_dir), prefix="kernel_config_", suffix=".py.tmp"
+    )
+    try:
+        os.write(fd, new_content.encode("utf-8"))
+        os.close(fd)
+        os.replace(tmp_path, str(config_path))
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        os.unlink(tmp_path)
+        raise</code></pre>
+
+<h2>提问：如何读取 RUNTIME_CONFIG？</h2>
+
+<p>读取过程由 <code>apply_sonata_runtime_hints()</code> 完成。这个函数返回一个 <code>SonataRuntimeHints</code> 对象，
+包含以下字段：</p>
+
+<ul>
+  <li><code>block_dim</code>：块维度（可能被 Sonata 建议值修改）</li>
+  <li><code>aicpu_thread_num</code>：AICPU 线程数（可能被 Sonata 建议值修改）</li>
+  <li><code>sonata_applied</code>：是否成功应用了 Sonata 建议</li>
+  <li><code>reason</code>：应用/未应用的原因（用于调试）</li>
+</ul>
+
+<p><code>_unchanged()</code> 是一个辅助函数，用于在无法应用 Sonata 建议时返回原始值：</p>
+
+<pre><code>def _unchanged(block_dim, aicpu_thread_num, reason):
+    """返回未修改的配置，记录原因。"""
+    return SonataRuntimeHints(
+        block_dim=block_dim,
+        aicpu_thread_num=aicpu_thread_num,
+        sonata_applied=False,
+        reason=reason,
+    )</code></pre>
+
+<p>完整的读取过程：</p>
+
+<pre><code>def _apply_from_kernel_config(config_path, block_dim, aicpu_thread_num, user_block_dim):
+    """Read RUNTIME_CONFIG["sonata"] from kernel_config.py."""
+    import importlib.util
+
+    # 加载 kernel_config.py 模块
+    spec = importlib.util.spec_from_file_location("_kc", str(config_path))
+    if spec is None or spec.loader is None:
+        return _unchanged(block_dim, aicpu_thread_num, "config_load_failed")
+
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # 读取 RUNTIME_CONFIG["sonata"]
+    sonata_raw = getattr(mod, "RUNTIME_CONFIG", {}).get("sonata")
+    if not sonata_raw:
+        return _unchanged(block_dim, aicpu_thread_num, "no_sonata_key")
+
+    # 解析 SonataRuntimeConfig
+    from .runtime_config import SonataRuntimeConfig
+    sonata_cfg = SonataRuntimeConfig.from_dict(sonata_raw)
+    if sonata_cfg is None:
+        return _unchanged(block_dim, aicpu_thread_num, "invalid_sonata_config")
+
+    if not sonata_cfg.eligible:
+        return _unchanged(block_dim, aicpu_thread_num, "plan_not_eligible")
+
+    # 用户显式指定 block_dim 时不覆盖
+    if user_block_dim is not None:
+        return _unchanged(block_dim, aicpu_thread_num, "user_supplied_block_dim")
+
+    # 应用建议值
+    new_block_dim = sonata_cfg.suggested_block_dim or block_dim
+    new_aicpu = sonata_cfg.suggested_aicpu_thread_num or aicpu_thread_num
+
+    return SonataRuntimeHints(
+        block_dim=new_block_dim,
+        aicpu_thread_num=new_aicpu,
+        sonata_applied=True,
+        reason="runtime_config_sonata",
+    )</code></pre>
+
+<h2>提问：完整的注入流程是什么？</h2>
+
+<div class="diagram">RUNTIME_CONFIG 注入流程:
+
+  ┌─────────────────────────────────────┐
+  │  sonata_compile(program, output_dir)│
+  │    ├─ pypto.ir.compile()            │
+  │    └─ sonata_analyze(certified_ir)  │
+  └──────────┬──────────────────────────┘
+             │
+             ▼
+  ┌─────────────────────────────────────┐
+  │  conftest compile hook              │
+  │    ├─ _patch_kernel_config_sonata() │
+  │    │   ├─ 读取 kernel_config.py     │
+  │    │   ├─ 找到 RUNTIME_CONFIG 块    │
+  │    │   ├─ 生成 sonata repr()        │
+  │    │   └─ 插入 sonata 字段          │
+  │    └─ 写入 sonata_plan.json         │
+  └──────────┬──────────────────────────┘
+             │
+             ▼
+  ┌─────────────────────────────────────┐
+  │  output_dir/kernel_config.py        │
+  │    └─ RUNTIME_CONFIG = {            │
+  │         "runtime": "sim",           │
+  │         "block_dim": 32,            │
+  │         "sonata": { ... }           │
+  │       }                             │
+  └──────────┬──────────────────────────┘
+             │
+             ▼
+  ┌─────────────────────────────────────┐
+  │  execute_with_sonata(output_dir)    │
+  │    ├─ apply_sonata_runtime_hints()  │
+  │    │   ├─ 尝试 sonata_plan.json     │
+  │    │   └─ 尝试 RUNTIME_CONFIG       │
+  │    └─ execute_compiled()            │
+  └─────────────────────────────────────┘</code></pre>
+
+<h2>提问：双源读取策略是什么？</h2>
+
+<p><code>apply_sonata_runtime_hints()</code> 使用双源读取策略：</p>
+
+<ol>
+  <li><strong>优先读取 <code>sonata_plan.json</code></strong> — 包含完整数据（Score、PlanHandle 等）</li>
+  <li><strong>回退到 <code>RUNTIME_CONFIG["sonata"]</code></strong> — 只包含调度提示（block_dim、aicpu_thread_num）</li>
+</ol>
+
+<pre><code>def _do_apply(work_dir, block_dim, aicpu_thread_num, user_block_dim):
+    plan_path = Path(work_dir) / "sonata_plan.json"
+    config_path = Path(work_dir) / "kernel_config.py"
+
+    # 策略 1: 读取 sonata_plan.json（优先 — 完整数据）
+    if plan_path.exists():
+        return _apply_from_plan_json(...)
+
+    # 策略 2: 读取 RUNTIME_CONFIG["sonata"]
+    if config_path.exists():
+        return _apply_from_kernel_config(...)
+
+    # 没有 Sonata 数据
+    return SonataRuntimeHints(
+        block_dim=block_dim,
+        aicpu_thread_num=aicpu_thread_num,
+        sonata_applied=False,
+        reason="no_sonata_data",
+    )</code></pre>
+
+<div class="callout info">
+  <strong>设计理由：</strong><code>sonata_plan.json</code> 包含完整的分析结果，适合需要详细信息的场景。
+  <code>RUNTIME_CONFIG["sonata"]</code> 只包含调度提示，适合轻量级场景。
+  双源读取确保在任何情况下都能获取 Sonata 分析结果。
+</div>
+
+<h2>提问：如何测试 RUNTIME_CONFIG 功能？</h2>
+
+<p>测试文件：<code>tests/sonata/test_runtime_config.py</code></p>
+
+<pre><code>def test_to_run_config_dict_eligible():
+    """Test to_run_config_dict with all fields present."""
+    config = SonataRuntimeConfig(
+        eligible=True,
+        task_count=5,
+        suggested_block_dim=64,
+        suggested_aicpu_thread_num=8,
+        memory_peak_bytes=1024000,
+        region_statuses={"region_0": "static"},
+        guard_count=2,
+        guard_symbols=("batch_size", "seq_len"),
+    )
+    d = config.to_run_config_dict()
+    assert d["eligible"] is True
+    assert d["task_count"] == 5
+    assert d["suggested_block_dim"] == 64
+    assert d["suggested_aicpu_thread_num"] == 8
+    assert d["memory_peak_bytes"] == 1024000
+    assert d["region_statuses"] == {"region_0": "static"}
+    assert d["guard_count"] == 2
+    assert d["guard_symbols"] == ["batch_size", "seq_len"]
+
+
+def test_from_dict_roundtrip():
+    """Test from_dict round-trip preserves data."""
+    config = SonataRuntimeConfig(
+        eligible=True,
+        task_count=5,
+        suggested_block_dim=64,
+    )
+    d = config.to_run_config_dict()
+    restored = SonataRuntimeConfig.from_dict(d)
+    assert restored is not None
+    assert restored.eligible == config.eligible
+    assert restored.task_count == config.task_count
+    assert restored.suggested_block_dim == config.suggested_block_dim
+
+
+def test_from_dict_invalid_type():
+    """Test from_dict returns None for non-dict."""
+    assert SonataRuntimeConfig.from_dict("not a dict") is None
+    assert SonataRuntimeConfig.from_dict(42) is None
+    assert SonataRuntimeConfig.from_dict(None) is None
+
+
+def test_from_dict_unknown_schema_version():
+    """Test from_dict returns None for version > current."""
+    d = {"schema_version": 999, "eligible": True, "task_count": 1}
+    assert SonataRuntimeConfig.from_dict(d) is None</code></pre>
+
+<h2>提问：当前有什么限制？</h2>
+
+<div class="callout warn">
+  <strong>限制：</strong>
+  <ul>
+    <li><code>RUNTIME_CONFIG["sonata"]</code> 只包含调度提示，不包含完整的 Score 数据</li>
+    <li>Guard 元数据（guard_count、guard_symbols）仅用于信息/日志，不执行运行时 guard 评估</li>
+    <li>如果 <code>kernel_config.py</code> 被重新生成，Sonata 注入会丢失（但 conftest hook 会重新注入）</li>
+    <li>原子写入使用临时文件+重命名，但不是所有文件系统都支持原子重命名</li>
+  </ul>
+</div>
+
+<div class="callout success">
+  <strong>总结：</strong>RUNTIME_CONFIG 注入是 v0.22 的核心功能，使得 Sonata 分析结果可以嵌入到
+  PyPTO 的 <code>kernel_config.py</code> 中。通过 <code>SonataRuntimeConfig</code> 数据类和
+  <code>repr()</code> 注入，实现了与 PyPTO 运行时系统的无缝集成。
+</div>
+
+<div class="nav">
+  <a href="index.html">返回索引</a>
+  &nbsp;|&nbsp;
+  <a href="11-pipeline.html"><span class="arrow">&larr;</span> 上一篇：Pipeline</a>
+  &nbsp;|&nbsp;
+  <a href="deep-01-score-model.html">Deep Dive：score.py 完整解析 &rarr;</a>
+</div>
+
+</body>
+</html>

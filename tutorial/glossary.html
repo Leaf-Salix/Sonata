@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonata 术语表</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+  .term { margin-bottom: 1.5em; }
+  .term h3 { color: #1f2937; margin-bottom: .3em; }
+  .term p { margin-top: .3em; }
+</style>
+</head>
+<body>
+
+<h1>Sonata 术语表</h1>
+
+<p>本术语表解释了 Sonata 和 PyPTO 中常用的术语，帮助你更好地理解教程内容。</p>
+
+<div class="callout info">
+  <strong>提示：</strong>你可以使用浏览器的搜索功能（Ctrl+F 或 Cmd+F）快速查找术语。
+</div>
+
+<div class="term">
+<h3>AICPU</h3>
+<p><strong>AI CPU</strong>（AI Central Processing Unit）是昇腾 NPU 片上负责运行时图调度的 CPU 核心。
+它在运行时负责分析依赖关系、决定执行顺序、分配和管理内存。</p>
+</div>
+
+<div class="term">
+<h3>AIC/AIV 核心</h3>
+<p><strong>AIC</strong>（AI Cube）和 <strong>AIV</strong>（AI Vector）是昇腾 NPU 上的计算核心，
+分别负责矩阵运算和向量运算。Sonata 的任务可以指定在 AIC 或 AIV 核心上执行。</p>
+</div>
+
+<div class="term">
+<h3>Block Dim</h3>
+<p>块维度，指 NPU 执行任务时的数据块大小。Sonata 可以建议最优的 block_dim 值。</p>
+</div>
+
+<div class="term">
+<h3>conftest</h3>
+<p>pytest 的配置文件，用于定义测试 fixtures、hooks 和插件。
+Sonata 使用 conftest.py 来注入 RUNTIME_CONFIG 和执行 compile hooks。</p>
+</div>
+
+<div class="term">
+<h3>DAG</h3>
+<p><strong>Directed Acyclic Graph</strong>（有向无环图），用于表示任务之间的依赖关系。
+Sonata 的 Score 包含一个 DAG，描述任务的执行顺序。</p>
+</div>
+
+<div class="term">
+<h3>Eligibility</h3>
+<p>资格检查，判断一个程序是否适合 Sonata 的静态调度。
+如果程序包含动态形状或复杂的控制流，可能不符合条件。</p>
+</div>
+
+<div class="term">
+<h3>Fallback</h3>
+<p>回退机制，当 Sonata 无法处理某个程序时，回退到 PyPTO 的默认动态调度。</p>
+</div>
+
+<div class="term">
+<h3>Fingerprint</h3>
+<p>指纹，用于唯一标识一个 Score。基于 Score 的内容计算哈希值，
+用于缓存和快速比较。如果两个 Score 的 fingerprint 相同，它们的内容也相同。</p>
+</div>
+
+<div class="term">
+<h3>Guard</h3>
+<p>守卫条件，用于验证 Sonata 的假设是否仍然成立。
+例如，如果 Sonata 假设输入张量的形状是固定的，guard 会在运行时检查这个假设。</p>
+</div>
+
+<div class="term">
+<h3>HostBuildGraph</h3>
+<p>PyPTO 的运行时表示，描述了在主机端构建的任务图。
+Sonata 生成的 Score 可以转换为 HostBuildGraph 格式。</p>
+</div>
+
+<div class="term">
+<h3>importlib</h3>
+<p>Python 的模块导入系统，用于动态加载 Python 模块。
+Sonata 使用 importlib 来加载 kernel_config.py 并读取 RUNTIME_CONFIG。</p>
+</div>
+
+<div class="term">
+<h3>IR</h3>
+<p><strong>Intermediate Representation</strong>（中间表示），编译器领域的术语，
+指源代码和机器码之间的中间形式。在 PyPTO 中，IR 是模型的图形表示，
+包含了所有的计算操作和依赖关系。</p>
+</div>
+
+<div class="term">
+<h3>kernel_config.py</h3>
+<p>PyPTO 生成的配置文件，包含 RUNTIME_CONFIG 字典。
+Sonata 可以将分析结果注入到这个文件的 RUNTIME_CONFIG["sonata"] 字段中。</p>
+</div>
+
+<div class="term">
+<h3>Memory Plan</h3>
+<p>内存规划，Sonata 分析程序的内存使用模式，生成最优的内存分配方案。</p>
+</div>
+
+<div class="term">
+<h3>NPU</h3>
+<p><strong>Neural Processing Unit</strong>（神经网络处理器），专门用于加速深度学习计算的硬件。
+PyPTO 和 Sonata 都是面向昇腾 NPU 的。</p>
+</div>
+
+<div class="term">
+<h3>Pass Pipeline</h3>
+<p>编译器的优化通道，对 IR 进行一系列转换和优化。
+PyPTO 的 pass pipeline 包含多个优化步骤，Sonata 在 Simplify pass 之后提取 IR。</p>
+</div>
+
+<div class="term">
+<h3>Pipeline</h3>
+<p>Sonata 的顶层 API，提供一站式分析入口。
+包括 sonata_analyze()、sonata_compile()、execute_with_sonata() 等函数。</p>
+</div>
+
+<div class="term">
+<h3>PyPTO</h3>
+<p>面向昇腾 NPU 的深度学习编译框架。
+Sonata 是 PyPTO 的可选增强，不修改 PyPTO 的核心代码。</p>
+</div>
+
+<div class="term">
+<h3>Region</h3>
+<p>区域，Sonata 将程序划分为多个区域，每个区域可以独立分析和优化。
+静态区域适合 Sonata 优化，动态区域保持 PyPTO 的默认行为。</p>
+</div>
+
+<div class="term">
+<h3>RegionTree</h3>
+<p>区域树，Sonata 的层次化区域管理结构。
+支持嵌套区域和 per-region 缓存。</p>
+</div>
+
+<div class="term">
+<h3>RUNTIME_CONFIG</h3>
+<p>PyPTO 的运行时配置字典，定义在 kernel_config.py 中。
+包含 runtime、block_dim、aicpu_thread_num 等字段。
+Sonata 可以注入 sonata 字段来传递分析结果。</p>
+</div>
+
+<div class="term">
+<h3>Schedule Contract</h3>
+<p>调度契约，Sonata 的目标产物。
+描述了程序的静态执行计划，可以被运行时系统消费。</p>
+</div>
+
+<div class="term">
+<h3>Score</h3>
+<p>Sonata 的核心产物——一个编译时提取的静态执行计划。
+包含 tasks、dependencies、shape_assumptions 等字段。</p>
+</div>
+
+<div class="term">
+<h3>ScoreCache</h3>
+<p>Score 缓存，基于 fingerprint 缓存 Score，避免重复分析。</p>
+</div>
+
+<div class="term">
+<h3>simpler</h3>
+<p>PyPTO 的运行时包，包含平台后端（a2a3/a5）。
+simpler 在执行编译产物时会读取 RUNTIME_CONFIG。</p>
+</div>
+
+<div class="term">
+<h3>SonataAnalysisResult</h3>
+<p>Sonata 分析的结果，包含 eligibility、score、region_tree、plan_handle 等字段。</p>
+</div>
+
+<div class="term">
+<h3>SonataRuntimeConfig</h3>
+<p>Sonata 运行时配置的数据类，用于嵌入到 RUNTIME_CONFIG["sonata"] 中。
+包含 eligible、task_count、suggested_block_dim 等字段。</p>
+</div>
+
+<div class="term">
+<h3>Storage</h3>
+<p>存储，Sonata 分析程序的内存存储模式，包括别名分析和生命周期分析。</p>
+</div>
+
+<div class="term">
+<h3>TensorMap</h3>
+<p>PyPTO 的运行时依赖发现机制，自动管理张量之间的依赖关系。
+Sonata 的静态调度可以替代 TensorMap 的动态发现。</p>
+</div>
+
+<div class="callout success">
+  <strong>建议：</strong>如果你在教程中遇到不熟悉的术语，可以随时回到这个术语表查阅。
+</div>
+
+<div class="nav">
+  <a href="index.html">返回索引</a>
+  &nbsp;|&nbsp;
+  <a href="00-overview.html"><span class="arrow">&larr;</span> Tutorial 0: Sonata 是什么？</a>
+</div>
+
+</body>
+</html>

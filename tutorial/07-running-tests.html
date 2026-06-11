@@ -68,6 +68,9 @@ PYTHONPATH=src:upstream/pypto/python python -m pytest tests/sonata tests/pypto_c
 │   ├── test_regions.py               ← Region/RegionTree 测试（v0.4-v0.11）
 │   ├── test_regions_v011.py          ← RegionTree 新增测试（v0.11）
 │   ├── test_runtime_adapter.py       ← HostBuildGraphRuntimeAdapter 测试
+│   ├── test_runtime_config.py        ← RUNTIME_CONFIG 测试（v0.22 新增）
+│   ├── test_runtime_config_patch.py  ← kernel_config.py patch 测试（v0.22 新增）
+│   ├── test_runtime_hook.py          ← Runtime hook 测试（v0.22 新增）
 │   ├── test_score.py                 ← Score 数据模型测试
 │   ├── test_serialization.py         ← 序列化与 fingerprint 测试
 │   ├── test_storage.py               ← Storage key 测试
@@ -155,7 +158,7 @@ def test_score_validate_rejects_unknown_dependency_target():
   <tr>
     <td>⚠️ per-region Score 提取为 placeholder</td>
     <td>check_region_eligibility 中的 per-region Score 目前是空占位（空 tasks/dependencies）</td>
-    <td>❌ 尚未实现真实提取，v0.13+ 规划</td>
+    <td>❌ 尚未实现真实提取，v0.23+ 规划</td>
   </tr>
 </table>
 
@@ -185,6 +188,18 @@ def test_score_validate_rejects_unknown_dependency_target():
   <tr><td>RegionTree 层次化区域管理</td><td><span class="badge done">已完成</span></td><td>v0.11</td></tr>
   <tr><td>GuardEvaluator 区域级评估</td><td><span class="badge done">已完成</span></td><td>v0.11</td></tr>
   <tr><td>内存约束求解器 (ConstraintSolver)</td><td><span class="badge done">已完成</span></td><td>v0.11</td></tr>
+  <tr><td>Pipeline 一站式入口 (sonata_analyze/compile/execute)</td><td><span class="badge done">已完成</span></td><td>v0.12</td></tr>
+  <tr><td>性能优化（消除双倍编译）</td><td><span class="badge done">已完成</span></td><td>v0.13</td></tr>
+  <tr><td>DependencyKind enum</td><td><span class="badge done">已完成</span></td><td>v0.13</td></tr>
+  <tr><td>Runtime Integration (block_dim)</td><td><span class="badge done">已完成</span></td><td>v0.14</td></tr>
+  <tr><td>更深运行时集成 (memory hints, scheduling)</td><td><span class="badge done">已完成</span></td><td>v0.15</td></tr>
+  <tr><td>更广 pypto-lib 覆盖 (SPMD/LLM)</td><td><span class="badge done">已完成</span></td><td>v0.16</td></tr>
+  <tr><td>Production Readiness</td><td><span class="badge done">已完成</span></td><td>v0.17</td></tr>
+  <tr><td>Runtime hook + per-region eligibility</td><td><span class="badge done">已完成</span></td><td>v0.18</td></tr>
+  <tr><td>CI/CD + Production Hardening</td><td><span class="badge done">已完成</span></td><td>v0.19</td></tr>
+  <tr><td>Survey Findings Landing</td><td><span class="badge done">已完成</span></td><td>v0.20</td></tr>
+  <tr><td>Runtime integration tests</td><td><span class="badge done">已完成</span></td><td>v0.21</td></tr>
+  <tr><td>RUNTIME_CONFIG 注入 + 双源 hook</td><td><span class="badge done">已完成</span></td><td>v0.22</td></tr>
 </table>
 
 <!-- ===== 你可以做什么 ===== -->
@@ -209,6 +224,14 @@ def test_score_validate_rejects_unknown_dependency_target():
     <td>查看设计决策历史</td>
     <td>阅读 <code>reports/roadmap_history.md</code></td>
   </tr>
+  <tr>
+    <td>测试 RUNTIME_CONFIG 功能</td>
+    <td><code>PYTHONPATH=src python -m pytest tests/sonata/test_runtime_config.py -v</code></td>
+  </tr>
+  <tr>
+    <td>测试 runtime hook</td>
+    <td><code>PYTHONPATH=src python -m pytest tests/sonata/test_runtime_hook.py -v</code></td>
+  </tr>
 </table>
 
 <h3>技术栈速查</h3>
@@ -217,13 +240,13 @@ def test_score_validate_rejects_unknown_dependency_target():
   <tr><th>组件</th><th>说明</th></tr>
   <tr><td>语言</td><td>Python 3.11+，纯 Python，零外部依赖</td></tr>
   <tr><td>测试框架</td><td>pytest</td></tr>
-  <tr><td>代码量</td><td>src/sonata/: ~3500 行 | tests/: ~6000 行 | 500+ 测试全部通过</td></tr>
+  <tr><td>代码量</td><td>src/sonata/: ~4000 行 | tests/: ~8000 行 | 792+ 测试全部通过</td></tr>
 </table>
 
 <div class="callout info">
-  <strong>总结：</strong>Sonata v0.0-v0.11 已完成完整的静态计划体系——Score 数据模型、Guard 条件系统、
-  RegionTree 层次化区域管理、内存约束求解、Score 缓存。500+ 测试全部通过。
-  下一步是端到端 benchmark 和 PyPTO 主线合入。
+  <strong>总结：</strong>Sonata v0.0-v0.22 已完成完整的静态计划体系——Score 数据模型、Guard 条件系统、
+  RegionTree 层次化区域管理、内存约束求解、Score 缓存、RUNTIME_CONFIG 注入、端到端运行时验证。
+  792+ 测试全部通过。下一步是 Schedule Contract。
   继续阅读 <a href="08-region-tree.html">Tutorial 8: RegionTree</a>、
   <a href="09-guards.html">Tutorial 9: Guard 系统</a>、
   <a href="10-memory-planning.html">Tutorial 10: 内存规划</a> 了解 v0.11 新功能。
