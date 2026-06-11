@@ -279,6 +279,7 @@ class SonataAnalysisResult:
             region_statuses=dict(self.region_statuses),
             guard_count=guard_count,
             guard_symbols=guard_symbols,
+            schedule_path=getattr(self, "schedule_path", None),
         )
 
     def save(self, path: str | Path) -> Path:
@@ -543,7 +544,7 @@ def _write_bound_schedule(
     Fail-open: any error logs a warning but does not raise.
     """
     from .schedule import build_schedule
-    from .binding import bind_func_ids
+    from .binding import bind_func_ids, bind_runtime_slots
 
     schedule = build_schedule(result.score, result)
 
@@ -560,12 +561,28 @@ def _write_bound_schedule(
         bound_schedule = schedule
         _region_log.info("[SONATA] binding skipped: no func_name_to_id from codegen")
 
+    # Attempt to bind runtime_slots (positional tensor/scalar from kernel_config)
+    try:
+        tensor_names, scalar_names = _extract_arg_names(compiled)
+        if tensor_names or scalar_names:
+            bound_schedule, r2 = bind_runtime_slots(bound_schedule, tensor_names, scalar_names)
+            if r2:
+                _region_log.info(
+                    "[SONATA] slot binding: %d unresolved (left as None)",
+                    len(r2),
+                )
+    except Exception as exc:
+        _region_log.debug("[SONATA] slot binding skipped: %s", exc)
+
     path = work_dir / "sonata_schedule.json"
     bound_schedule.write_json(path)
     _region_log.info(
         "[SONATA] bound schedule written: %s (tasks=%d, regions=%d)",
         path, _safe_task_count(bound_schedule), len(bound_schedule.regions),
     )
+
+    # Store schedule_path on result for to_runtime_config() to emit
+    result.schedule_path = str(path.relative_to(work_dir)) if path.is_relative_to(work_dir) else str(path)
 
 
 def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
@@ -638,6 +655,37 @@ def _extract_via_kernel_config(compiled):
         if isinstance(k, dict) and "name" in k and "func_id" in k:
             result[str(k["name"])] = int(k["func_id"])
     return result if result else None
+
+
+def _extract_arg_names(compiled: Any) -> tuple[list[str], list[str]]:
+    """Extract tensor and scalar arg names from compiled output.
+
+    Reads ``kernel_config.py``'s ``MUTABLE_PARAMS`` or ``PARAMS`` to
+    determine the positional order of function parameters. Tensor args
+    come before scalar args, matching codegen's ``std::stable_partition``.
+    Returns ``([], [])`` when the source is unavailable (fail-open).
+    """
+    output_dir = getattr(compiled, "output_dir", None) or getattr(compiled, "_output_dir", None)
+    if output_dir is None:
+        return [], []
+    kc_path = Path(output_dir) / "kernel_config.py"
+    if not kc_path.exists():
+        return [], []
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_kc_args", str(kc_path))
+        if spec is None or spec.loader is None:
+            return [], []
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        params = getattr(mod, "MUTABLE_PARAMS", None) or getattr(mod, "PARAMS", None)
+        if params and isinstance(params, (list, tuple)):
+            tensors = [p["name"] for p in params if p.get("direction", "") != "scalar"]
+            scalars = [p["name"] for p in params if p.get("direction", "") == "scalar"]
+            return tensors, scalars
+    except Exception:
+        pass
+    return [], []
 
 
 def _safe_task_count(schedule: Any) -> int:
