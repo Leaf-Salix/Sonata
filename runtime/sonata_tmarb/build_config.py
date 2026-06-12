@@ -11,6 +11,17 @@
 UPSTREAM_TMARB = "../../upstream/pypto/runtime/src/a2a3/runtime/tensormap_and_ringbuffer"
 
 BUILD_CONFIG = {
+    "aicore": {
+        "include_dirs": [
+            f"{UPSTREAM_TMARB}/runtime",
+            f"{UPSTREAM_TMARB}/orchestration",
+            f"{UPSTREAM_TMARB}/aicore",
+            "../../upstream/pypto/runtime/src/common",
+        ],
+        "source_dirs": [
+            f"{UPSTREAM_TMARB}/aicore",
+        ],
+    },
     "aicpu": {
         "include_dirs": [
             f"{UPSTREAM_TMARB}/runtime",

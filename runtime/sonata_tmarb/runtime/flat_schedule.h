@@ -14,7 +14,7 @@
 
 struct FlatArg {
     int32_t runtime_slot;
-    int16_t direction;  // 0=input, 1=output, 2=inout, 3=nodep, 4=scalar
+    int16_t direction;  // 0=input, 1=output, 2=inout, 3=nodep, 4=scalar, 5=outputexisting
 };
 
 struct FlatTask {

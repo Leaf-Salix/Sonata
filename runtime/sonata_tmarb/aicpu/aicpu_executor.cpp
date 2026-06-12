@@ -38,13 +38,13 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs, Arg& arg) {
 // ── Set dependencies from FlatDep list ──
 
 static void set_deps(const FlatTask* ftask, const FlatDep* fdeps,
-                     const PTO2TaskId* task_ids, Arg& arg) {
-    if (ftask->dep_count == 0) return;
+                     const PTO2TaskId* task_ids, int32_t num_submitted, Arg& arg) {
+    if (ftask->dep_count == 0 || task_ids == nullptr) return;
     PTO2TaskId deps[64];
     uint32_t count = 0;
     for (int32_t i = 0; i < ftask->dep_count && count < 64; i++) {
         const FlatDep& fd = fdeps[ftask->dep_start + i];
-        if (fd.producer >= 0) {
+        if (fd.producer >= 0 && fd.producer < num_submitted) {
             deps[count++] = task_ids[fd.producer];
         }
     }
@@ -57,32 +57,33 @@ static void set_deps(const FlatTask* ftask, const FlatDep* fdeps,
 
 static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                                 const FlatRegion* regions, const FlatTask* tasks,
-                                const FlatArg* args, const FlatDep* deps) {
+                                const FlatArg* args, const FlatDep* fdeps) {
 
     for (int32_t r = 0; r < sched->num_regions; r++) {
         const FlatRegion& rg = regions[r];
 
         if (rg.kind == 1) {
-            // Dynamic region — TensorMap auto-dependency
-            rt_scope_begin(rt, PTO2ScopeMode::AUTO);
+            rt->pending_scope_mode = PTO2ScopeMode::AUTO;
+            rt_scope_begin(rt);
             rt_scope_end(rt);
             continue;
         }
 
         // Static region — explicit tasks + deps
-        PTO2ScopeMode scope = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
-        rt_scope_begin(rt, scope);
+        rt->pending_scope_mode = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
+        rt_scope_begin(rt);
 
-        // Flat arg layout for this region: args[rg.task_start .. rg.task_start + rg.num_tasks]
-        // Each task has num_args consecutive entries in the args array.
-        int32_t arg_cursor = rg.task_start;  // approximate; actual arg index computed per task
+        // Capture PTO2TaskId for dependency resolution
+        PTO2TaskId task_ids[16384];
+        int32_t num_submitted = 0;
+        int32_t arg_cursor = 0;  // running offset into flat arg array
 
         for (int32_t t = 0; t < rg.num_tasks; t++) {
             const FlatTask& ft = tasks[rg.task_start + t];
             Arg submit_arg;
 
             build_arg(&ft, &args[arg_cursor], submit_arg);
-            set_deps(&ft, deps, nullptr, submit_arg);
+            set_deps(&ft, fdeps, task_ids, num_submitted, submit_arg);
 
             TaskOutputTensors result;
             if (ft.core_type == 1) {
@@ -97,6 +98,7 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                 result = rt_submit_aic_task(ft.func_id, submit_arg);
             }
 
+            task_ids[num_submitted++] = result.task_id();
             arg_cursor += ft.num_args;
         }
 
@@ -150,10 +152,9 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
 
     // ── Parse flat schedule ──
     auto* regions = reinterpret_cast<const FlatRegion*>(flat_sched + 1);
-    int32_t total_tasks = 0, total_deps = 0;
+    int32_t total_tasks = 0;
     for (int32_t i = 0; i < flat_sched->num_regions; i++) {
         total_tasks += regions[i].num_tasks;
-        total_deps += regions[i].num_deps;
     }
 
     auto* tasks = reinterpret_cast<const FlatTask*>(regions + flat_sched->num_regions);
@@ -163,9 +164,6 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
     // ── Run interpreter ──
     interpret_schedule(rt, flat_sched, regions, tasks, args, deps);
     rt_orchestration_done(rt);
-
-    // Signal the scheduler that orchestration is complete
-    rt->sm_handle->header->orchestrator_done.store(1, std::memory_order_release);
 
     return 0;
 }

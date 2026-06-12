@@ -407,7 +407,7 @@ class SonataScheduleContract:
         import struct
 
         # Direction → int16
-        _DIR = {"input": 0, "output": 1, "inout": 2, "nodep": 3, "no_dep": 3, "scalar": 4}
+        _DIR = {"input": 0, "output": 1, "inout": 2, "nodep": 3, "no_dep": 3, "scalar": 4, "outputexisting": 5}
         # Core type → int16
         _CORE = {"aic": 0, "aiv": 1, "mixed": 2}
 
@@ -459,7 +459,7 @@ class SonataScheduleContract:
     @classmethod
     def from_binary(cls, data: bytes) -> "SonataScheduleContract":
         import struct
-        _DIR = {0: "input", 1: "output", 2: "inout", 3: "nodep", 4: "scalar"}
+        _DIR = {0: "input", 1: "output", 2: "inout", 3: "nodep", 4: "scalar", 5: "outputexisting"}
         _CORE = {0: "aic", 1: "aiv", 2: "mixed"}
         if len(data) < 72: raise ValueError("too short")
         magic, nr = struct.unpack_from("<ii", data, 0)
@@ -470,8 +470,8 @@ class SonataScheduleContract:
 
         meta, off = [], 72
         for _ in range(nr):
-            rk, _sc, _ts, tn, _ds, dn = struct.unpack_from("<iiiiii", data, off)
-            meta.append({"kind": rk, "num_tasks": tn, "num_deps": dn})
+            rk, sc, _ts, tn, _ds, dn = struct.unpack_from("<iiiiii", data, off)
+            meta.append({"kind": rk, "scope": sc, "num_tasks": tn, "num_deps": dn})
             off += rs
 
         # Read task nargs from the task array (starts after all region headers)
@@ -506,7 +506,7 @@ class SonataScheduleContract:
                 p, c = struct.unpack_from("<ii", data, dp)
                 deps.append(ScheduleDep(producer=p, consumer=c))
                 dp += ds
-            regions.append(ScheduledRegion(region_id=f"r{i}", kind="static" if m["kind"] == 0 else "dynamic", dynamic_mode=None if m["kind"] == 0 else "backend_dynamic", tasks=tuple(tasks), deps=tuple(deps)))
+            regions.append(ScheduledRegion(region_id=f"r{i}", kind="static" if m["kind"] == 0 else "dynamic", dynamic_mode=None if m["kind"] == 0 else "backend_dynamic", scope_mode=ScopeMode.AUTO if m.get("scope", 0) == 0 else ScopeMode.MANUAL, tasks=tuple(tasks), deps=tuple(deps)))
         return cls(fingerprint=fp, regions=tuple(regions))
 
 
