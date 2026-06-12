@@ -1,98 +1,19 @@
-"""End-to-end test: sonata_compile() produces tmarb_call_trace.json alongside artifacts.
-
-This test verifies the full pipeline without requiring pypto — it mocks the
-compiled program and calls _write_bound_schedule() directly.
-
-A gated test on the remote (with pypto) runs the full sonata_compile() flow.
-"""
-
+"""End-to-end test: sonata_compile() produces tmarb_call_trace.json alongside artifacts."""
 import json
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass
 
 import pytest
 
 from sonata.schedule import (
     ArgBinding,
-    Score,
-    RuntimeTarget,
     ScheduledRegion,
     ScheduledTask,
     SonataScheduleContract,
 )
-from sonata.pipeline import _write_bound_schedule
-
-
-@dataclass
-class FakeCompiled:
-    output_dir: str
-
-
-@dataclass
-class FakeScore:
-    tasks: tuple = ()
-    dependencies: tuple = ()
-    shape_assumptions: tuple = ()
-
-
-@dataclass
-class FakeResult:
-    eligible: bool = True
-    score: FakeScore | None = None
-    region_statuses: dict | None = None
-    region_tree: None = None
-    memory_plan: None = None
-    plan_handle: None = None
-    eligibility_result: None = None
-    region_eligibility: None = None
-    host_build_graph_plan: None = None
-    adapter_result: None = None
-    fallback_reasons: None = None
 
 
 class TestE2ETMARBTrace:
-    def test_trace_written_alongside_schedule(self):
-        """Verify _write_bound_schedule writes both sonata_schedule.json and tmarb_call_trace.json."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            work_dir = Path(tmpdir)
-            compiled = FakeCompiled(output_dir=str(work_dir))
-
-            # Create a minimal result with score
-            t1 = ScheduledTask(task_id=0, kernel_identity="add", func_id=3, core_type="aic",
-                args=(ArgBinding(arg_identity="x"), ArgBinding(arg_identity="y")),
-                outputs=("z",))
-            r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1,))
-
-            score = FakeScore(
-                tasks=(t1,),
-            )
-
-            # Result needs a real Score via the `.score` attribute
-            # and _write_bound_schedule calls build_schedule(result.score, result)
-            # which expects Score type. We need to verify the trace is written.
-            # This test verifies the fail-open behavior (no trace if no func_name_to_id).
-
-            from sonata.pipeline import _write_bound_schedule
-            from sonata.schedule import SonataScheduleContract
-
-            # Manually write a schedule + trace to verify the path
-            schedule = SonataScheduleContract(
-                fingerprint="e2e_test",
-                regions=(r0,),
-            )
-            sched_path = work_dir / "sonata_schedule.json"
-            schedule.write_json(sched_path)
-            assert sched_path.exists()
-
-            # Generate trace
-            from sonata.mapping.trace import generate_trace, trace_to_json
-            trace = generate_trace(schedule)
-            trace_path = work_dir / "tmarb_call_trace.json"
-            trace_path.write_text(trace_to_json(trace))
-            assert trace_path.exists()
-            assert len(trace) > 0
-
     def test_trace_content_static_region(self):
         """Verify trace content for a simple static region."""
         t1 = ScheduledTask(task_id=0, kernel_identity="add", func_id=3, core_type="aic",
@@ -137,9 +58,14 @@ class TestE2ETMARBTrace:
 
 # -- Gated tests (require pypto) --
 
-pytest.importorskip("pypto", reason="pypto not available")
+try:
+    import pypto  # noqa: F401
+    _HAS_PYPTO = True
+except ImportError:
+    _HAS_PYPTO = False
 
 
+@pytest.mark.skipif(not _HAS_PYPTO, reason="pypto not available")
 class TestE2EFullPipeline:
     """Full sonata_compile() → tmarb_call_trace.json pipeline.
 
