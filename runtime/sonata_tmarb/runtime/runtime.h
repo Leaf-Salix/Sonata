@@ -5,67 +5,66 @@
 #include <cstddef>
 #include <vector>
 #include <string>
-#include <map>
 
-#include "runtime.h"  // TMARB Runtime struct — provides ring buffers, TensorMap, scheduler
+#include "runtime.h"          // TMARB Runtime struct
 #include "pto_shared_memory.h"
-#include "pto_tensormap.h"
-#include "pto_orchestrator.h"
-#include "pto_constants.h"
+#include "pto_runtime2.h"
+#include "pto_runtime2_types.h"
 
-namespace sonata {
-namespace tmarb {
+namespace sonata { namespace tmarb {
 
-// ── Schedule data structures (deserialized from sonata_schedule.json) ──
+constexpr int32_t INVALID_FUNC_ID = -1;
+
+// ── Schedule data (deserialized from sonata_schedule.json) ──
 
 struct ScheduledArg {
     std::string arg_identity;
-    int32_t runtime_slot;
-    std::string direction;  // "input", "output", "inout", etc.
+    int32_t runtime_slot = -1;
+    std::string direction = "input";
 };
 
 struct ScheduledTask {
-    int32_t task_id;
-    int32_t func_id;  // -1 = unbound
-    std::string core_type;  // "aic", "aiv", "mixed"
+    int32_t task_id = 0;
+    int32_t func_id = INVALID_FUNC_ID;
+    std::string core_type = "aic";
     std::vector<ScheduledArg> args;
 };
 
 struct ScheduleDep {
-    int32_t producer;
-    int32_t consumer;
-    std::string kind;
+    int32_t producer = 0;
+    int32_t consumer = 0;
+    std::string kind = "data";
 };
 
 struct ScheduledRegion {
     std::string region_id;
-    std::string kind;        // "static", "dynamic"
-    std::string scope_mode;  // "auto", "manual"
+    std::string kind = "static";
+    std::string scope_mode = "auto";
     std::vector<ScheduledTask> tasks;
     std::vector<ScheduleDep> deps;
 };
 
-// ── Sonata TMARB runtime state ──
+// ── Shared memory layout for schedule data ──
 
-struct SonataRuntime {
-    // Schedule data (loaded once by host, read by AICPU)
-    std::vector<ScheduledRegion> regions;
-    std::string fingerprint;
-
-    // TMARB runtime infrastructure (shared memory, tensormap, allocator)
-    void* sm_ptr;
-    size_t sm_size;
-    void* gm_heap;
-    size_t heap_size;
-    PTO2Runtime* rt;  // Created via runtime_create_from_sm()
-
-    // Orchestrator state (used by interpreter loop)
-    PTO2OrchestratorState* orch;
-    int32_t current_region_idx;
-    bool orchestration_done;
+struct SonataScheduleHeader {
+    uint32_t num_regions;
+    uint32_t total_tasks;
+    uint32_t total_deps;
+    uint64_t schedule_data_offset;  // offset from this header to serialized data
+    char fingerprint[64];
 };
 
-}  // namespace tmarb
-}  // namespace sonata
+// ── Host-side schedule storage (allocated in GM, read by AICPU) ──
 
-#endif  // SONATA_TMARB_RUNTIME_H
+struct SonataRuntime {
+    SonataScheduleHeader* header = nullptr;  // points into GM shared memory
+    void* schedule_data = nullptr;           // raw serialized schedule bytes
+    void* sm_ptr = nullptr;
+    size_t sm_size = 0;
+    void* gm_heap = nullptr;
+    size_t heap_size = 0;
+};
+
+}}  // namespace sonata::tmarb
+
+#endif
