@@ -6,37 +6,35 @@
 # scope, scheduler) but replaces the on-device orchestration .so with a
 # schedule-driven interpreter loop.
 #
-# All paths are relative to this file's directory.
+# All paths are relative to this file's directory (sonata_tmarb/).
+
+UPSTREAM_TMARB = "../../upstream/pypto/runtime/src/a2a3/runtime/tensormap_and_ringbuffer"
 
 BUILD_CONFIG = {
-    "aicore": {
-        "include_dirs": [
-            "../tensormap_and_ringbuffer/runtime",
-            "../tensormap_and_ringbuffer/orchestration",
-            "../tensormap_and_ringbuffer/aicore",
-            "../../common",
-        ],
-        "source_dirs": ["aicore"],
-    },
     "aicpu": {
         "include_dirs": [
-            "../tensormap_and_ringbuffer/runtime",
-            "../tensormap_and_ringbuffer/orchestration",
-            "../tensormap_and_ringbuffer/aicpu",
-            "../tensormap_and_ringbuffer/runtime/scheduler",
-            "../tensormap_and_ringbuffer/runtime/shared",
-            "../tensormap_and_ringbuffer/runtime/backend",
-            "../../common",
+            f"{UPSTREAM_TMARB}/runtime",
+            f"{UPSTREAM_TMARB}/orchestration",
+            f"{UPSTREAM_TMARB}/aicpu",
+            f"{UPSTREAM_TMARB}/runtime/scheduler",
+            f"{UPSTREAM_TMARB}/runtime/shared",
+            f"{UPSTREAM_TMARB}/runtime/backend",
+            "../../upstream/pypto/runtime/src/common",
+            "runtime",
         ],
-        "source_dirs": ["aicpu", "../tensormap_and_ringbuffer/runtime"],
+        "source_dirs": [
+            "aicpu",
+            f"{UPSTREAM_TMARB}/runtime",
+        ],
     },
     "host": {
         "include_dirs": [
-            "../tensormap_and_ringbuffer/runtime",
-            "../tensormap_and_ringbuffer/orchestration",
-            "../tensormap_and_ringbuffer/host",
-            "../tensormap_and_ringbuffer/runtime/shared",
-            "../../common",
+            f"{UPSTREAM_TMARB}/runtime",
+            f"{UPSTREAM_TMARB}/orchestration",
+            f"{UPSTREAM_TMARB}/host",
+            f"{UPSTREAM_TMARB}/runtime/shared",
+            "../../upstream/pypto/runtime/src/common",
+            "runtime",
         ],
         "source_dirs": ["host"],
     },
