@@ -114,7 +114,7 @@ class TestBuildSchedule:
         assert c.regions[0].region_id == "r0"
         assert c.regions[1].kind == "dynamic"
         assert c.regions[1].region_id == "r1"
-        assert c.regions[1].mode == "backend_dynamic"
+        assert c.regions[1].dynamic_mode == "backend_dynamic"
 
     def test_boundary_between_static_and_dynamic(self):
         t1 = _task(0, func_id=1, core_type="aic", storage_keys=["x"], outputs=["intermediate"])
@@ -157,7 +157,7 @@ class TestBuildSchedule:
         result = FakeSonataAnalysisResult()
         c = build_schedule(score, result)
         assert c.schema_version == SONATA_SCHEDULE_SCHEMA_VERSION
-        assert c.runtime_contract == "sonata_schedule_v1"
+        assert c.runtime_contract == "sonata_schedule_v2"
 
     def test_arg_identity_fallback_when_no_storage_keys(self):
         t1 = _task(0, func_id=1, core_type="aic", args=[1.0, 2.0])

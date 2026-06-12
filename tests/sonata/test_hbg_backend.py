@@ -40,7 +40,7 @@ class TestHBGScheduleBackend:
         assert result.plan.edge_count() == 1
 
     def test_consume_dynamic_only(self):
-        r = ScheduledRegion(region_id="r0", kind="dynamic", mode="backend_dynamic")
+        r = ScheduledRegion(region_id="r0", kind="dynamic", dynamic_mode="backend_dynamic")
         c = SonataScheduleContract(fingerprint="fp", regions=(r,))
         result = HBGScheduleBackend().consume(c)
         assert result.success
@@ -50,7 +50,7 @@ class TestHBGScheduleBackend:
     def test_consume_mixed_regions(self):
         t = ScheduledTask(task_id=0, kernel_identity="k", func_id=1, core_type="aic", outputs=("y",))
         r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t,))
-        r1 = ScheduledRegion(region_id="r1", kind="dynamic", mode="backend_dynamic")
+        r1 = ScheduledRegion(region_id="r1", kind="dynamic", dynamic_mode="backend_dynamic")
         c = SonataScheduleContract(fingerprint="fp", regions=(r0, r1))
         result = HBGScheduleBackend().consume(c)
         assert result.success

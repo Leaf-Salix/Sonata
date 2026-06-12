@@ -28,6 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from .directions import normalize_direction
 from .score import Score
 from .serialization import score_fingerprint as _score_fingerprint
 
@@ -36,8 +37,43 @@ if TYPE_CHECKING:
 
 _log = _logging.getLogger("sonata.schedule")
 
-SONATA_SCHEDULE_SCHEMA_VERSION = 1
-RUNTIME_CONTRACT = "sonata_schedule_v1"
+SONATA_SCHEDULE_SCHEMA_VERSION = 2
+RUNTIME_CONTRACT = "sonata_schedule_v2"
+
+
+class ArgDirection(Enum):
+    """Direction of a tensor or scalar argument in a task.
+
+    Maps 1:1 to TMARB ``TensorArgType`` and ``Arg::add_*()`` methods.
+    Values are canonicalized to match ``normalize_direction()`` output.
+    """
+    INPUT = "input"
+    OUTPUT = "output"
+    INOUT = "inout"
+    OUTPUT_EXISTING = "outputexisting"
+    NO_DEP = "nodep"
+    SCALAR = "scalar"
+
+
+class ScopeMode(Enum):
+    """Intent declaration for TMARB ``PTO2_SCOPE`` mode.
+
+    ``AUTO``: TensorMap + explicit deps coexist (default).
+    ``MANUAL``: explicit deps only.
+    """
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
+@dataclass(frozen=True)
+class MixedKernels:
+    """AIC + AIV kernel IDs for a Group task.
+
+    Maps to TMARB ``MixedKernels{aic_id, aiv_id, dual_aiv_id}``.
+    """
+    aic_func_id: int
+    aiv_func_id: int
+    dual_aiv_func_id: int | None = None
 
 
 class FallbackPolicy(Enum):
@@ -73,12 +109,13 @@ class ScheduleGuard:
 class ArgBinding:
     """Late-bound argument identity in a schedule task.
 
-    Sonata identity (stable logical name) is separate from codegen-assigned
-    ``runtime_slot`` (nullable until v0.24 binding).
+    ``direction`` (v0.25) tells the TMARB consumer how to dispatch:
+    ``INPUT`` → ``add_input``, ``OUTPUT`` → ``add_output(ci)``, etc.
     """
 
     arg_identity: str
     runtime_slot: int | None = None
+    direction: ArgDirection = ArgDirection.INPUT
 
 
 @dataclass(frozen=True)
@@ -92,6 +129,7 @@ class ScheduledTask:
     args: tuple[ArgBinding, ...] = ()
     outputs: tuple[str, ...] = ()
     name: str | None = None
+    mixed_kernels: MixedKernels | None = None
 
 
 @dataclass(frozen=True)
@@ -108,15 +146,19 @@ class ScheduledRegion:
     """One region in a Sonata schedule.
 
     ``kind="static"`` regions carry explicit task and dependency lists.
-    ``kind="dynamic"`` regions carry ``mode="backend_dynamic"`` and delegate
-    to the runtime's dynamic path (e.g. TensorMap).
+    ``kind="dynamic"`` regions carry ``dynamic_mode="backend_dynamic"``
+    and delegate to the runtime's dynamic path (e.g. TensorMap).
+
+    ``scope_mode`` (v0.25) is Sonata's intent declaration for the TMARB
+    ``PTO2_SCOPE`` mode. The backend MAY override it.
     """
 
     region_id: str
     kind: str  # "static" | "dynamic"
-    mode: str | None = None  # "backend_dynamic" for dynamic regions
+    dynamic_mode: str | None = None  # "backend_dynamic" for dynamic regions
     tasks: tuple[ScheduledTask, ...] = ()
     deps: tuple[ScheduleDep, ...] = ()
+    scope_mode: ScopeMode = ScopeMode.AUTO
 
 
 @dataclass(frozen=True)
@@ -158,7 +200,8 @@ class SonataScheduleContract:
                 {
                     "region_id": r.region_id,
                     "kind": r.kind,
-                    "mode": r.mode,
+                    "dynamic_mode": r.dynamic_mode,
+                    "scope_mode": r.scope_mode.value,
                     "tasks": [
                         {
                             "task_id": t.task_id,
@@ -166,11 +209,22 @@ class SonataScheduleContract:
                             "func_id": t.func_id,
                             "core_type": t.core_type,
                             "args": [
-                                {"arg_identity": a.arg_identity, "runtime_slot": a.runtime_slot}
+                                {
+                                    "arg_identity": a.arg_identity,
+                                    "runtime_slot": a.runtime_slot,
+                                    "direction": a.direction.value if a.direction != ArgDirection.INPUT else None,
+                                }
                                 for a in t.args
                             ],
                             "outputs": list(t.outputs),
                             "name": t.name,
+                            "mixed_kernels": (
+                                {
+                                    "aic_func_id": mk.aic_func_id,
+                                    "aiv_func_id": mk.aiv_func_id,
+                                    "dual_aiv_func_id": mk.dual_aiv_func_id,
+                                } if t.mixed_kernels is not None else None
+                            ),
                         }
                         for t in r.tasks
                     ] if r.tasks else [],
@@ -216,38 +270,9 @@ class SonataScheduleContract:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SonataScheduleContract":
+        schema_ver = data.get("schema_version", 1)
         regions = tuple(
-            ScheduledRegion(
-                region_id=r["region_id"],
-                kind=r["kind"],
-                mode=r.get("mode"),
-                tasks=tuple(
-                    ScheduledTask(
-                        task_id=t["task_id"],
-                        kernel_identity=t["kernel_identity"],
-                        func_id=t.get("func_id"),
-                        core_type=t["core_type"],
-                        args=tuple(
-                            ArgBinding(
-                                arg_identity=a["arg_identity"],
-                                runtime_slot=a.get("runtime_slot"),
-                            )
-                            for a in t.get("args", [])
-                        ),
-                        outputs=tuple(t.get("outputs", [])),
-                        name=t.get("name"),
-                    )
-                    for t in r.get("tasks", [])
-                ),
-                deps=tuple(
-                    ScheduleDep(
-                        producer=d["producer"],
-                        consumer=d["consumer"],
-                        kind=d.get("kind", "data"),
-                    )
-                    for d in r.get("deps", [])
-                ),
-            )
+            cls._region_from_dict(r, schema_ver)
             for r in data.get("regions", [])
         )
         boundaries = tuple(
@@ -314,6 +339,64 @@ class SonataScheduleContract:
     @classmethod
     def read_json(cls, path: str | Path) -> "SonataScheduleContract":
         return cls.from_json(Path(path).read_text())
+    @classmethod
+    def _region_from_dict(cls, r: dict[str, Any], schema_ver: int) -> ScheduledRegion:
+        if schema_ver < 2:
+            raw_mode = r.get("mode")
+        else:
+            raw_mode = r.get("dynamic_mode")
+            v1_mode = r.get("mode")
+            if v1_mode is not None and raw_mode is None:
+                _log.warning("Deprecated key 'mode' in region %r; use 'dynamic_mode'", r.get("region_id", "?"))
+                raw_mode = v1_mode
+        raw_scope = r.get("scope_mode")
+        try:
+            scope_mode = ScopeMode(raw_scope) if raw_scope else ScopeMode.AUTO
+        except ValueError:
+            scope_mode = ScopeMode.AUTO
+        return ScheduledRegion(
+            region_id=r["region_id"],
+            kind=r["kind"],
+            dynamic_mode=raw_mode,
+            tasks=cls._tasks_from_dict(r.get("tasks", [])),
+            deps=tuple(
+                ScheduleDep(producer=d["producer"], consumer=d["consumer"], kind=d.get("kind", "data"))
+                for d in r.get("deps", [])
+            ),
+            scope_mode=scope_mode,
+        )
+
+    @classmethod
+    def _tasks_from_dict(cls, tasks: list[dict[str, Any]]) -> tuple[ScheduledTask, ...]:
+        result: list[ScheduledTask] = []
+        for t in tasks:
+            mk_raw = t.get("mixed_kernels")
+            mk = MixedKernels(**mk_raw) if mk_raw and isinstance(mk_raw, dict) else None
+            result.append(ScheduledTask(
+                task_id=t["task_id"],
+                kernel_identity=t["kernel_identity"],
+                func_id=t.get("func_id"),
+                core_type=t["core_type"],
+                args=cls._args_from_dict(t.get("args", [])),
+                outputs=tuple(t.get("outputs", [])),
+                name=t.get("name"),
+                mixed_kernels=mk,
+            ))
+        return tuple(result)
+
+    @classmethod
+    def _args_from_dict(cls, args: list[dict[str, Any]]) -> tuple[ArgBinding, ...]:
+        result: list[ArgBinding] = []
+        for a in args:
+            direction = ArgDirection.INPUT
+            raw_dir = a.get("direction")
+            if raw_dir is not None:
+                try:
+                    direction = ArgDirection(normalize_direction(raw_dir))
+                except ValueError:
+                    pass
+            result.append(ArgBinding(arg_identity=a["arg_identity"], runtime_slot=a.get("runtime_slot"), direction=direction))
+        return tuple(result)
 
 
 def build_schedule(
@@ -357,7 +440,7 @@ def build_schedule(
             region = ScheduledRegion(
                 region_id=region_id,
                 kind="dynamic",
-                mode="backend_dynamic",
+                dynamic_mode="backend_dynamic",
             )
         scheduled_regions.append(region)
         seen_region_ids.append(region_id)
@@ -405,6 +488,7 @@ def _build_static_region(
                         if hasattr(t, "arg_storage_keys") and i < len(t.arg_storage_keys) and t.arg_storage_keys[i]
                         else _fallback_arg_identity(t, i)
                     ),
+                    direction=_resolve_direction(t, i),
                 )
                 for i in range(len(t.args))
             ),
@@ -513,9 +597,23 @@ def _fallback_arg_identity(task: Any, index: int) -> str:
     return f"{getattr(task, 'task_id', -1)}:arg{index}"
 
 
+def _resolve_direction(task: Any, index: int) -> ArgDirection:
+    """Resolve ArgDirection from Score.Task.arg_directions."""
+    raw = getattr(task, "arg_directions", None)
+    if raw and index < len(raw) and raw[index]:
+        canonical = normalize_direction(raw[index])
+        try:
+            return ArgDirection(canonical)
+        except ValueError:
+            pass
+    return ArgDirection.INPUT
+
+
 __all__ = [
     "ArgBinding",
+    "ArgDirection",
     "FallbackPolicy",
+    "MixedKernels",
     "RUNTIME_CONTRACT",
     "RegionBoundary",
     "SONATA_SCHEDULE_SCHEMA_VERSION",
@@ -523,6 +621,7 @@ __all__ = [
     "ScheduleGuard",
     "ScheduledRegion",
     "ScheduledTask",
+    "ScopeMode",
     "SonataScheduleContract",
     "build_schedule",
 ]

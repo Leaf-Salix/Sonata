@@ -78,7 +78,7 @@ class TestBindFuncIds:
         assert result is not None
 
     def test_dynamic_regions_skipped(self):
-        r = ScheduledRegion(region_id="r0", kind="dynamic", mode="backend_dynamic")
+        r = ScheduledRegion(region_id="r0", kind="dynamic", dynamic_mode="backend_dynamic")
         c = SonataScheduleContract(fingerprint="fp", regions=(r,))
 
         result, reasons = bind_func_ids(c, {"add": 3})
@@ -176,7 +176,7 @@ class TestBindRuntimeSlots:
         assert result.regions[0].tasks[0].args == ()
 
     def test_dynamic_regions_not_affected(self):
-        r = ScheduledRegion(region_id="r0", kind="dynamic", mode="backend_dynamic")
+        r = ScheduledRegion(region_id="r0", kind="dynamic", dynamic_mode="backend_dynamic")
         c = SonataScheduleContract(fingerprint="fp", regions=(r,))
 
         result, reasons = bind_runtime_slots(c, ["x"], [])

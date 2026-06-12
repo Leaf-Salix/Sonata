@@ -28,7 +28,7 @@ def _static_region(region_id="r0", tasks=None, deps=None):
 
 
 def _dynamic_region(region_id="r1"):
-    return ScheduledRegion(region_id=region_id, kind="dynamic", mode="backend_dynamic")
+    return ScheduledRegion(region_id=region_id, kind="dynamic", dynamic_mode="backend_dynamic")
 
 
 class TestValidateScheduleHappy:
@@ -148,7 +148,7 @@ class TestValidateScheduleErrors:
         assert validate_schedule(c) == ()
 
     def test_dynamic_only_regions(self):
-        r = ScheduledRegion(region_id="r", kind="dynamic", mode="backend_dynamic")
+        r = ScheduledRegion(region_id="r", kind="dynamic", dynamic_mode="backend_dynamic")
         c = SonataScheduleContract(fingerprint="f", regions=(r,))
         assert validate_schedule(c) == ()
 
@@ -167,7 +167,7 @@ class TestValidateScheduleErrors:
         regions = [
             ScheduledRegion(region_id="r0", kind="static",
                 tasks=(ScheduledTask(task_id=0, kernel_identity="k", func_id=1, core_type="aic"),)),
-            ScheduledRegion(region_id="r1", kind="dynamic", mode="backend_dynamic"),
+            ScheduledRegion(region_id="r1", kind="dynamic", dynamic_mode="backend_dynamic"),
             ScheduledRegion(region_id="r2", kind="static",
                 tasks=(ScheduledTask(task_id=1, kernel_identity="k", func_id=2, core_type="aic"),)),
         ]
