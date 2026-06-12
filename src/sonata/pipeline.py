@@ -584,6 +584,19 @@ def _write_bound_schedule(
     # Store schedule_path on result for to_runtime_config() to emit
     result.schedule_path = str(path.relative_to(work_dir)) if path.is_relative_to(work_dir) else str(path)
 
+    # v0.25: Generate TMARB call trace
+    try:
+        from .mapping.trace import generate_trace, trace_to_json
+        trace = generate_trace(bound_schedule)
+        trace_path = work_dir / "tmarb_call_trace.json"
+        trace_path.write_text(trace_to_json(trace))
+        _region_log.info(
+            "[SONATA] TMARB call trace written: %s (%d entries)",
+            trace_path, len(trace),
+        )
+    except Exception as exc:
+        _region_log.debug("[SONATA] trace generation skipped: %s", exc)
+
 
 def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
     """Extract ``func_name_to_id`` map from a compiled PyPTO program.
