@@ -3,6 +3,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import shutil
+
 import pytest
 
 from sonata.schedule import (
@@ -64,8 +66,10 @@ try:
 except ImportError:
     _HAS_PYPTO = False
 
+_HAS_PTOAS = shutil.which("ptoas") is not None
 
-@pytest.mark.skipif(not _HAS_PYPTO, reason="pypto not available")
+
+@pytest.mark.skipif(not _HAS_PYPTO or not _HAS_PTOAS, reason="pypto or ptoas not available")
 class TestE2EFullPipeline:
     """Full sonata_compile() → tmarb_call_trace.json pipeline.
 
