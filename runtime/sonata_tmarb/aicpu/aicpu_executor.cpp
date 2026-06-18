@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <new>
 
 #include "flat_schedule.h"       // FlatSchedule, FlatRegion, FlatTask, FlatArg, FlatDep
 #include "runtime.h"              // TMARB Runtime struct
@@ -20,17 +21,25 @@
 
 using namespace pto;
 
+static constexpr int32_t MAX_DEPS_PER_TASK = 256;
+
 // ── Build Arg from FlatTask ──
 
-static void build_arg(const FlatTask* ftask, const FlatArg* fargs, Arg& arg) {
+static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
+                      int32_t arg_bound, Arg& arg) {
     for (int16_t i = 0; i < ftask->num_args; i++) {
         const FlatArg& fa = fargs[i];
         switch (fa.direction) {
+            case 0:  arg.add_input(fa.runtime_slot);     break;
             case 1:  arg.add_output(fa.runtime_slot);    break;
             case 2:  arg.add_inout(fa.runtime_slot);     break;
-            case 3:  arg.add_no_dep(fa.runtime_slot);    break;
-            case 4:  arg.add_scalar(fa.runtime_slot);    break;
-            default: arg.add_input(fa.runtime_slot);     break;
+            case 3:  arg.add_scalar(fa.runtime_slot);    break;
+            case 4:  arg.add_no_dep(fa.runtime_slot);    break;
+            case 5:  arg.add_output_existing(fa.runtime_slot); break;
+            default:
+                // Unknown direction — treat as input to avoid silent data loss
+                arg.add_input(fa.runtime_slot);
+                break;
         }
     }
 }
@@ -38,18 +47,27 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs, Arg& arg) {
 // ── Set dependencies from FlatDep list ──
 
 static void set_deps(const FlatTask* ftask, const FlatDep* fdeps,
-                     const PTO2TaskId* task_ids, int32_t num_submitted, Arg& arg) {
+                     int32_t total_deps,
+                     const PTO2TaskId* task_ids, int32_t num_submitted,
+                     PTO2TaskId* dep_buf, int32_t dep_buf_size,
+                     Arg& arg) {
     if (ftask->dep_count == 0 || task_ids == nullptr) return;
-    PTO2TaskId deps[64];
     uint32_t count = 0;
-    for (int32_t i = 0; i < ftask->dep_count && count < 64; i++) {
-        const FlatDep& fd = fdeps[ftask->dep_start + i];
+    for (int32_t i = 0; i < ftask->dep_count; i++) {
+        int32_t dep_idx = ftask->dep_start + i;
+        if (dep_idx < 0 || dep_idx >= total_deps) break;
+        const FlatDep& fd = fdeps[dep_idx];
         if (fd.producer >= 0 && fd.producer < num_submitted) {
-            deps[count++] = task_ids[fd.producer];
+            if (count >= (uint32_t)dep_buf_size) {
+                // Dependency buffer full — drop remaining deps with error signal.
+                // This is a data integrity issue, not a crash.
+                break;
+            }
+            dep_buf[count++] = task_ids[fd.producer];
         }
     }
     if (count > 0) {
-        arg.set_dependencies(deps, count);
+        arg.set_dependencies(dep_buf, count);
     }
 }
 
@@ -57,12 +75,22 @@ static void set_deps(const FlatTask* ftask, const FlatDep* fdeps,
 
 static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                                 const FlatRegion* regions, const FlatTask* tasks,
-                                const FlatArg* args, const FlatDep* fdeps) {
+                                const FlatArg* args, const FlatDep* fdeps,
+                                PTO2TaskId* dep_buf) {
 
     for (int32_t r = 0; r < sched->num_regions; r++) {
         const FlatRegion& rg = regions[r];
 
+        // Bounds check: validate region's task and dep ranges
+        if (rg.task_start < 0 || rg.task_start + rg.num_tasks > sched->total_tasks) {
+            continue;  // invalid region bounds — skip
+        }
+        if (rg.dep_start < 0 || rg.dep_start + rg.num_deps > sched->total_deps) {
+            continue;  // invalid dep bounds — skip
+        }
+
         if (rg.kind == 1) {
+            // Dynamic region
             rt->pending_scope_mode = PTO2ScopeMode::AUTO;
             rt_scope_begin(rt);
             rt_scope_end(rt);
@@ -73,17 +101,31 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         rt->pending_scope_mode = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
         rt_scope_begin(rt);
 
-        // Capture PTO2TaskId for dependency resolution
-        PTO2TaskId task_ids[16384];
+        // Heap-allocated task ID array — sized to actual task count, avoids stack overflow
+        int32_t alloc_size = rg.num_tasks > 0 ? rg.num_tasks : 1;
+        PTO2TaskId* task_ids = new (std::nothrow) PTO2TaskId[alloc_size];
+        if (!task_ids) {
+            rt_scope_end(rt);
+            continue;  // allocation failed — skip region
+        }
         int32_t num_submitted = 0;
-        int32_t arg_cursor = 0;  // running offset into flat arg array
+        int32_t arg_cursor = 0;
 
         for (int32_t t = 0; t < rg.num_tasks; t++) {
             const FlatTask& ft = tasks[rg.task_start + t];
+
+            // Bounds check arg range
+            int32_t task_arg_base = ft.arg_base;
+            if (task_arg_base < 0 || task_arg_base + ft.num_args > sched->total_args) {
+                continue;  // invalid arg range — skip task
+            }
+
             Arg submit_arg;
 
-            build_arg(&ft, &args[arg_cursor], submit_arg);
-            set_deps(&ft, fdeps, task_ids, num_submitted, submit_arg);
+            build_arg(&ft, &args[task_arg_base], sched->total_args, submit_arg);
+            set_deps(&ft, fdeps, sched->total_deps,
+                     task_ids, num_submitted, dep_buf, MAX_DEPS_PER_TASK,
+                     submit_arg);
 
             TaskOutputTensors result;
             if (ft.core_type == 1) {
@@ -102,6 +144,7 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             arg_cursor += ft.num_args;
         }
 
+        delete[] task_ids;
         rt_scope_end(rt);
     }
 }
@@ -121,6 +164,9 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
 
     if (flat_sched == nullptr || flat_sched->magic != 0x534F4E41) {
         return -1;
+    }
+    if (flat_sched->version != 1) {
+        return -3;  // unsupported format version
     }
 
     // ── Initialize PTO2Runtime from prebuilt arena ──
@@ -150,20 +196,20 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
     runtime_finalize_after_wire(rt, aic_count, aiv_count);
     framework_bind_runtime(rt);
 
-    // ── Parse flat schedule ──
+    // ── Parse flat schedule using header fields ──
     auto* regions = reinterpret_cast<const FlatRegion*>(flat_sched + 1);
-    int32_t total_tasks = 0;
-    for (int32_t i = 0; i < flat_sched->num_regions; i++) {
-        total_tasks += regions[i].num_tasks;
-    }
+    auto* tasks   = reinterpret_cast<const FlatTask*>(regions + flat_sched->num_regions);
+    auto* args    = reinterpret_cast<const FlatArg*>(tasks  + flat_sched->total_tasks);
+    auto* fdeps   = reinterpret_cast<const FlatDep*>(args   + flat_sched->total_args);
 
-    auto* tasks = reinterpret_cast<const FlatTask*>(regions + flat_sched->num_regions);
-    auto* args  = reinterpret_cast<const FlatArg*>(tasks + total_tasks);
-    auto* deps  = reinterpret_cast<const FlatDep*>(args + total_tasks * 4);
+    // ── Pre-allocate dependency buffer (heap, max deps per task) ──
+    PTO2TaskId* dep_buf = new (std::nothrow) PTO2TaskId[MAX_DEPS_PER_TASK];
+    if (!dep_buf) return -4;
 
     // ── Run interpreter ──
-    interpret_schedule(rt, flat_sched, regions, tasks, args, deps);
+    interpret_schedule(rt, flat_sched, regions, tasks, args, fdeps, dep_buf);
     rt_orchestration_done(rt);
 
+    delete[] dep_buf;
     return 0;
 }

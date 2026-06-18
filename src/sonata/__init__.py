@@ -110,9 +110,10 @@ from .binding import bind_func_ids, bind_runtime_slots
 from .runtime_config import SONATA_RUNTIME_CONFIG_SCHEMA_VERSION, SonataRuntimeConfig
 
 # Register sonata_tmarb runtime variant with simpler's RuntimeBuilder
+# Note: _patch_runtime_builder() is already called at import time in runtime.py;
+# importing it here triggers that call. No explicit invocation needed.
 try:
-    from .runtime import _patch_runtime_builder
-    _patch_runtime_builder()
+    from .runtime import _patch_runtime_builder  # noqa: F401
 except Exception:
     pass
 from .serialization import (

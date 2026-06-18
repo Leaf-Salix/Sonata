@@ -406,8 +406,8 @@ class SonataScheduleContract:
         """
         import struct
 
-        # Direction → int16
-        _DIR = {"input": 0, "output": 1, "inout": 2, "nodep": 3, "no_dep": 3, "scalar": 4, "outputexisting": 5}
+        # Direction → int16 (must match flat_schedule.h exactly)
+        _DIR = {"input": 0, "output": 1, "inout": 2, "scalar": 3, "nodep": 4, "outputexisting": 5}
         # Core type → int16
         _CORE = {"aic": 0, "aiv": 1, "mixed": 2}
 
@@ -418,6 +418,7 @@ class SonataScheduleContract:
         flat_deps: list[bytes] = []
         task_cursor = 0
         dep_cursor = 0
+        arg_cursor = 0
 
         for region in self.regions:
             rkind = 0 if region.kind == "static" else 1
@@ -432,15 +433,19 @@ class SonataScheduleContract:
             for task in region.tasks:
                 core = _CORE.get(task.core_type, 0)
                 num_args = len(task.args)
-                flat_tasks.append(struct.pack("<iihhii",
+                # Write arg_base (absolute index into arg blob), not dep info
+                flat_tasks.append(struct.pack("<iihhi",
                     task.task_id,
                     task.func_id if task.func_id is not None else -1,
                     core, num_args,
-                    dep_cursor, len(region.deps)))
+                    arg_cursor))
 
                 for arg in task.args:
                     d = _DIR.get(arg.direction.value if hasattr(arg.direction, "value") else arg.direction, 0)
-                    flat_args.append(struct.pack("<ih", arg.runtime_slot or 0, d))
+                    # runtime_slot: -1 means unset (slot 0 is valid)
+                    sl = arg.runtime_slot if arg.runtime_slot is not None else -1
+                    flat_args.append(struct.pack("<ih", sl, d))
+                arg_cursor += num_args
 
             for dep in region.deps:
                 flat_deps.append(struct.pack("<ii", dep.producer, dep.consumer))
@@ -448,65 +453,97 @@ class SonataScheduleContract:
             task_cursor += num_tasks
             dep_cursor += num_deps
 
-        # Build FlatSchedule header (72 bytes)
+        # Build FlatSchedule header (88 bytes = 6*int32 + 64-byte fingerprint)
         magic = 0x534F4E41  # "SONA"
+        version = 1
         fp_bytes = self.fingerprint.encode("utf-8")[:63]
         fp_bytes += b"\x00" * (64 - len(fp_bytes))
-        header = struct.pack("<ii", magic, len(self.regions)) + fp_bytes
+        header = struct.pack("<iiiiii", magic, version, len(self.regions),
+                             task_cursor, arg_cursor, dep_cursor) + fp_bytes
 
         return header + b"".join(flat_regions) + b"".join(flat_tasks) + b"".join(flat_args) + b"".join(flat_deps)
 
     @classmethod
     def from_binary(cls, data: bytes) -> "SonataScheduleContract":
+        """Deserialize from flat binary format.
+
+        Header layout (88 bytes, matches ``FlatSchedule`` in ``flat_schedule.h``):
+        ``magic(4) + version(4) + num_regions(4) + total_tasks(4)``
+        ``+ total_args(4) + total_deps(4) + fingerprint(64)``
+        """
         import struct
-        _DIR = {0: "input", 1: "output", 2: "inout", 3: "nodep", 4: "scalar", 5: "outputexisting"}
+        _DIR = {0: "input", 1: "output", 2: "inout", 3: "scalar", 4: "nodep", 5: "outputexisting"}
         _CORE = {0: "aic", 1: "aiv", 2: "mixed"}
-        if len(data) < 72: raise ValueError("too short")
-        magic, nr = struct.unpack_from("<ii", data, 0)
-        if magic != 0x534F4E41: raise ValueError(f"bad magic: {magic:#x}")
-        fp = data[8:72].split(b"\x00", 1)[0].decode()
-        rs = struct.calcsize("<iiiiii"); ts = struct.calcsize("<iihhii")
-        ar = struct.calcsize("<ih"); ds = struct.calcsize("<ii")
 
-        meta, off = [], 72
-        for _ in range(nr):
-            rk, sc, _ts, tn, _ds, dn = struct.unpack_from("<iiiiii", data, off)
-            meta.append({"kind": rk, "scope": sc, "num_tasks": tn, "num_deps": dn})
-            off += rs
+        hdr_fmt = "<iiiiii"  # magic, version, num_regions, total_tasks, total_args, total_deps
+        hdr_size_ints = struct.calcsize(hdr_fmt)  # 24
+        hdr_size = hdr_size_ints + 64  # 24 + 64 = 88
+        if len(data) < hdr_size:
+            raise ValueError(f"too short: {len(data)} < {hdr_size}")
 
-        # Read task nargs from the task array (starts after all region headers)
-        task_off = off
-        for m in meta:
-            m["tasks"] = []
-            for ti in range(m["num_tasks"]):
-                to = task_off + ti * ts
-                tid, fid, co, na, _ds2, _dc2 = struct.unpack_from("<iihhii", data, to)
-                m["tasks"].append({"tid": tid, "fid": fid, "core": co, "nargs": na})
-            task_off += m["num_tasks"] * ts
+        magic, version, nr, total_tasks, total_args, total_deps = struct.unpack_from(hdr_fmt, data, 0)
+        if magic != 0x534F4E41:
+            raise ValueError(f"bad magic: {magic:#x}")
+        if version != 1:
+            raise ValueError(f"unsupported version: {version}")
+        fp = data[hdr_size_ints : hdr_size_ints + 64].split(b"\x00", 1)[0].decode()
 
-        total_nargs = sum(t["nargs"] for m in meta for t in m["tasks"])
-        t_off = 72 + nr * rs
-        a_off = t_off + sum(m["num_tasks"] for m in meta) * ts
-        d_off = a_off + total_nargs * ar
+        rs = struct.calcsize("<iiiiii")   # FlatRegion = 24
+        ts = struct.calcsize("<iihhi")    # FlatTask = 16
+        ar = struct.calcsize("<ih")       # FlatArg  = 6
+        ds = struct.calcsize("<ii")       # FlatDep  = 8
 
-        regions, t_idx, dp, cum_args = [], 0, d_off, 0
-        for i, m in enumerate(meta):
-            tasks = []
-            for t in m["tasks"]:
-                args = []
-                for ai in range(t["nargs"]):
-                    ao = a_off + (cum_args + ai) * ar
+        # Compute blob offsets from header fields
+        r_off = hdr_size
+        t_off = r_off + nr * rs
+        a_off = t_off + total_tasks * ts
+        d_off = a_off + total_args * ar
+
+        # Validate total size
+        expected_size = d_off + total_deps * ds
+        if len(data) < expected_size:
+            raise ValueError(f"data truncated: need {expected_size} bytes, got {len(data)}")
+
+        regions: list[ScheduledRegion] = []
+        cum_args = 0
+
+        for ri in range(nr):
+            rk, sc, t_start, t_count, d_start, d_count = struct.unpack_from(
+                "<iiiiii", data, r_off + ri * rs)
+
+            tasks: list[ScheduledTask] = []
+            for ti in range(t_count):
+                to = t_off + (t_start + ti) * ts
+                tid, fid, co, na, arg_base = struct.unpack_from("<iihhi", data, to)
+                args_list: list[ArgBinding] = []
+                for ai in range(na):
+                    ao = a_off + (arg_base + ai) * ar
                     sl, d = struct.unpack_from("<ih", data, ao)
-                    args.append(ArgBinding(arg_identity=f"a{t_idx}_{ai}", runtime_slot=sl or None, direction=ArgDirection(_DIR.get(d, "input"))))
-                tasks.append(ScheduledTask(task_id=t["tid"], kernel_identity=f"t{t['tid']}", func_id=t["fid"] if t["fid"] != -1 else None, core_type=_CORE.get(t["core"], "aic"), args=tuple(args)))
-                cum_args += t["nargs"]
-                t_idx += 1
-            deps = []
-            for _ in range(m["num_deps"]):
+                    args_list.append(ArgBinding(
+                        arg_identity=f"a{t_start + ti}_{ai}",
+                        runtime_slot=sl if sl >= 0 else None,
+                        direction=ArgDirection(_DIR.get(d, "input")),
+                    ))
+                tasks.append(ScheduledTask(
+                    task_id=tid,
+                    kernel_identity=f"t{tid}",
+                    func_id=fid if fid != -1 else None,
+                    core_type=_CORE.get(co, "aic"),
+                    args=tuple(args_list),
+                ))
+            deps: list[ScheduleDep] = []
+            for di in range(d_count):
+                dp = d_off + (d_start + di) * ds
                 p, c = struct.unpack_from("<ii", data, dp)
                 deps.append(ScheduleDep(producer=p, consumer=c))
-                dp += ds
-            regions.append(ScheduledRegion(region_id=f"r{i}", kind="static" if m["kind"] == 0 else "dynamic", dynamic_mode=None if m["kind"] == 0 else "backend_dynamic", scope_mode=ScopeMode.AUTO if m.get("scope", 0) == 0 else ScopeMode.MANUAL, tasks=tuple(tasks), deps=tuple(deps)))
+            regions.append(ScheduledRegion(
+                region_id=f"r{ri}",
+                kind="static" if rk == 0 else "dynamic",
+                dynamic_mode=None if rk == 0 else "backend_dynamic",
+                scope_mode=ScopeMode.AUTO if sc == 0 else ScopeMode.MANUAL,
+                tasks=tuple(tasks),
+                deps=tuple(deps),
+            ))
         return cls(fingerprint=fp, regions=tuple(regions))
 
 

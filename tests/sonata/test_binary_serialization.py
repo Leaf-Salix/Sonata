@@ -140,7 +140,8 @@ class TestBinarySerialization:
         assert c2.regions[0].tasks[0].core_type == "aiv"
 
     def test_bad_magic_rejected(self):
-        data = b"\x00" * 72
+        # Header is 88 bytes; provide enough for "too short" not to trigger first
+        data = b"\x00" * 88
         with pytest.raises(ValueError, match="bad magic"):
             SonataScheduleContract.from_binary(data)
 
@@ -165,3 +166,44 @@ class TestBinarySerialization:
         c2 = SonataScheduleContract.from_binary(data)
         assert len(c2.regions[0].tasks) == 100
         assert len(c2.regions[0].deps) == 99
+
+    def test_multi_region_deps_round_trip(self):
+        """S4: Deps in each region round-trip independently."""
+        t0 = ScheduledTask(task_id=0, kernel_identity="a", func_id=1, core_type="aic",
+            args=(ArgBinding(arg_identity="x"),))
+        t1 = ScheduledTask(task_id=1, kernel_identity="b", func_id=2, core_type="aic",
+            args=(ArgBinding(arg_identity="y"),))
+        t2 = ScheduledTask(task_id=2, kernel_identity="c", func_id=3, core_type="aic",
+            args=(ArgBinding(arg_identity="z"),))
+        t3 = ScheduledTask(task_id=3, kernel_identity="d", func_id=4, core_type="aic",
+            args=(ArgBinding(arg_identity="w"),))
+        r0 = ScheduledRegion(region_id="r0", kind="static",
+            tasks=(t0, t1), deps=(ScheduleDep(producer=0, consumer=1),))
+        r1 = ScheduledRegion(region_id="r1", kind="static",
+            tasks=(t2, t3), deps=(ScheduleDep(producer=0, consumer=1),))
+        c = SonataScheduleContract(fingerprint="fp_mr", regions=(r0, r1))
+        data = c.to_binary()
+        c2 = SonataScheduleContract.from_binary(data)
+        assert len(c2.regions) == 2
+        assert len(c2.regions[0].deps) == 1
+        assert len(c2.regions[1].deps) == 1
+        assert c2.regions[0].deps[0] == ScheduleDep(producer=0, consumer=1)
+        assert c2.regions[1].deps[0] == ScheduleDep(producer=0, consumer=1)
+        assert c2.regions[0].tasks[0].func_id == 1
+        assert c2.regions[1].tasks[0].func_id == 3
+
+    def test_runtime_slot_round_trip(self):
+        """S5: runtime_slot=0 survives round-trip (not conflated with None)."""
+        a_slot0 = ArgBinding(arg_identity="a", runtime_slot=0, direction=ArgDirection.INPUT)
+        a_none = ArgBinding(arg_identity="b", runtime_slot=None, direction=ArgDirection.OUTPUT)
+        a_slot5 = ArgBinding(arg_identity="c", runtime_slot=5, direction=ArgDirection.INOUT)
+        t1 = ScheduledTask(task_id=0, kernel_identity="k", func_id=1, core_type="aic",
+            args=(a_slot0, a_none, a_slot5))
+        r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1,))
+        c = SonataScheduleContract(fingerprint="fp_slot", regions=(r0,))
+        d = c.to_binary()
+        c2 = SonataScheduleContract.from_binary(d)
+        args = c2.regions[0].tasks[0].args
+        assert args[0].runtime_slot == 0
+        assert args[1].runtime_slot is None
+        assert args[2].runtime_slot == 5
