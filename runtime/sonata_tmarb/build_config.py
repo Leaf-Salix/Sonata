@@ -33,11 +33,17 @@ BUILD_CONFIG = {
             "../../upstream/pypto/runtime/src/common",
             "runtime",
         ],
-        # aicpu source: local executor + upstream runtime (for runtime_init_data_from_layout,
-        # rt_submit_*_task, DeviceArena, etc.). Upstream orchestrator uses weak symbols —
-        # no conflict with the interpreter's aicpu_entry. Scheduler .cpp files are compiled
-        # but their symbols are only resolved if referenced; the interpreter does not call
-        # into the scheduler directly.
+        # aicpu source: local interpreter executor + upstream runtime shared
+        # infrastructure (runtime_init_data_from_layout, rt_submit_*_task,
+        # DeviceArena, etc.). The interpreter does NOT use the host-side
+        # orchestration flow or the AICPU scheduler; their symbols are
+        # discarded by the linker because nothing references them.
+        #
+        # CMake's CUSTOM_SOURCE_DIRS only supports directory-level recursive
+        # globs, so including the runtime root necessarily pulls in
+        # pto_orchestrator.cpp, pto_ring_buffer.cpp, and scheduler/*.cpp
+        # even though the interpreter doesn't need them. The only file from
+        # the root that IS needed is pto_runtime2.cpp (runtime2 core APIs).
         "source_dirs": [
             "aicpu",
             f"{UPSTREAM_TMARB}/runtime",

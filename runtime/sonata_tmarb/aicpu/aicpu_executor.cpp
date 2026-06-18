@@ -174,11 +174,7 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
     runtime_arena.attach(prebuilt_arena, DeviceArena::kDefaultBaseAlign);
 
     PTO2RuntimeArenaLayout layout;
-    {
-        DeviceArena layout_arena;
-        layout_arena.attach(prebuilt_arena, DeviceArena::kDefaultBaseAlign);
-        layout = runtime_reserve_layout(layout_arena, task_window_size, PTO2_DEP_LIST_POOL_SIZE);
-    }
+    layout = runtime_reserve_layout(runtime_arena, task_window_size, PTO2_DEP_LIST_POOL_SIZE);
 
     PTO2Runtime* rt = runtime_init_data_from_layout(
         runtime_arena, layout, PTO2_MODE_EXECUTE,

@@ -25,13 +25,10 @@ extern "C" int prepare_callable_impl(
     void* /*upload_fn*/,
     void* artifacts_out
 ) {
-    // The flat schedule binary is uploaded by the Python side via
-    // sonata.schedule.serialize_to_binary() and stored in a known
-    // GM address. No C++ JSON parsing needed.
-    //
-    // The prebuilt arena for PTO2Runtime is allocated by the
-    // simpler runtime framework automatically.
-    return 0;
+    // Not yet implemented — the interpreter path (aicpu_entry) handles
+    // all initialization on-device. Return an explicit error code so
+    // callers get a clear failure rather than a silent success.
+    return -10;
 }
 
 // ── bind_callable_to_runtime_impl ──
@@ -46,10 +43,9 @@ extern "C" int bind_callable_to_runtime_impl(
     void* /*arg_directions*/,
     int /*arg_count*/
 ) {
-    // The simpler runtime framework passes prebuilt_arena.
-    // The PTO2Runtime is created on-device by aicpu_entry().
-    // Host side just stores the SM and heap pointers.
-    return 0;
+    // Not yet implemented — the interpreter path (aicpu_entry) handles
+    // all runtime initialization on-device.
+    return -11;
 }
 
 // ── validate_runtime_impl ──
@@ -58,8 +54,7 @@ extern "C" int bind_callable_to_runtime_impl(
 // back to host and frees device allocations.
 
 extern "C" int validate_runtime_impl(void* runtime) {
-    // Schedule outputs are consumed via the standard output tensor
-    // mechanism in simpler's runtime framework.
-    // No additional copy-back needed for the interpreter.
-    return 0;
+    // Not yet implemented — schedule outputs are consumed via the
+    // standard output tensor mechanism in simpler's runtime framework.
+    return -12;
 }
