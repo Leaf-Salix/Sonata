@@ -461,7 +461,21 @@ class SonataScheduleContract:
         header = struct.pack("<iiiiii", magic, version, len(self.regions),
                              task_cursor, arg_cursor, dep_cursor) + fp_bytes
 
-        return header + b"".join(flat_regions) + b"".join(flat_tasks) + b"".join(flat_args) + b"".join(flat_deps)
+        # Build string table: preserves kernel_identity and arg_identity
+        # for lossless round-trip. One entry per task (kernel_identity),
+        # then one entry per arg (arg_identity), in serialization order.
+        # Each entry: uint16(length) + UTF-8 bytes.
+        str_table = bytearray()
+        for region in self.regions:
+            for task in region.tasks:
+                raw = task.kernel_identity.encode("utf-8")
+                str_table += struct.pack("<H", len(raw)) + raw
+                for arg in task.args:
+                    raw = arg.arg_identity.encode("utf-8")
+                    str_table += struct.pack("<H", len(raw)) + raw
+
+        return (header + b"".join(flat_regions) + b"".join(flat_tasks)
+                + b"".join(flat_args) + b"".join(flat_deps) + bytes(str_table))
 
     @classmethod
     def from_binary(cls, data: bytes) -> "SonataScheduleContract":
@@ -504,8 +518,35 @@ class SonataScheduleContract:
         if len(data) < expected_size:
             raise ValueError(f"data truncated: need {expected_size} bytes, got {len(data)}")
 
+        # Parse optional string table (appended after deps)
+        # Format: sequence of uint16(length) + utf8_bytes, in task/arg order.
+        # One entry per task (kernel_identity), then one per arg (arg_identity).
+        str_table_end = expected_size + sum(1 for _ in range(total_tasks))  # placeholder
+        str_table: list[str] = []
+        if len(data) > expected_size:
+            st_off = expected_size
+            while st_off < len(data):
+                if st_off + 2 > len(data):
+                    break
+                slen = struct.unpack_from("<H", data, st_off)[0]
+                st_off += 2
+                if st_off + slen > len(data):
+                    break
+                str_table.append(data[st_off:st_off + slen].decode("utf-8", errors="replace"))
+                st_off += slen
+
+        # Build str_table cursor: iterate tasks/args in order to consume entries
+        st_idx = 0
+
+        def _next_str(fallback: str) -> str:
+            nonlocal st_idx
+            if st_idx < len(str_table):
+                s = str_table[st_idx]
+                st_idx += 1
+                return s
+            return fallback
+
         regions: list[ScheduledRegion] = []
-        cum_args = 0
 
         for ri in range(nr):
             rk, sc, t_start, t_count, d_start, d_count = struct.unpack_from(
@@ -515,18 +556,20 @@ class SonataScheduleContract:
             for ti in range(t_count):
                 to = t_off + (t_start + ti) * ts
                 tid, fid, co, na, arg_base = struct.unpack_from("<iihhi", data, to)
+                kernel_id = _next_str(f"t{tid}")
                 args_list: list[ArgBinding] = []
                 for ai in range(na):
                     ao = a_off + (arg_base + ai) * ar
                     sl, d = struct.unpack_from("<ih", data, ao)
+                    arg_id = _next_str(f"a{t_start + ti}_{ai}")
                     args_list.append(ArgBinding(
-                        arg_identity=f"a{t_start + ti}_{ai}",
+                        arg_identity=arg_id,
                         runtime_slot=sl if sl >= 0 else None,
                         direction=ArgDirection(_DIR.get(d, "input")),
                     ))
                 tasks.append(ScheduledTask(
                     task_id=tid,
-                    kernel_identity=f"t{tid}",
+                    kernel_identity=kernel_id,
                     func_id=fid if fid != -1 else None,
                     core_type=_CORE.get(co, "aic"),
                     args=tuple(args_list),

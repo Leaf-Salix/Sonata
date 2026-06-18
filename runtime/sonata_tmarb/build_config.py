@@ -33,6 +33,11 @@ BUILD_CONFIG = {
             "../../upstream/pypto/runtime/src/common",
             "runtime",
         ],
+        # aicpu source: local executor + upstream runtime (for runtime_init_data_from_layout,
+        # rt_submit_*_task, DeviceArena, etc.). Upstream orchestrator uses weak symbols —
+        # no conflict with the interpreter's aicpu_entry. Scheduler .cpp files are compiled
+        # but their symbols are only resolved if referenced; the interpreter does not call
+        # into the scheduler directly.
         "source_dirs": [
             "aicpu",
             f"{UPSTREAM_TMARB}/runtime",

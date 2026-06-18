@@ -207,3 +207,22 @@ class TestBinarySerialization:
         assert args[0].runtime_slot == 0
         assert args[1].runtime_slot is None
         assert args[2].runtime_slot == 5
+
+    def test_string_table_kernel_identity_round_trip(self):
+        """W4: kernel_identity and arg_identity survive binary round-trip via string table."""
+        a1 = ArgBinding(arg_identity="input_tensor_x", runtime_slot=0, direction=ArgDirection.INPUT)
+        a2 = ArgBinding(arg_identity="output_tensor_z", runtime_slot=1, direction=ArgDirection.OUTPUT)
+        t1 = ScheduledTask(task_id=0, kernel_identity="tile_abs", func_id=3, core_type="aic",
+            args=(a1, a2))
+        t2 = ScheduledTask(task_id=1, kernel_identity="tile_add", func_id=5, core_type="aic",
+            args=(ArgBinding(arg_identity="scratch_buf"),))
+        r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1, t2),
+            deps=(ScheduleDep(producer=0, consumer=1),))
+        c = SonataScheduleContract(fingerprint="fp_str", regions=(r0,))
+        d = c.to_binary()
+        c2 = SonataScheduleContract.from_binary(d)
+        assert c2.regions[0].tasks[0].kernel_identity == "tile_abs"
+        assert c2.regions[0].tasks[1].kernel_identity == "tile_add"
+        assert c2.regions[0].tasks[0].args[0].arg_identity == "input_tensor_x"
+        assert c2.regions[0].tasks[0].args[1].arg_identity == "output_tensor_z"
+        assert c2.regions[0].tasks[1].args[0].arg_identity == "scratch_buf"
