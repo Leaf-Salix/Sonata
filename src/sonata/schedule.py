@@ -456,7 +456,7 @@ class SonataScheduleContract:
         # Build FlatSchedule header (88 bytes = 6*int32 + 64-byte fingerprint)
         magic = 0x534F4E41  # "SONA"
         version = 1
-        fp_bytes = self.fingerprint.encode("utf-8")[:63]
+        fp_bytes = self.fingerprint.encode("utf-8")[:64]
         fp_bytes += b"\x00" * (64 - len(fp_bytes))
         header = struct.pack("<iiiiii", magic, version, len(self.regions),
                              task_cursor, arg_cursor, dep_cursor) + fp_bytes
@@ -521,7 +521,6 @@ class SonataScheduleContract:
         # Parse optional string table (appended after deps)
         # Format: sequence of uint16(length) + utf8_bytes, in task/arg order.
         # One entry per task (kernel_identity), then one per arg (arg_identity).
-        str_table_end = expected_size + sum(1 for _ in range(total_tasks))  # placeholder
         str_table: list[str] = []
         if len(data) > expected_size:
             st_off = expected_size

@@ -46,21 +46,21 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
 
 // ── Set dependencies from FlatDep list ──
 
-static void set_deps(const FlatTask* ftask, const FlatDep* fdeps,
-                     int32_t total_deps,
+static void set_deps(int32_t task_index_in_region,
+                     const FlatDep* fdeps, int32_t total_deps,
+                     int32_t dep_start, int32_t num_deps,
                      const PTO2TaskId* task_ids, int32_t num_submitted,
                      PTO2TaskId* dep_buf, int32_t dep_buf_size,
                      Arg& arg) {
-    if (ftask->dep_count == 0 || task_ids == nullptr) return;
+    if (num_deps == 0 || task_ids == nullptr) return;
     uint32_t count = 0;
-    for (int32_t i = 0; i < ftask->dep_count; i++) {
-        int32_t dep_idx = ftask->dep_start + i;
+    for (int32_t i = 0; i < num_deps; i++) {
+        int32_t dep_idx = dep_start + i;
         if (dep_idx < 0 || dep_idx >= total_deps) break;
         const FlatDep& fd = fdeps[dep_idx];
+        if (fd.consumer != task_index_in_region) continue;
         if (fd.producer >= 0 && fd.producer < num_submitted) {
             if (count >= (uint32_t)dep_buf_size) {
-                // Dependency buffer full — drop remaining deps with error signal.
-                // This is a data integrity issue, not a crash.
                 break;
             }
             dep_buf[count++] = task_ids[fd.producer];
@@ -109,7 +109,6 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             continue;  // allocation failed — skip region
         }
         int32_t num_submitted = 0;
-        int32_t arg_cursor = 0;
 
         for (int32_t t = 0; t < rg.num_tasks; t++) {
             const FlatTask& ft = tasks[rg.task_start + t];
@@ -123,7 +122,8 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             Arg submit_arg;
 
             build_arg(&ft, &args[task_arg_base], sched->total_args, submit_arg);
-            set_deps(&ft, fdeps, sched->total_deps,
+            set_deps(t, fdeps, sched->total_deps,
+                     rg.dep_start, rg.num_deps,
                      task_ids, num_submitted, dep_buf, MAX_DEPS_PER_TASK,
                      submit_arg);
 
@@ -141,7 +141,6 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             }
 
             task_ids[num_submitted++] = result.task_id();
-            arg_cursor += ft.num_args;
         }
 
         delete[] task_ids;
