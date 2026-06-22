@@ -16,6 +16,7 @@
 #include "pto_runtime2.h"        // runtime_reserve_layout, runtime_init_data_from_layout, etc.
 #include "pto_runtime2_types.h"  // PTO2_TASK_WINDOW_SIZE, PTO2_HEAP_SIZE, etc.
 #include "pto_shared_memory.h"   // PTO2SharedMemoryHandle, PTO2SharedMemoryHeader
+#include "tensor.h"              // Tensor, TensorCreateInfo
 #include "pto_types.h"           // Arg, TensorArgType, PTO2ScopeMode, MixedKernels, TaskOutputTensors
 #include "pto_orchestration_api.h"  // rt_submit_aic_task, rt_submit_task, rt_scope_begin, rt_scope_end
 
@@ -24,21 +25,50 @@ using namespace pto;
 static constexpr int32_t MAX_DEPS_PER_TASK = 256;
 
 // ── Build Arg from FlatTask ──
+//
+// Looks up Tensor objects from the registry by runtime_slot index.
+// The caller (host-side framework) populates the registry from orch_args
+// before invoking aicpu_entry. If registry is nullptr, tensor-dependent
+// directions are skipped (scalar-only tasks still work).
 
 static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
-                      int32_t arg_bound, Arg& arg) {
+                      int32_t arg_bound,
+                      const Tensor* tensor_registry, int32_t registry_size,
+                      Arg& arg) {
     for (int16_t i = 0; i < ftask->num_args; i++) {
         const FlatArg& fa = fargs[i];
+        int32_t slot = fa.runtime_slot;
         switch (fa.direction) {
-            case 0:  arg.add_input(fa.runtime_slot);     break;
-            case 1:  arg.add_output(fa.runtime_slot);    break;
-            case 2:  arg.add_inout(fa.runtime_slot);     break;
-            case 3:  arg.add_scalar(fa.runtime_slot);    break;
-            case 4:  arg.add_no_dep(fa.runtime_slot);    break;
-            case 5:  arg.add_output_existing(fa.runtime_slot); break;
+            case 0:  // input
+                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                    arg.add_input(tensor_registry[slot]);
+                }
+                break;
+            case 1:  // output — pre-allocated (OUTPUT_EXISTING) or runtime-allocated
+                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                    arg.add_output(tensor_registry[slot]);
+                }
+                break;
+            case 2:  // inout
+                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                    arg.add_inout(tensor_registry[slot]);
+                }
+                break;
+            case 3:  // scalar — slot value stored directly as scalar arg
+                arg.add_scalar(slot);
+                break;
+            case 4:  // nodep
+                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                    arg.add_no_dep(tensor_registry[slot]);
+                }
+                break;
+            case 5:  // outputexisting
+                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                    arg.add_output(tensor_registry[slot]);
+                }
+                break;
             default:
-                // Unknown direction — treat as input to avoid silent data loss
-                arg.add_input(fa.runtime_slot);
+                // Unknown direction — skip to avoid silent misbinding
                 break;
         }
     }
@@ -76,7 +106,8 @@ static void set_deps(int32_t task_index_in_region,
 static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                                 const FlatRegion* regions, const FlatTask* tasks,
                                 const FlatArg* args, const FlatDep* fdeps,
-                                PTO2TaskId* dep_buf) {
+                                PTO2TaskId* dep_buf,
+                                const Tensor* tensor_registry, int32_t registry_size) {
 
     for (int32_t r = 0; r < sched->num_regions; r++) {
         const FlatRegion& rg = regions[r];
@@ -121,7 +152,8 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 
             Arg submit_arg;
 
-            build_arg(&ft, &args[task_arg_base], sched->total_args, submit_arg);
+            build_arg(&ft, &args[task_arg_base], sched->total_args,
+                      tensor_registry, registry_size, submit_arg);
             set_deps(t, fdeps, sched->total_deps,
                      rg.dep_start, rg.num_deps,
                      task_ids, num_submitted, dep_buf, MAX_DEPS_PER_TASK,
@@ -153,13 +185,20 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 // Called by simpler runtime after host-side bind. Initializes the
 // PTO2Runtime from the prebuilt arena, parses the flat schedule,
 // and runs the interpreter loop.
+//
+// tensor_registry: array of Tensor objects populated from orch_args by
+// the host-side framework. Indexed by FlatArg.runtime_slot. May be
+// nullptr if the host-side caller has not yet been updated to provide
+// tensor bindings (scalar-only tasks still work).
 
 extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
                            void* sm_ptr, uint64_t sm_size,
                            void* gm_heap, uint64_t heap_size,
                            int32_t aic_count, int32_t aiv_count,
                            int32_t task_window_size,
-                           const FlatSchedule* flat_sched) {
+                           const FlatSchedule* flat_sched,
+                           const Tensor* tensor_registry,
+                           int32_t tensor_registry_size) {
 
     if (flat_sched == nullptr || flat_sched->magic != 0x534F4E41) {
         return -1;
@@ -202,7 +241,8 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
     if (!dep_buf) return -4;
 
     // ── Run interpreter ──
-    interpret_schedule(rt, flat_sched, regions, tasks, args, fdeps, dep_buf);
+    interpret_schedule(rt, flat_sched, regions, tasks, args, fdeps, dep_buf,
+                       tensor_registry, tensor_registry_size);
     rt_orchestration_done(rt);
 
     delete[] dep_buf;
