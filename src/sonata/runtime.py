@@ -36,7 +36,7 @@ def _patch_runtime_builder() -> None:
     _orig_init = rb.RuntimeBuilder.__init__
 
     def _patched_init(self, platform: str, build_dir: str | Path | None = None) -> None:
-        _orig_init(self, platform, build_dir)
+        _orig_init(self, platform)
         config_path = sonata_dir / "build_config.py"
         if config_path.exists() and _RUNTIME_NAME not in self._runtimes:
             self._runtimes[_RUNTIME_NAME] = config_path
