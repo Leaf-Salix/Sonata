@@ -72,29 +72,36 @@ def _extract_program_from_module(module: Any) -> Any | None:
     return None
 
 
+def _extract_certified_ir(program: Any) -> Any | None:
+    """Run pass pipeline and return the IR after the last Simplify pass.
+
+    This is the "certified IR" that Sonata analyzes. We take the last
+    Simplify in the Default strategy (currently index 39 of 40 passes).
+    """
+    from pypto.ir.pass_manager import OptimizationStrategy, PassManager
+    from pypto.pypto_core import passes as _core_passes
+
+    with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
+        manager = PassManager.get_strategy(OptimizationStrategy.Default)
+        current = program
+        certified_ir = None
+        for pname, pobj in zip(manager.pass_names, manager.passes):
+            current = pobj(current)
+            if pname == "Simplify":
+                certified_ir = current
+    return certified_ir
+
+
 def _run_sonata_analysis(program: Any, entry_name: str) -> dict[str, Any] | None:
     """Run Sonata analysis on a program, return result dict or None on failure."""
     try:
         from pypto.backend import BackendType, is_backend_configured, set_backend_type
-        from pypto.ir.pass_manager import OptimizationStrategy, PassManager
-        from pypto.pypto_core import passes as _core_passes
         from sonata.pipeline import sonata_analyze
 
         if not is_backend_configured():
             set_backend_type(BackendType.Ascend910B)
 
-        with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
-            manager = PassManager.get_strategy(OptimizationStrategy.Default)
-            current = program
-            after_ccg = False
-            certified_ir = None
-            for pname, pobj in zip(manager.pass_names, manager.passes):
-                current = pobj(current)
-                if pname == "CollectCommGroups":
-                    after_ccg = True
-                elif after_ccg and pname == "Simplify":
-                    certified_ir = current
-                    break
+        certified_ir = _extract_certified_ir(program)
 
         if certified_ir is None:
             return None
@@ -133,24 +140,11 @@ def _make_patched_compile(original_compile):
                 # Fallback: run analysis if not cached from setup
                 from sonata.pipeline import sonata_analyze
                 from pypto.backend import BackendType, is_backend_configured, set_backend_type
-                from pypto.ir.pass_manager import OptimizationStrategy, PassManager
-                from pypto.pypto_core import passes as _core_passes
 
                 if not is_backend_configured():
                     set_backend_type(BackendType.Ascend910B)
 
-                with _core_passes.PassContext([], _core_passes.VerificationLevel.NONE):
-                    mgr = PassManager.get_strategy(OptimizationStrategy.Default)
-                    cur = program
-                    after_ccg = False
-                    certified_ir = None
-                    for pn, po in zip(mgr.pass_names, mgr.passes):
-                        cur = po(cur)
-                        if pn == "CollectCommGroups":
-                            after_ccg = True
-                        elif after_ccg and pn == "Simplify":
-                            certified_ir = cur
-                            break
+                certified_ir = _extract_certified_ir(program)
 
                 if certified_ir is not None:
                     sonata_result = sonata_analyze(certified_ir, entry_name=Path(str(work_dir)).name)
