@@ -40,6 +40,14 @@ _log = _logging.getLogger("sonata.schedule")
 SONATA_SCHEDULE_SCHEMA_VERSION = 2
 RUNTIME_CONTRACT = "sonata_schedule_v2"
 
+# Binary format constants — must match flat_schedule.h exactly
+_BINARY_DIR_ENCODE: dict[str, int] = {
+    "input": 0, "output": 1, "inout": 2, "scalar": 3, "nodep": 4, "outputexisting": 5,
+}
+_BINARY_DIR_DECODE: dict[int, str] = {v: k for k, v in _BINARY_DIR_ENCODE.items()}
+_BINARY_CORE_ENCODE: dict[str, int] = {"aic": 0, "aiv": 1, "mixed": 2}
+_BINARY_CORE_DECODE: dict[int, str] = {v: k for k, v in _BINARY_CORE_ENCODE.items()}
+
 
 class ArgDirection(Enum):
     """Direction of a tensor or scalar argument in a task.
@@ -406,16 +414,12 @@ class SonataScheduleContract:
         """
         import struct
 
-        # Direction → int16 (must match flat_schedule.h exactly)
-        _DIR = {"input": 0, "output": 1, "inout": 2, "scalar": 3, "nodep": 4, "outputexisting": 5}
-        # Core type → int16
-        _CORE = {"aic": 0, "aiv": 1, "mixed": 2}
-
         # Collect all tasks and deps
         flat_regions: list[bytes] = []
         flat_tasks: list[bytes] = []
         flat_args: list[bytes] = []
         flat_deps: list[bytes] = []
+        str_table_parts: list[bytes] = []
         task_cursor = 0
         dep_cursor = 0
         arg_cursor = 0
@@ -431,20 +435,24 @@ class SonataScheduleContract:
                                            dep_cursor, num_deps))
 
             for task in region.tasks:
-                core = _CORE.get(task.core_type, 0)
+                core = _BINARY_CORE_ENCODE.get(task.core_type, 0)
                 num_args = len(task.args)
-                # Write arg_base (absolute index into arg blob), not dep info
                 flat_tasks.append(struct.pack("<iihhi",
                     task.task_id,
                     task.func_id if task.func_id is not None else -1,
                     core, num_args,
                     arg_cursor))
 
+                raw = task.kernel_identity.encode("utf-8")
+                str_table_parts.append(struct.pack("<H", len(raw)) + raw)
+
                 for arg in task.args:
-                    d = _DIR.get(arg.direction.value if hasattr(arg.direction, "value") else arg.direction, 0)
-                    # runtime_slot: -1 means unset (slot 0 is valid)
+                    d = _BINARY_DIR_ENCODE.get(arg.direction.value, 0)
                     sl = arg.runtime_slot if arg.runtime_slot is not None else -1
                     flat_args.append(struct.pack("<ih", sl, d))
+
+                    raw = arg.arg_identity.encode("utf-8")
+                    str_table_parts.append(struct.pack("<H", len(raw)) + raw)
                 arg_cursor += num_args
 
             for dep in region.deps:
@@ -461,21 +469,9 @@ class SonataScheduleContract:
         header = struct.pack("<iiiiii", magic, version, len(self.regions),
                              task_cursor, arg_cursor, dep_cursor) + fp_bytes
 
-        # Build string table: preserves kernel_identity and arg_identity
-        # for lossless round-trip. One entry per task (kernel_identity),
-        # then one entry per arg (arg_identity), in serialization order.
-        # Each entry: uint16(length) + UTF-8 bytes.
-        str_table = bytearray()
-        for region in self.regions:
-            for task in region.tasks:
-                raw = task.kernel_identity.encode("utf-8")
-                str_table += struct.pack("<H", len(raw)) + raw
-                for arg in task.args:
-                    raw = arg.arg_identity.encode("utf-8")
-                    str_table += struct.pack("<H", len(raw)) + raw
-
         return (header + b"".join(flat_regions) + b"".join(flat_tasks)
-                + b"".join(flat_args) + b"".join(flat_deps) + bytes(str_table))
+                + b"".join(flat_args) + b"".join(flat_deps)
+                + b"".join(str_table_parts))
 
     @classmethod
     def from_binary(cls, data: bytes) -> "SonataScheduleContract":
@@ -486,8 +482,6 @@ class SonataScheduleContract:
         ``+ total_args(4) + total_deps(4) + fingerprint(64)``
         """
         import struct
-        _DIR = {0: "input", 1: "output", 2: "inout", 3: "scalar", 4: "nodep", 5: "outputexisting"}
-        _CORE = {0: "aic", 1: "aiv", 2: "mixed"}
 
         hdr_fmt = "<iiiiii"  # magic, version, num_regions, total_tasks, total_args, total_deps
         hdr_size_ints = struct.calcsize(hdr_fmt)  # 24
@@ -524,15 +518,20 @@ class SonataScheduleContract:
         str_table: list[str] = []
         if len(data) > expected_size:
             st_off = expected_size
+            truncated = False
             while st_off < len(data):
                 if st_off + 2 > len(data):
+                    truncated = True
                     break
                 slen = struct.unpack_from("<H", data, st_off)[0]
                 st_off += 2
                 if st_off + slen > len(data):
+                    truncated = True
                     break
                 str_table.append(data[st_off:st_off + slen].decode("utf-8", errors="replace"))
                 st_off += slen
+            if truncated:
+                _log.warning("string table truncated at byte %d — falling back to generated names", st_off)
 
         # Build str_table cursor: iterate tasks/args in order to consume entries
         st_idx = 0
@@ -564,13 +563,13 @@ class SonataScheduleContract:
                     args_list.append(ArgBinding(
                         arg_identity=arg_id,
                         runtime_slot=sl if sl >= 0 else None,
-                        direction=ArgDirection(_DIR.get(d, "input")),
+                        direction=ArgDirection(_BINARY_DIR_DECODE.get(d, "input")),
                     ))
                 tasks.append(ScheduledTask(
                     task_id=tid,
                     kernel_identity=kernel_id,
                     func_id=fid if fid != -1 else None,
-                    core_type=_CORE.get(co, "aic"),
+                    core_type=_BINARY_CORE_DECODE.get(co, "aic"),
                     args=tuple(args_list),
                 ))
             deps: list[ScheduleDep] = []

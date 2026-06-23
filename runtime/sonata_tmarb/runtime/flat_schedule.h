@@ -6,6 +6,10 @@
 //   FlatTask[T]       — T task descriptors
 //   FlatArg[A]        — A arg bindings
 //   FlatDep[D]        — D dependency edges
+//   (optional) string table — uint16(length) + UTF-8 entries for
+//                  kernel_identity (T entries) and arg_identity (A entries).
+//                  Appended by Python to_binary; from_binary falls back
+//                  to generated names when the string table is absent.
 
 #ifndef SONATA_TMARB_RUNTIME_H
 #define SONATA_TMARB_RUNTIME_H

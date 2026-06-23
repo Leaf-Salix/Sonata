@@ -32,7 +32,6 @@ static constexpr int32_t MAX_DEPS_PER_TASK = 256;
 // directions are skipped (scalar-only tasks still work).
 
 static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
-                      int32_t arg_bound,
                       const Tensor* tensor_registry, int32_t registry_size,
                       Arg& arg) {
     for (int16_t i = 0; i < ftask->num_args; i++) {
@@ -44,7 +43,8 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
                     arg.add_input(tensor_registry[slot]);
                 }
                 break;
-            case 1:  // output — pre-allocated (OUTPUT_EXISTING) or runtime-allocated
+            case 1:  // output
+            case 5:  // outputexisting — same runtime behavior as output
                 if (tensor_registry && slot >= 0 && slot < registry_size) {
                     arg.add_output(tensor_registry[slot]);
                 }
@@ -60,11 +60,6 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
             case 4:  // nodep
                 if (tensor_registry && slot >= 0 && slot < registry_size) {
                     arg.add_no_dep(tensor_registry[slot]);
-                }
-                break;
-            case 5:  // outputexisting
-                if (tensor_registry && slot >= 0 && slot < registry_size) {
-                    arg.add_output(tensor_registry[slot]);
                 }
                 break;
             default:
@@ -112,11 +107,11 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
     for (int32_t r = 0; r < sched->num_regions; r++) {
         const FlatRegion& rg = regions[r];
 
-        // Bounds check: validate region's task and dep ranges
-        if (rg.task_start < 0 || rg.task_start + rg.num_tasks > sched->total_tasks) {
+        // Bounds check: validate region's task and dep ranges (overflow-safe)
+        if (rg.task_start < 0 || rg.num_tasks > sched->total_tasks - rg.task_start) {
             continue;  // invalid region bounds — skip
         }
-        if (rg.dep_start < 0 || rg.dep_start + rg.num_deps > sched->total_deps) {
+        if (rg.dep_start < 0 || rg.num_deps > sched->total_deps - rg.dep_start) {
             continue;  // invalid dep bounds — skip
         }
 
@@ -144,15 +139,15 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         for (int32_t t = 0; t < rg.num_tasks; t++) {
             const FlatTask& ft = tasks[rg.task_start + t];
 
-            // Bounds check arg range
+            // Bounds check arg range (overflow-safe)
             int32_t task_arg_base = ft.arg_base;
-            if (task_arg_base < 0 || task_arg_base + ft.num_args > sched->total_args) {
+            if (task_arg_base < 0 || ft.num_args > sched->total_args - task_arg_base) {
                 continue;  // invalid arg range — skip task
             }
 
             Arg submit_arg;
 
-            build_arg(&ft, &args[task_arg_base], sched->total_args,
+            build_arg(&ft, &args[task_arg_base],
                       tensor_registry, registry_size, submit_arg);
             set_deps(t, fdeps, sched->total_deps,
                      rg.dep_start, rg.num_deps,
