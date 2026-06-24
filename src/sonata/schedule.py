@@ -29,6 +29,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from .directions import normalize_direction
+from .guard import GuardSeverity
+from .score import Score
+from .serialization import score_fingerprint as _score_fingerprint
+
+if TYPE_CHECKING:
+    from .pipeline import SonataAnalysisResult
+
 
 # Binary flat schedule format version.  Bump when the wire layout changes.
 # See flat_schedule.h for the C-side BINARY_FORMAT_VERSION.
@@ -38,14 +46,6 @@ BINARY_FORMAT_VERSION = 2
 class ScheduleDecodeError(ValueError):
     """Raised when a binary schedule blob fails validation (CRC, magic, version)."""
     pass
-
-from .directions import normalize_direction
-from .guard import GuardSeverity
-from .score import Score
-from .serialization import score_fingerprint as _score_fingerprint
-
-if TYPE_CHECKING:
-    from .pipeline import SonataAnalysisResult
 
 _log = _logging.getLogger("sonata.schedule")
 
