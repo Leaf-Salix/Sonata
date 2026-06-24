@@ -2,6 +2,7 @@
 
 import ctypes
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -641,3 +642,37 @@ class TestBinarySerialization:
         assert c2.regions[0].tasks[0].args[0].arg_identity == "input_tensor_x"
         assert c2.regions[0].tasks[0].args[1].arg_identity == "output_tensor_z"
         assert c2.regions[0].tasks[1].args[0].arg_identity == "scratch_buf"
+
+
+class TestGoldenFixtures:
+    """A4: Golden binary regression tests."""
+
+    FIXTURE_DIR = Path(__file__).parent / "fixtures" / "binary"
+
+    @pytest.mark.parametrize("name,exp_fp,exp_regions", [
+        ("single-region", "golden_single", 1),
+        ("multi-region", "golden_multi", 2),
+        ("empty-deps", "golden_nodeps", 1),
+        ("string-table", "golden_str", 1),
+    ])
+    def test_golden_binary_loads(self, name, exp_fp, exp_regions):
+        """Golden .bin files load correctly via from_binary."""
+        bin_path = self.FIXTURE_DIR / f"{name}.bin"
+        assert bin_path.exists(), f"Missing golden fixture: {bin_path}"
+        data = bin_path.read_bytes()
+        c = SonataScheduleContract.from_binary(data)
+        assert c.fingerprint == exp_fp, f"{name}: fingerprint mismatch"
+        assert len(c.regions) == exp_regions, f"{name}: region count mismatch"
+
+    @pytest.mark.parametrize("name", [
+        "single-region", "multi-region", "empty-deps", "string-table",
+    ])
+    def test_golden_deterministic(self, name):
+        """Re-serializing a golden fixture produces identical bytes."""
+        bin_path = self.FIXTURE_DIR / f"{name}.bin"
+        data = bin_path.read_bytes()
+        c = SonataScheduleContract.from_binary(data)
+        re_encoded = c.to_binary()
+        assert data == re_encoded, (
+            f"{name}: re-serialized bytes differ from golden (determinism failure)"
+        )
