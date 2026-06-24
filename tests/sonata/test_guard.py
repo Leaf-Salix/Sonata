@@ -49,8 +49,8 @@ class TestGuardSeverity:
         assert str(GUARD_SEVERITY_HARD) == "hard"
     
     def test_repr_format(self):
-        assert repr(GUARD_SEVERITY_SOFT) == "GuardSeverity('soft')"
-        assert repr(GUARD_SEVERITY_HARD) == "GuardSeverity('hard')"
+        assert repr(GUARD_SEVERITY_SOFT) == "<GuardSeverity.SOFT: 'soft'>"
+        assert repr(GUARD_SEVERITY_HARD) == "<GuardSeverity.HARD: 'hard'>"
 
 
 class TestShapeAssumption:

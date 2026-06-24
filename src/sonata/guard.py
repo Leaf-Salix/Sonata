@@ -54,50 +54,50 @@ for detailed design decisions and trade-offs.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
+from pathlib import Path
 from typing import Any, Iterable, Optional
+import json
 import logging
 import warnings
 
 _log = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class GuardSeverity:
+class GuardSeverity(StrEnum):
     """Classification of guard invalidation severity.
 
-    Attributes:
-        value: String representation of the severity level.
-            Must be "soft" or "hard".
-        soft: Parameter-level change that can be handled by in-place update
+    Members:
+        SOFT: Parameter-level change that can be handled by in-place update
             of plan handle. Does not require full replan.
-        hard: Structure-level change that requires rebuilding the plan handle
+        HARD: Structure-level change that requires rebuilding the plan handle
             or full replanning from Score.
     """
 
-    value: str
-
-    def __post_init__(self) -> None:
-        if self.value not in ("soft", "hard"):
-            raise ValueError(
-                f"GuardSeverity.value must be 'soft' or 'hard', got {self.value!r}"
-            )
-
-    def __str__(self) -> str:
-        return self.value
-
-    def __repr__(self) -> str:
-        return f"GuardSeverity({self.value!r})"
+    SOFT = "soft"
+    HARD = "hard"
 
     @property
     def requires_replan(self) -> bool:
         """Return True if this severity requires full replanning."""
-        return self.value == "hard"
+        return self == self.HARD
+
+    @classmethod
+    def _missing_(cls, value):
+        """Backward-compatible lookup: accept legacy string values.
+
+        Handles case variations and direct string construction from
+        serialized JSON (GuardSeverity("soft") → GuardSeverity.SOFT).
+        """
+        for member in cls:
+            if member.value.lower() == str(value).lower():
+                return member
+        return cls.HARD  # safe default
 
 
-# Pre-defined instances for convenience
-GUARD_SEVERITY_SOFT = GuardSeverity("soft")
-GUARD_SEVERITY_HARD = GuardSeverity("hard")
+# Pre-defined references for backward compat (now just aliases)
+GUARD_SEVERITY_SOFT = GuardSeverity.SOFT
+GUARD_SEVERITY_HARD = GuardSeverity.HARD
 
 
 @dataclass(frozen=True)
