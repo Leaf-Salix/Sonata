@@ -667,12 +667,12 @@ class TestGoldenFixtures:
     @pytest.mark.parametrize("name", [
         "single-region", "multi-region", "empty-deps", "string-table",
     ])
-    def test_golden_deterministic(self, name):
-        """Re-serializing a golden fixture produces identical bytes."""
+    def test_golden_round_trip_fidelity(self, name):
+        """Deserialize then re-serialize golden fixture produces identical bytes."""
         bin_path = self.FIXTURE_DIR / f"{name}.bin"
         data = bin_path.read_bytes()
         c = SonataScheduleContract.from_binary(data)
         re_encoded = c.to_binary()
         assert data == re_encoded, (
-            f"{name}: re-serialized bytes differ from golden (determinism failure)"
+            f"{name}: re-serialized bytes differ from golden (round-trip fidelity failure)"
         )

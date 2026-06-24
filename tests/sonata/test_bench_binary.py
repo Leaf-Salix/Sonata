@@ -84,7 +84,7 @@ def _fmt_us(us: float) -> str:
     return f"{us / 1000:.2f} ms"
 
 
-def run_benchmark() -> dict:
+def run_benchmark() -> list[dict]:
     """Run benchmark for all size tiers and return results."""
     sizes = [10, 50, 200, 1000]
     results = []
@@ -158,6 +158,7 @@ def test_bench_binary_vs_json():
         )
 
     print(f"\n✅ Benchmark complete: binary is smaller and faster at all sizes")
+    return results
 
 
 def save_report(results: list) -> None:

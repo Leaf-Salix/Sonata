@@ -9,7 +9,6 @@ Produces deterministic .bin files for:
 Run: PYTHONPATH=src python tests/sonata/fixtures/binary/gen_golden.py
 """
 
-import struct
 from pathlib import Path
 
 from sonata.schedule import (
@@ -18,16 +17,10 @@ from sonata.schedule import (
     ScheduleDep,
     ScheduledRegion,
     ScheduledTask,
-    ScopeMode,
     SonataScheduleContract,
 )
 
 FIXTURE_DIR = Path(__file__).parent
-
-
-def _make(contract: SonataScheduleContract) -> bytes:
-    """Return deterministic binary for a contract."""
-    return contract.to_binary()
 
 
 def gen_all() -> dict[str, SonataScheduleContract]:
@@ -83,7 +76,7 @@ def gen_all() -> dict[str, SonataScheduleContract]:
 
 
 def write_binaries(fixtures: dict[str, SonataScheduleContract]) -> None:
-    """Write .bin files and reference .json files."""
+    """Write .bin files."""
     for name, contract in fixtures.items():
         bin_path = FIXTURE_DIR / f"{name}.bin"
         bin_path.write_bytes(contract.to_binary())
