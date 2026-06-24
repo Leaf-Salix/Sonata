@@ -359,8 +359,14 @@ class TestBinaryCrc:
         crc_bytes = data[88:92]
         import struct, zlib
         crc_value = struct.unpack_from("<I", crc_bytes, 0)[0]
-        # CRC covers data[92:]
-        expected = zlib.crc32(data[92:])
+        # CRC covers only struct arrays (deterministic from header fields),
+        # not the optional string table.
+        s = _CFlatSchedule.from_buffer_copy(data[:88])
+        arrays_size = (s.num_regions * ctypes.sizeof(_CFlatRegion)
+                       + s.total_tasks * ctypes.sizeof(_CFlatTask)
+                       + s.total_args * ctypes.sizeof(_CFlatArg)
+                       + s.total_deps * ctypes.sizeof(_CFlatDep))
+        expected = zlib.crc32(data[92:92 + arrays_size])
         assert crc_value == expected, (
             f"CRC mismatch: stored={crc_value:#010x}, computed={expected:#010x}"
         )
@@ -555,7 +561,7 @@ class TestBinarySerialization:
             SonataScheduleContract.from_binary(data)
 
     def test_truncated_data_rejected(self):
-        with pytest.raises(ValueError, match="too short"):
+        with pytest.raises(ScheduleDecodeError, match="too short"):
             SonataScheduleContract.from_binary(b"\x00" * 10)
 
     def test_large_schedule(self):

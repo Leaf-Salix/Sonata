@@ -119,6 +119,7 @@ class ScheduleGuard:
     dimension: int | None = None
     min_value: int | None = None
     max_value: int | None = None
+    note: str | None = None
     expression: str | None = None
     failure_code: str | None = None
     failure_message: str | None = None
@@ -487,12 +488,15 @@ class SonataScheduleContract:
         header = struct.pack("<iiiiii", magic, version, len(self.regions),
                              task_cursor, arg_cursor, dep_cursor) + fp_bytes
 
-        # Assemble payload (arrays + string table) and compute CRC-32
-        payload = (b"".join(flat_regions) + b"".join(flat_tasks)
-                   + b"".join(flat_args) + b"".join(flat_deps)
-                   + b"".join(str_table_parts))
-        crc = zlib.crc32(payload)
-        return header + struct.pack("<I", crc) + payload
+        # Assemble payload (struct arrays + optional string table).
+        # CRC-32 covers only the struct arrays (deterministic from header
+        # fields); the optional string table is excluded to keep the
+        # validation range well-defined without parsing it first.
+        struct_arrays = (b"".join(flat_regions) + b"".join(flat_tasks)
+                         + b"".join(flat_args) + b"".join(flat_deps))
+        all_payload = struct_arrays + b"".join(str_table_parts)
+        crc = zlib.crc32(struct_arrays)
+        return header + struct.pack("<I", crc) + all_payload
 
     @classmethod
     def from_binary(cls, data: bytes) -> "SonataScheduleContract":
@@ -517,17 +521,26 @@ class SonataScheduleContract:
             raise ScheduleDecodeError(f"bad magic: {magic:#x}")
 
         # Determine payload offset based on version
+        rs = struct.calcsize("<iiiiii")   # FlatRegion = 24
+        ts = struct.calcsize("<iihhi")    # FlatTask = 16
+        ar = struct.calcsize("<ih")       # FlatArg  = 6
+        ds = struct.calcsize("<ii")       # FlatDep  = 8
+
         if version == 1:
             payload_off = hdr_size  # 88 — no CRC field
         elif version == BINARY_FORMAT_VERSION:
             payload_off = hdr_size + 4  # 92 — skip 4-byte CRC
-            # Validate CRC-32 covering everything after the CRC field
+            # Validate CRC-32 covering only the declared struct arrays + string table
             if len(data) < payload_off:
                 raise ScheduleDecodeError(
                     f"v2 data too short for CRC: {len(data)} < {payload_off}"
                 )
-            expected = struct.unpack_from("<I", data, 88)[0]
-            actual = zlib.crc32(data[92:])
+            expected = struct.unpack_from("<I", data, hdr_size)[0]
+            # CRC covers only the struct arrays (deterministic from header
+            # fields).  String table is excluded — it's optional and its
+            # length is unknown until parsed.
+            arrays_size = nr * rs + total_tasks * ts + total_args * ar + total_deps * ds
+            actual = zlib.crc32(data[92:92+arrays_size])
             if expected != actual:
                 raise ScheduleDecodeError(
                     f"CRC mismatch: payload crc32={actual:#010x}, expected={expected:#010x}"
@@ -535,11 +548,6 @@ class SonataScheduleContract:
         else:
             raise ScheduleDecodeError(f"unsupported version: {version}")
         fp = data[hdr_size_ints : hdr_size_ints + 64].split(b"\x00", 1)[0].decode()
-
-        rs = struct.calcsize("<iiiiii")   # FlatRegion = 24
-        ts = struct.calcsize("<iihhi")    # FlatTask = 16
-        ar = struct.calcsize("<ih")       # FlatArg  = 6
-        ds = struct.calcsize("<ii")       # FlatDep  = 8
 
         # Compute blob offsets from header fields
         r_off = payload_off

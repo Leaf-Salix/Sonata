@@ -25,7 +25,7 @@ static inline PTO2Runtime *sonata_current_runtime() { return framework_current_r
 
 static inline TaskOutputTensors sonata_rt_submit_task(const MixedKernels &mk, const Arg &args) {
     PTO2Runtime *rt = sonata_current_runtime();
-    if (rt->ops->is_fatal(rt)) return TaskOutputTensors{};
+    if (rt == nullptr || rt->ops->is_fatal(rt)) return TaskOutputTensors{};
     return rt->ops->submit_task(rt, mk, args);
 }
 
