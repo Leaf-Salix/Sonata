@@ -14,8 +14,10 @@ BUILD_CONFIG = {
     "aicore": {
         "include_dirs": [
             f"{UPSTREAM_TMARB}/runtime",
+            f"{UPSTREAM_TMARB}/common",
             f"{UPSTREAM_TMARB}/orchestration",
             f"{UPSTREAM_TMARB}/aicore",
+            f"{UPSTREAM_TMARB}/..",
             "../../upstream/pypto/runtime/src/common",
         ],
         "source_dirs": [
@@ -25,13 +27,16 @@ BUILD_CONFIG = {
     "aicpu": {
         "include_dirs": [
             f"{UPSTREAM_TMARB}/runtime",
+            f"{UPSTREAM_TMARB}/common",
             f"{UPSTREAM_TMARB}/orchestration",
             f"{UPSTREAM_TMARB}/aicpu",
+            f"{UPSTREAM_TMARB}/..",
             f"{UPSTREAM_TMARB}/runtime/scheduler",
             f"{UPSTREAM_TMARB}/runtime/shared",
             f"{UPSTREAM_TMARB}/runtime/backend",
             "../../upstream/pypto/runtime/src/common",
             "runtime",
+            "include",
         ],
         # aicpu source: local interpreter executor + upstream runtime shared
         # infrastructure (runtime_init_data_from_layout, rt_submit_*_task,
@@ -52,11 +57,15 @@ BUILD_CONFIG = {
     "host": {
         "include_dirs": [
             f"{UPSTREAM_TMARB}/runtime",
+            f"{UPSTREAM_TMARB}/common",
             f"{UPSTREAM_TMARB}/orchestration",
             f"{UPSTREAM_TMARB}/host",
             f"{UPSTREAM_TMARB}/runtime/shared",
+            f"{UPSTREAM_TMARB}/..",
             "../../upstream/pypto/runtime/src/common",
+            "../../upstream/pypto/runtime/src/common/log/include",
             "runtime",
+            "include",
         ],
         "source_dirs": ["host"],
     },

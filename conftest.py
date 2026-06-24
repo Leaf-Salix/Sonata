@@ -1,5 +1,7 @@
 # Auto-loaded by pytest at rootdir level.
 # Loads Sonata st test hooks for --with-sonata flag.
+# Note: --platform flag comes from upstream/pypto/tests/st/conftest.py
+# which is discovered by pytest's conftest walk automatically.
 
 import importlib.util
 import sys
