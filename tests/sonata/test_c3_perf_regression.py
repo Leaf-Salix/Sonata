@@ -29,6 +29,12 @@ PERF_BUDGET_PCT = 5.0  # allowed overhead percentage
 
 SAMPLES = 3  # reduced from 5 for CI speed; adjust for tighter confidence
 
+# a2a3sim requires PTOAS_ROOT (set in development venv, absent in CI)
+_skip_no_a2a3sim = pytest.mark.skipif(
+    "PTOAS_ROOT" not in os.environ,
+    reason="a2a3sim not available (PTOAS_ROOT not set)",
+)
+
 
 def _run_test(with_sonata: bool, sample: int) -> float:
     """Run test_abs.py once, return wall-clock seconds."""
@@ -108,6 +114,7 @@ def run_c3_benchmark() -> dict:
     }
 
 
+@_skip_no_a2a3sim
 def test_c3_performance_regression():
     """Assert Sonata overhead < 5% of baseline."""
     results = run_c3_benchmark()

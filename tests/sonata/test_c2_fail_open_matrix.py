@@ -22,6 +22,12 @@ from pathlib import Path
 
 import pytest
 
+# a2a3sim requires PTOAS_ROOT (set in development venv, absent in CI)
+_skip_no_a2a3sim = pytest.mark.skipif(
+    "PTOAS_ROOT" not in os.environ,
+    reason="a2a3sim not available (PTOAS_ROOT not set)",
+)
+
 from sonata.schedule import (
     ArgBinding,
     ArgDirection,
@@ -113,6 +119,7 @@ class TestC2FailOpenMatrix:
         # No schedule artifacts would be written for ineligible results
 
     # Pipeline-level test: run ST tests with --with-sonata
+    @_skip_no_a2a3sim
     def test_st_pipeline_no_sonata_caused_failures(self):
         """Run ST suite with --with-sonata; verify 0 Sonata-caused failures.
 
