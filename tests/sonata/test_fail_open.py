@@ -110,3 +110,32 @@ def test_hook_struct_sizes(harness_output):
     assert "PASS: FlatTask is 16 bytes (packed)" in harness_output.stdout
     assert "PASS: FlatArg is 6 bytes (packed)" in harness_output.stdout
     assert "PASS: FlatDep is 8 bytes (packed)" in harness_output.stdout
+
+
+def test_cross_language_binary_validation():
+    """Python-produced .bin validated by C sonata_hook in cross-language round-trip."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    from sonata.schedule import SonataScheduleContract
+
+    c = SonataScheduleContract(fingerprint="cross_lang")
+    data = c.to_binary()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bin_path = Path(tmpdir) / "test.bin"
+        bin_path.write_bytes(data)
+
+        result = subprocess.run(
+            [str(HARNESS_BIN), str(bin_path)],
+            capture_output=True, text=True, timeout=30
+        )
+        print(result.stdout)
+        if result.stderr:
+            print("STDERR:", result.stderr)
+        assert result.returncode == 0, (
+            f"Cross-language validation failed (rc={result.returncode}):\n{result.stdout}"
+        )
+        assert "PASS: process_schedule OK" in result.stdout, (
+            f"Hook did not accept Python-produced .bin:\n{result.stdout}"
+        )

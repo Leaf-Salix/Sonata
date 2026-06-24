@@ -305,9 +305,70 @@ static void test_hook_info_null() {
     CHECK(rc == SONATA_HOOK_ERROR, "hook_info returns ERROR for null output");
 }
 
+// ── Test: load and validate a binary schedule from file ──
+//
+// Reads a .bin file (produced by Python's to_binary()), sets SONATA_ENABLED,
+// and validates it through the full hook pipeline. This exercises the
+// cross-language round-trip: Python serialization → C validation + dispatch.
+
+static bool try_load_and_validate(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (f == nullptr) {
+        fprintf(stderr, "ERROR: cannot open %s\n", path);
+        return false;
+    }
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) {
+        fprintf(stderr, "ERROR: empty file %s\n", path);
+        fclose(f);
+        return false;
+    }
+    auto* buf = new uint8_t[static_cast<size_t>(sz)];
+    size_t nread = fread(buf, 1, static_cast<size_t>(sz), f);
+    fclose(f);
+    if (static_cast<long>(nread) != sz) {
+        fprintf(stderr, "ERROR: short read %s\n", path);
+        delete[] buf;
+        return false;
+    }
+
+    setenv("SONATA_ENABLED", "1", 1);
+    if (sonata_hook_init() != SONATA_HOOK_OK) {
+        fprintf(stderr, "ERROR: sonata_hook_init failed\n");
+        delete[] buf;
+        unsetenv("SONATA_ENABLED");
+        return false;
+    }
+
+    g_aicpu_return_code = 0;
+    int rc = sonata_hook_process_schedule(buf, static_cast<size_t>(sz));
+    if (rc != SONATA_HOOK_OK) {
+        printf("  FAIL: process_schedule returned %d for %s\n", rc, path);
+        sonata_hook_fini();
+        delete[] buf;
+        unsetenv("SONATA_ENABLED");
+        return false;
+    }
+    printf("  PASS: process_schedule OK for %s (aicpu_entry called %d time(s))\n",
+           path, g_aicpu_call_count);
+
+    sonata_hook_fini();
+    delete[] buf;
+    unsetenv("SONATA_ENABLED");
+    return true;
+}
+
 // ── Main ──
 
-int main() {
+int main(int argc, char** argv) {
+    // If a file path is given, validate it and exit
+    if (argc >= 2) {
+        bool ok = try_load_and_validate(argv[1]);
+        return ok ? 0 : 1;
+    }
+
     printf("=== Sonata Hook Fail-Open Test Harness ===\n");
     printf("sizeof(FlatSchedule) = %zu\n", sizeof(FlatSchedule));
     printf("sizeof(FlatRegion)   = %zu\n", sizeof(FlatRegion));
