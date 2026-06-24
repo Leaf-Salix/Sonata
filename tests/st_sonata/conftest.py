@@ -161,6 +161,17 @@ def _make_patched_compile(original_compile):
                 persistent_path = sonata_result.save(persistent_dir / f"{Path(str(work_dir)).name}_sonata_plan.json")
                 log.info("[SONATA] persistent copy: %s", persistent_path)
 
+                # v0.27: Write sonata_schedule.json + sonata_schedule.bin
+                try:
+                    from sonata.pipeline import _write_bound_schedule
+                    _write_bound_schedule(sonata_result, result, Path(str(work_dir)))
+                    log.info(
+                        "[SONATA] bound schedule + binary written to %s",
+                        work_dir,
+                    )
+                except Exception as exc:
+                    log.debug("[SONATA] _write_bound_schedule skipped: %s", exc)
+
                 # v0.22: Inject RUNTIME_CONFIG["sonata"] into kernel_config.py
                 sonata_cfg = sonata_result.to_runtime_config()
                 _patch_kernel_config_sonata(Path(str(work_dir)), sonata_cfg.to_run_config_dict())
