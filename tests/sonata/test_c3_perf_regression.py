@@ -12,6 +12,7 @@ Uses subprocess with ``--rootdir`` to ensure correct conftest discovery.
 """
 
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -27,12 +28,13 @@ VENV_PYTHON = Path(sys.executable)
 REPORT_DIR = PROJ_ROOT / "reports" / "detail" / "review"
 PERF_BUDGET_PCT = 5.0  # allowed overhead percentage
 
-SAMPLES = 3  # reduced from 5 for CI speed; adjust for tighter confidence
+SAMPLES = 3
 
-# a2a3sim requires PTOAS_ROOT (set in development venv, absent in CI)
+# a2a3sim tests need PTOAS cross-compiler (absent in CI, present on dev machine)
+_HAS_A2A3SIM = shutil.which("ptoas") is not None or bool(os.environ.get("PTOAS_ROOT"))
 _skip_no_a2a3sim = pytest.mark.skipif(
-    "PTOAS_ROOT" not in os.environ,
-    reason="a2a3sim not available (PTOAS_ROOT not set)",
+    not _HAS_A2A3SIM,
+    reason="a2a3sim not available (PTOAS not found)",
 )
 
 

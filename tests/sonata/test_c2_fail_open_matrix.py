@@ -13,6 +13,7 @@ Pipeline-level test runs ST suite with --with-sonata and confirms 0 Sonata-cause
 """
 
 import os
+import shutil
 import copy
 import subprocess
 import struct
@@ -22,10 +23,11 @@ from pathlib import Path
 
 import pytest
 
-# a2a3sim requires PTOAS_ROOT (set in development venv, absent in CI)
+# a2a3sim tests need PTOAS cross-compiler (absent in CI, present on dev machine)
+_HAS_A2A3SIM = shutil.which("ptoas") is not None or bool(os.environ.get("PTOAS_ROOT"))
 _skip_no_a2a3sim = pytest.mark.skipif(
-    "PTOAS_ROOT" not in os.environ,
-    reason="a2a3sim not available (PTOAS_ROOT not set)",
+    not _HAS_A2A3SIM,
+    reason="a2a3sim not available (PTOAS not found)",
 )
 
 from sonata.schedule import (
