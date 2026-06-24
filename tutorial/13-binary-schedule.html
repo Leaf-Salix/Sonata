@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial 13 - 二进制 Schedule 与 Hook</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; max-width: 760px; margin: 2.5em auto; padding: 0 1.2em; color: #1a1a1a; }
+  h1 { font-size: 1.6em; border-bottom: 2px solid #ddd; padding-bottom: .3em; }
+  h2 { font-size: 1.15em; color: #2563eb; margin-top: 2em; }
+  h3 { font-size: 1.05em; margin-top: 1.5em; }
+  code { background: #f3f4f6; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+  pre { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; overflow-x: auto; font-size: .88em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #d1d5db; padding: .45em .7em; text-align: left; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .callout { padding: .8em 1em; border-radius: 6px; margin: 1em 0; font-size: .93em; }
+  .callout.info { background: #dbeafe; border: 1px solid #93c5fd; }
+  .callout.warn { background: #fef3c7; border: 1px solid #fcd34d; }
+  .callout.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+  .diagram { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1em; font-family: monospace; font-size: .88em; line-height: 1.6; white-space: pre; overflow-x: auto; }
+  .nav { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e5e7eb; font-size: .9em; }
+  .nav a { color: #2563eb; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .arrow { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<h1>Tutorial 13 - 二进制 Schedule 与 Hook 接口</h1>
+
+<div class="callout warn">
+  <strong>前置知识：</strong>本教程假设你已经了解：
+  <ul>
+    <li>Sonata Schedule Contract 的基本概念（参见 <a href="04-serialization.html">Tutorial 4</a>）</li>
+    <li><code>RUNTIME_CONFIG</code> 注入机制（参见 <a href="12-runtime-config.html">Tutorial 12</a>）</li>
+    <li>C 语言基本知识（对 Hook 部分有帮助）</li>
+  </ul>
+</div>
+
+<h2>提问：什么是二进制 Schedule？</h2>
+
+<p>Sonata Schedule Contract 有两种序列化格式：</p>
+
+<table>
+  <tr><th>特性</th><th>JSON (<code>sonata_schedule.json</code>)</th><th>Binary (<code>sonata_schedule.bin</code>)</th></tr>
+  <tr><td>大小</td><td>~3.5KB (10 tasks)</td><td>~0.6KB (10 tasks) — <strong>6x 更小</strong></td></tr>
+  <tr><td>编码</td><td><code>to_dict()</code> + <code>json.dumps()</code></td><td><code>to_binary()</code> — 紧凑的 C struct</td></tr>
+  <tr><td>解码</td><td><code>json.loads()</code> + <code>from_dict()</code></td><td><code>from_binary()</code> — C 端直接读取 struct</td></tr>
+  <tr><td>人类可读</td><td>✅ 是</td><td>❌ 否（可用 <code>hexdump</code> 查看）</td></tr>
+  <tr><td>C 端解析</td><td>需要 JSON 解析器</td><td><strong>零解析</strong> — struct fields 直接内存对齐读取</td></tr>
+  <tr><td>完整性</td><td>无校验</td><td>CRC-32 校验 (v2+)</td></tr>
+</table>
+
+<div class="callout success">
+  <strong>结论：</strong>二进制格式的主要优势在于 C 端可以直接通过 struct pointer 读取字段，不需要 JSON 解析器。同时占用空间减少 6x，附带 CRC-32 完整性校验。
+</div>
+
+<h2>提问：二进制格式的布局是什么？</h2>
+
+<p>二进制格式的内存布局和 <code>flat_schedule.h</code> 中的 C struct 一一对应：</p>
+
+<div class="diagram">Offset  Size  Field
+────── ────  ──────────────────────────────────
+     0    4   magic (0x534F4E41 = "SONA")
+     4    4   version (1=v1, 2=v2 with CRC)
+     8    4   num_regions
+    12    4   total_tasks
+    16    4   total_args
+    20    4   total_deps
+    24   64   fingerprint (padded with \0)
+────── ────  ──────────────────────────────────
+    88    4   [v2 only] CRC-32 of struct arrays
+────── ────  ──────────────────────────────────
+    92    N   FlatRegion[] (24 bytes each)
+    92+N  M   FlatTask[]   (16 bytes each)
+    ...      FlatArg[]    (6 bytes each)
+    ...      FlatDep[]    (8 bytes each)
+    ...      String Table (optional)</div>
+
+<p>所有 struct 使用 <code>#pragma pack(push, 1)</code>，因此不存在 padding 字段。
+字段顺序与 C struct 声明顺序完全一致。</p>
+
+<h2>提问：如何生成和读取二进制 Schedule？</h2>
+
+<pre><code>from sonata.schedule import (
+    ArgBinding, ScheduledRegion, ScheduledTask,
+    SonataScheduleContract,
+)
+
+# 创建 Schedule
+t1 = ScheduledTask(task_id=0, kernel_identity="add", func_id=1,
+    core_type="aic", args=(ArgBinding(arg_identity="x"),))
+r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1,))
+sched = SonataScheduleContract(fingerprint="my_fp", regions=(r0,))
+
+# 序列化为二进制（v2 带 CRC）
+data = sched.to_binary()
+print(f"Binary size: {len(data)} bytes")
+
+# 反序列化（自动检测 v1/v2）
+sched2 = SonataScheduleContract.from_binary(data)
+print(f"Fingerprint: {sched2.fingerprint}")
+print(f"Regions: {len(sched2.regions)}")</code></pre>
+
+<h2>提问：什么是 Sonata Hook？</h2>
+
+<p>Sonata Hook 是一个极简的 C 接口，允许 PyPTO 运行时调用 Sonata 的 schedule 消费者：</p>
+
+<pre><code>#include "sonata_hook.h"
+
+// 初始化（读取 SONATA_ENABLED 环境变量）
+sonata_hook_init();
+
+// 处理 schedule（验证 blob 并调用解释器）
+const void *blob = ...;  // sonata_schedule.bin 的内容
+size_t blob_size = ...;
+int rc = sonata_hook_process_schedule(blob, blob_size);
+// rc == SONATA_HOOK_OK      → 处理成功
+// rc == SONATA_HOOK_SKIP    → 无可用 schedule，走原始路径
+// rc == SONATA_HOOK_ERROR   → schedule 无效，走原始路径
+// rc == SONATA_HOOK_DISABLED→ SONATA_ENABLED 未设置，跳过
+
+// 清理
+sonata_hook_fini();</code></pre>
+
+<h2>提问：Fail-Open 机制如何工作？</h2>
+
+<p>所有 Sonata Hook 的失败模式都会优雅降级到原始 PyPTO 执行路径，不会 crash：</p>
+
+<table>
+  <tr><th>场景</th><th>返回值</th><th>Runtime 行为</th></tr>
+  <tr><td><code>SONATA_ENABLED</code> 未设置</td><td>DISABLED</td><td>照常执行</td></tr>
+  <tr><td><code>sonata_schedule.bin</code> 不存在</td><td>ERROR</td><td>照常执行</td></tr>
+  <tr><td>版本号不匹配</td><td>ERROR</td><td>照常执行</td></tr>
+  <tr><td>CRC 校验失败</td><td>ERROR</td><td>照常执行</td></tr>
+  <tr><td>数据截断/损坏</td><td>ERROR</td><td>照常执行</td></tr>
+  <tr><td>Guard 条件不满足</td><td>SKIP</td><td>照常执行</td></tr>
+</table>
+
+<h2>提问：St 测试中如何启用 Sonata？</h2>
+
+<pre><code># 直接运行 st 测试（启用 Sonata 分析）
+PYTHONPATH=upstream/pypto/tests/st:src python -m pytest \
+  upstream/pypto/tests/st/runtime/ops/test_abs.py \
+  --with-sonata --platform=a2a3sim -q
+
+# Sonata 会自动：
+# 1. 运行 sonata_analyze 分析 IR
+# 2. 写入 sonata_plan.json（分析结果）
+# 3. 写入 sonata_schedule.json（JSON schedule）
+# 4. 写入 sonata_schedule.bin（二进制 schedule）
+# 5. 注入 RUNTIME_CONFIG["sonata"] + block_dim/aicpu_thread_num
+# 6. dispatch_regions 输出优化统计</code></pre>
+
+<h2>提问：如何验证 Sonata 确实在运行？</h2>
+
+<p>运行 st 测试时添加 <code>--log-cli-level=INFO</code> 可以看到 Sonata 的日志输出：</p>
+
+<pre><code>INFO  sonata.st_runner  sonata_plan.json written
+INFO  sonata.pipeline   bound schedule written: sonata_schedule.json
+INFO  sonata.pipeline   binary schedule written: sonata_schedule.bin (188 bytes)
+INFO  sonata.st_runner  RUNTIME_CONFIG['sonata'] injected into kernel_config.py
+INFO  sonata.st_runner  dispatch: 1 optimized, 0 fallback, 0 mixed</code></pre>
+
+<div class="callout success">
+  <p><strong>验证数据：</strong></p>
+  <ul>
+    <li>Sonata 端到端开销：<strong>+2.6%</strong>（低于 5% 预算阈值）</li>
+    <li>二进制格式：<strong>6x 更小</strong>，C 端零解析</li>
+    <li>CRC-32 校验：<code>from_binary()</code> 自动验证</li>
+  </ul>
+</div>
+
+<h2>提问：Hook API 的成本是多少？</h2>
+
+<p>Hook 接口的设计目标是零成本抽象：</p>
+
+<ul>
+  <li>当 <code>SONATA_ENABLED</code> 未设置时，<code>process_schedule</code> 立即返回 <code>DISABLED</code>，不做任何额外工作</li>
+  <li>Hook 是 C 接口，无 C++ 异常、无内存分配（调用方拥有 blob）</li>
+  <li>性能基准测试显示 <strong>+2.6% 端到端开销</strong>，在 5% 预算内</li>
+</ul>
+
+<div class="nav">
+  <a href="12-runtime-config.html">← Tutorial 12: RUNTIME_CONFIG 注入</a>
+  <span class="arrow"> · </span>
+  <a href="index.html">回到目录</a>
+</div>
+
+</body>
+</html>
