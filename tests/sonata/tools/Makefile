@@ -2,7 +2,7 @@
 #
 # Builds test_hook_harness by compiling sonata_hook.cpp with a stub
 # aicpu_entry.  Run from pypto-sonata/ root:
-#   make -C tests/sonata/tools -f Makefile test
+#   make -C tests/sonata/tools test
 #
 # Requires: g++ or clang++ with C++17 support.
 

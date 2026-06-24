@@ -7,6 +7,7 @@
 #include "sonata_hook.h"
 #include "flat_schedule.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

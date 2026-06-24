@@ -5,17 +5,25 @@
 //
 // Design: the hook is stateless except for a global enabled flag.
 // Each process_schedule call is independent; no persistent state survives
-// across calls. This keeps the hook safe for multi-threaded runtimes.
+// across calls. This keeps the hook safe for single-threaded callers.
+// For multi-threaded usage, g_sonata_enabled uses std::atomic for
+// safe concurrent read/write.
 
 #include "sonata_hook.h"
 #include "flat_schedule.h"
 
+#include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 
 // Global enable flag. Set by SONATA_ENABLED env var at init time.
-static bool g_sonata_enabled = false;
+// std::atomic<bool> with relaxed ordering — correctness of the env-var
+// read-once pattern does not depend on inter-thread visibility order.
+static std::atomic<bool> g_sonata_enabled{false};
+
+struct Tensor;  // forward decl — aicpu_executor.cpp defines the full type
 
 // Forward declaration: device-side entry point (aicpu_executor.cpp)
 extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
@@ -24,7 +32,7 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
                            int32_t aic_count, int32_t aiv_count,
                            int32_t task_window_size,
                            const FlatSchedule* flat_sched,
-                           const void* tensor_registry,
+                           const Tensor* tensor_registry,
                            int32_t tensor_registry_size);
 
 // ── Helpers ──
@@ -44,12 +52,19 @@ static bool validate_schedule(const void* blob, size_t blob_size) {
         sched->total_args < 0 || sched->total_deps < 0) {
         return false;
     }
-    // Verify total size covers all arrays
-    size_t expected = sizeof(FlatSchedule)
-        + static_cast<size_t>(sched->num_regions) * sizeof(FlatRegion)
-        + static_cast<size_t>(sched->total_tasks) * sizeof(FlatTask)
-        + static_cast<size_t>(sched->total_args) * sizeof(FlatArg)
-        + static_cast<size_t>(sched->total_deps) * sizeof(FlatDep);
+    // Verify total size covers all arrays (overflow-safe accumulation)
+    size_t expected = sizeof(FlatSchedule);
+    auto add_sz = [](size_t a, size_t b) -> size_t {
+        size_t r = a + b;
+        return r < a ? SIZE_MAX : r;   // overflow sentinel
+    };
+    expected = add_sz(expected, static_cast<size_t>(sched->num_regions) * sizeof(FlatRegion));
+    expected = add_sz(expected, static_cast<size_t>(sched->total_tasks) * sizeof(FlatTask));
+    expected = add_sz(expected, static_cast<size_t>(sched->total_args) * sizeof(FlatArg));
+    expected = add_sz(expected, static_cast<size_t>(sched->total_deps) * sizeof(FlatDep));
+    if (expected == SIZE_MAX) {
+        return false;  // overflow — blob cannot be valid
+    }
     if (blob_size < expected) {
         return false;
     }
@@ -81,7 +96,7 @@ extern "C" int sonata_hook_process_schedule(const void* blob, size_t blob_size) 
         return SONATA_HOOK_ERROR;
     }
 
-    auto* sched = const_cast<FlatSchedule*>(static_cast<const FlatSchedule*>(blob));
+    auto* sched = static_cast<const FlatSchedule*>(blob);
 
     // Call device-side interpreter.
     // In a real NPU runtime, the host-side framework would have already:
