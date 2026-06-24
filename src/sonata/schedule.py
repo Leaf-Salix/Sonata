@@ -137,17 +137,11 @@ class ScheduleGuard:
         # Auto-convert string severity to GuardSeverity enum
         if isinstance(self.severity, str):
             object.__setattr__(self, "severity", GuardSeverity(self.severity))
-        # Validate kind field
+        # Validate kind field (single __post_init__ to avoid shadowing)
         if self.kind not in self._VALID_KINDS:
             raise ValueError(
                 f"ScheduleGuard.kind must be one of {sorted(self._VALID_KINDS)}, "
                 f"got {self.kind!r}"
-            )
-
-    def __post_init__(self) -> None:
-        if self.kind not in self._VALID_KINDS:
-            raise ValueError(
-                f"ScheduleGuard.kind={self.kind!r} not in {sorted(self._VALID_KINDS)}"
             )
 
 
