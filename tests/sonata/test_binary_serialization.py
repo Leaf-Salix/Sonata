@@ -8,7 +8,9 @@ import pytest
 from sonata.schedule import (
     ArgBinding,
     ArgDirection,
+    BINARY_FORMAT_VERSION,
     ScheduleDep,
+    ScheduleDecodeError,
     ScheduledRegion,
     ScheduledTask,
     ScopeMode,
@@ -200,7 +202,7 @@ class TestBinaryStructLayout:
         # Header is at [0:88]; verify via ctypes int fields + raw fp at expected offset
         s = _CFlatSchedule.from_buffer_copy(data[:88])
         assert s.magic == 0x534F4E41
-        assert s.version == 1
+        assert s.version == BINARY_FORMAT_VERSION
         assert s.num_regions == 0
         assert s.num_regions == len(c.regions)
         # Verify fingerprint bytes directly at offset 24 (int fields = 6×4 = 24)
@@ -220,7 +222,7 @@ class TestBinaryStructLayout:
         # Overlay header
         s = _CFlatSchedule.from_buffer_copy(data[:88])
         assert s.magic == 0x534F4E41
-        assert s.version == 1
+        assert s.version == BINARY_FORMAT_VERSION
         assert s.num_regions == 1
         assert s.total_tasks == 1
         assert s.total_args == 1
@@ -232,8 +234,8 @@ class TestBinaryStructLayout:
         r0 = ScheduledRegion(region_id="r0", kind="static", scope_mode=ScopeMode.MANUAL)
         c = SonataScheduleContract(fingerprint="fp_r", regions=(r0,))
         data = c.to_binary()
-        # Region array starts at offset 88
-        region_bytes = data[88:112]  # sizeof = 24
+        r_off, t_off, a_off, d_off = _compute_offsets(data)
+        region_bytes = data[r_off:r_off + 24]  # sizeof = 24
         r = _CFlatRegion.from_buffer_copy(region_bytes)
         assert r.kind == 0        # static
         assert r.scope_mode == 1  # manual
@@ -249,8 +251,8 @@ class TestBinaryStructLayout:
         r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1,))
         c = SonataScheduleContract(fingerprint="fp_t", regions=(r0,))
         data = c.to_binary()
-        # Header 88 + FlatRegion 24 = task at offset 112
-        task_bytes = data[112:128]  # sizeof = 16
+        r_off, t_off, a_off, d_off = _compute_offsets(data)
+        task_bytes = data[t_off:t_off + 16]  # sizeof = 16
         t = _CFlatTask.from_buffer_copy(task_bytes)
         assert t.task_id == 0
         assert t.func_id == 7
@@ -271,8 +273,8 @@ class TestBinaryStructLayout:
         r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1,))
         c = SonataScheduleContract(fingerprint="fp_a", regions=(r0,))
         data = c.to_binary()
-        # Offset = header(88) + region(24) + task(16) = 128
-        arg_bytes = data[128:152]  # 4 args × 6 bytes = 24
+        r_off, t_off, a_off, d_off = _compute_offsets(data)
+        arg_bytes = data[a_off:a_off + 4 * 6]  # 4 args × 6 bytes = 24
         arg0 = _CFlatArg.from_buffer_copy(arg_bytes[0:6])
         assert arg0.runtime_slot == 0
         assert arg0.direction == 0  # INPUT
@@ -295,13 +297,11 @@ class TestBinaryStructLayout:
         r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1, t2), deps=deps)
         c = SonataScheduleContract(fingerprint="fp_d", regions=(r0,))
         data = c.to_binary()
-        # Offset after header(88) + region(24) + 2×task(32) + 2×arg(12) = 156
         r_off, t_off, a_off, d_off = _compute_offsets(data)
-        dep_start = d_off
-        d0 = _CFlatDep.from_buffer_copy(data[dep_start : dep_start + 8])
+        d0 = _CFlatDep.from_buffer_copy(data[d_off:d_off + 8])
         assert d0.producer == 0
         assert d0.consumer == 1
-        d1 = _CFlatDep.from_buffer_copy(data[dep_start + 8 : dep_start + 16])
+        d1 = _CFlatDep.from_buffer_copy(data[d_off + 8:d_off + 16])
         assert d1.producer == 0
         assert d1.consumer == 2
 
@@ -329,9 +329,14 @@ class TestBinaryStructLayout:
 
 
 def _compute_offsets(data: bytes):
-    """Compute struct array offsets from binary header (helper for tests)."""
+    """Compute struct array offsets from binary header (helper for tests).
+
+    v1: header (88 bytes), no CRC → payload at offset 88.
+    v2: header (88 bytes) + CRC-32 (4 bytes) → payload at offset 92.
+    """
     s = _CFlatSchedule.from_buffer_copy(data[:88])
-    r_off = 88
+    payload_off = 92 if s.version >= 2 else 88
+    r_off = payload_off
     t_off = r_off + s.num_regions * ctypes.sizeof(_CFlatRegion)
     a_off = t_off + s.total_tasks * ctypes.sizeof(_CFlatTask)
     d_off = a_off + s.total_args * ctypes.sizeof(_CFlatArg)
@@ -340,6 +345,85 @@ def _compute_offsets(data: bytes):
 
 def _make_static_region(tasks=(), deps=()):
     return ScheduledRegion(region_id="r0", kind="static", tasks=tuple(tasks), deps=tuple(deps))
+
+
+class TestBinaryCrc:
+    """A2: CRC-32 checksum validation in v2 binary format."""
+
+    def test_crc_present_in_v2(self):
+        """v2 binary has 4-byte CRC after the 88-byte header."""
+        c = SonataScheduleContract(fingerprint="fp_crc")
+        data = c.to_binary()
+        # Header = 88 bytes, CRC = 4 bytes at 88..91
+        assert len(data) >= 92, f"v2 data too short: {len(data)}"
+        crc_bytes = data[88:92]
+        import struct, zlib
+        crc_value = struct.unpack_from("<I", crc_bytes, 0)[0]
+        # CRC covers data[92:]
+        expected = zlib.crc32(data[92:])
+        assert crc_value == expected, (
+            f"CRC mismatch: stored={crc_value:#010x}, computed={expected:#010x}"
+        )
+
+    def test_crc_corrupted_raises_error(self):
+        """Corrupted CRC in v2 blob raises ScheduleDecodeError."""
+        c = SonataScheduleContract(fingerprint="fp_crc_bad")
+        data = c.to_binary()
+        # Corrupt the CRC byte
+        bad_data = bytearray(data)
+        bad_data[88] ^= 0xFF  # flip all bits in first CRC byte
+        with pytest.raises(ScheduleDecodeError, match="CRC mismatch"):
+            SonataScheduleContract.from_binary(bytes(bad_data))
+
+    def test_crc_round_trip_validates(self):
+        """A valid v2 blob passes CRC check in from_binary."""
+        t1 = ScheduledTask(task_id=0, kernel_identity="k", func_id=1, core_type="aic",
+            args=(ArgBinding(arg_identity="x"),))
+        r0 = ScheduledRegion(region_id="r0", kind="static", tasks=(t1,))
+        c = SonataScheduleContract(fingerprint="fp_crc_rt", regions=(r0,))
+        data = c.to_binary()
+        c2 = SonataScheduleContract.from_binary(data)
+        assert c2.fingerprint == "fp_crc_rt"
+        assert len(c2.regions) == 1
+
+    def test_v1_blob_accepted_without_crc(self):
+        """v1 blob (no CRC) is still accepted for backward compatibility."""
+        # Manually construct a v1 binary blob
+        import struct, zlib
+        magic = 0x534F4E41
+        version = 1
+        nr = 0
+        total_tasks = 0
+        total_args = 0
+        total_deps = 0
+        header = struct.pack("<iiiiii", magic, version, nr, total_tasks, total_args, total_deps)
+        fp = b"v1_compat" + b"\x00" * 55  # pad to 64 bytes
+        v1_data = header + fp  # exactly 88 bytes, no CRC
+        c = SonataScheduleContract.from_binary(v1_data)
+        assert c.fingerprint == "v1_compat"
+        assert len(c.regions) == 0
+
+    def test_unsupported_version_rejected(self):
+        """Unknown version raises ScheduleDecodeError."""
+        import struct
+        magic = 0x534F4E41
+        version = 99  # unknown
+        nr = 0
+        header = struct.pack("<iiiiii", magic, version, nr, 0, 0, 0)
+        fp = b"x" * 64
+        bad_data = header + fp
+        with pytest.raises(ScheduleDecodeError, match="unsupported version"):
+            SonataScheduleContract.from_binary(bad_data)
+
+    def test_payload_size_includes_crc(self):
+        """Total v2 binary = header (88) + CRC (4) + payload."""
+        c = SonataScheduleContract(fingerprint="fp_crc_sz")
+        data = c.to_binary()
+        # Header: 88, CRC: 4, rest is payload
+        assert len(data) >= 92
+        # Round trip still works
+        c2 = SonataScheduleContract.from_binary(data)
+        assert c2.fingerprint == "fp_crc_sz"
 
 
 class TestBinarySerialization:

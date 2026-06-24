@@ -2,6 +2,7 @@
 //
 // Memory layout (packed):
 //   FlatSchedule      — 88-byte header
+//   (v2 only) CRC-32  — 4-byte checksum over payload (arrays + string table)
 //   FlatRegion[N]     — N region descriptors
 //   FlatTask[T]       — T task descriptors
 //   FlatArg[A]        — A arg bindings
@@ -10,12 +11,19 @@
 //                  kernel_identity (T entries) and arg_identity (A entries).
 //                  Appended by Python to_binary; from_binary falls back
 //                  to generated names when the string table is absent.
+//
+// Version history:
+//   1 — initial flat binary (magic + counts + fingerprint + arrays)
+//   2 — +4-byte CRC-32 of payload at offset 88 (right after header)
 
 #ifndef SONATA_TMARB_RUNTIME_H
 #define SONATA_TMARB_RUNTIME_H
 
 #include <cstdint>
 #include <cstddef>
+
+// Current binary format version. Bump when the wire layout changes.
+static constexpr int32_t BINARY_FORMAT_VERSION = 2;
 
 #pragma pack(push, 1)
 
@@ -48,7 +56,7 @@ struct FlatRegion {
 
 struct FlatSchedule {
     int32_t magic;          // 0x534F4E41 ("SONA")
-    int32_t version;        // 1
+    int32_t version;        // BINARY_FORMAT_VERSION
     int32_t num_regions;
     int32_t total_tasks;
     int32_t total_args;     // total arg count across all tasks

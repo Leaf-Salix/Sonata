@@ -23,10 +23,21 @@ from __future__ import annotations
 
 import json as _json
 import logging as _logging
+import zlib
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
+
+
+# Binary flat schedule format version.  Bump when the wire layout changes.
+# See flat_schedule.h for the C-side BINARY_FORMAT_VERSION.
+BINARY_FORMAT_VERSION = 2
+
+
+class ScheduleDecodeError(ValueError):
+    """Raised when a binary schedule blob fails validation (CRC, magic, version)."""
+    pass
 
 from .directions import normalize_direction
 from .score import Score
@@ -411,6 +422,13 @@ class SonataScheduleContract:
 
         The binary layout matches ``flat_schedule.h`` struct layout:
         ``FlatSchedule + FlatRegion[] + FlatTask[] + FlatArg[] + FlatDep[]``
+
+        .. note::
+
+            Binary serialization is **lossy** — it preserves the structural
+            skeleton (regions, tasks, deps, args) but omits ``outputs``, ``name``,
+            ``mixed_kernels``, boundary tensors, guards, and metadata.
+            Use ``to_json()`` for full-fidelity serialization.
         """
         import struct
 
@@ -463,15 +481,18 @@ class SonataScheduleContract:
 
         # Build FlatSchedule header (88 bytes = 6*int32 + 64-byte fingerprint)
         magic = 0x534F4E41  # "SONA"
-        version = 1
+        version = BINARY_FORMAT_VERSION
         fp_bytes = self.fingerprint.encode("utf-8")[:64]
         fp_bytes += b"\x00" * (64 - len(fp_bytes))
         header = struct.pack("<iiiiii", magic, version, len(self.regions),
                              task_cursor, arg_cursor, dep_cursor) + fp_bytes
 
-        return (header + b"".join(flat_regions) + b"".join(flat_tasks)
-                + b"".join(flat_args) + b"".join(flat_deps)
-                + b"".join(str_table_parts))
+        # Assemble payload (arrays + string table) and compute CRC-32
+        payload = (b"".join(flat_regions) + b"".join(flat_tasks)
+                   + b"".join(flat_args) + b"".join(flat_deps)
+                   + b"".join(str_table_parts))
+        crc = zlib.crc32(payload)
+        return header + struct.pack("<I", crc) + payload
 
     @classmethod
     def from_binary(cls, data: bytes) -> "SonataScheduleContract":
@@ -480,6 +501,8 @@ class SonataScheduleContract:
         Header layout (88 bytes, matches ``FlatSchedule`` in ``flat_schedule.h``):
         ``magic(4) + version(4) + num_regions(4) + total_tasks(4)``
         ``+ total_args(4) + total_deps(4) + fingerprint(64)``
+
+        Version 2 appends a 4-byte CRC-32 right after the header (offset 88–91).
         """
         import struct
 
@@ -487,13 +510,30 @@ class SonataScheduleContract:
         hdr_size_ints = struct.calcsize(hdr_fmt)  # 24
         hdr_size = hdr_size_ints + 64  # 24 + 64 = 88
         if len(data) < hdr_size:
-            raise ValueError(f"too short: {len(data)} < {hdr_size}")
+            raise ScheduleDecodeError(f"too short: {len(data)} < {hdr_size}")
 
         magic, version, nr, total_tasks, total_args, total_deps = struct.unpack_from(hdr_fmt, data, 0)
         if magic != 0x534F4E41:
-            raise ValueError(f"bad magic: {magic:#x}")
-        if version != 1:
-            raise ValueError(f"unsupported version: {version}")
+            raise ScheduleDecodeError(f"bad magic: {magic:#x}")
+
+        # Determine payload offset based on version
+        if version == 1:
+            payload_off = hdr_size  # 88 — no CRC field
+        elif version == BINARY_FORMAT_VERSION:
+            payload_off = hdr_size + 4  # 92 — skip 4-byte CRC
+            # Validate CRC-32 covering everything after the CRC field
+            if len(data) < payload_off:
+                raise ScheduleDecodeError(
+                    f"v2 data too short for CRC: {len(data)} < {payload_off}"
+                )
+            expected = struct.unpack_from("<I", data, 88)[0]
+            actual = zlib.crc32(data[92:])
+            if expected != actual:
+                raise ScheduleDecodeError(
+                    f"CRC mismatch: payload crc32={actual:#010x}, expected={expected:#010x}"
+                )
+        else:
+            raise ScheduleDecodeError(f"unsupported version: {version}")
         fp = data[hdr_size_ints : hdr_size_ints + 64].split(b"\x00", 1)[0].decode()
 
         rs = struct.calcsize("<iiiiii")   # FlatRegion = 24
@@ -502,7 +542,7 @@ class SonataScheduleContract:
         ds = struct.calcsize("<ii")       # FlatDep  = 8
 
         # Compute blob offsets from header fields
-        r_off = hdr_size
+        r_off = payload_off
         t_off = r_off + nr * rs
         a_off = t_off + total_tasks * ts
         d_off = a_off + total_args * ar
@@ -510,7 +550,7 @@ class SonataScheduleContract:
         # Validate total size
         expected_size = d_off + total_deps * ds
         if len(data) < expected_size:
-            raise ValueError(f"data truncated: need {expected_size} bytes, got {len(data)}")
+            raise ScheduleDecodeError(f"data truncated: need {expected_size} bytes, got {len(data)}")
 
         # Parse optional string table (appended after deps)
         # Format: sequence of uint16(length) + utf8_bytes, in task/arg order.
@@ -723,8 +763,9 @@ def _serialize_guards(score: Score) -> tuple[ScheduleGuard, ...]:
             severity=str(sev) if sev is not None else "soft",
             target="*",
             symbolic_name=str(symbol) if symbol else None,
-            min_value=dims[0] if len(dims) >= 1 else None,
-            max_value=dims[-1] if len(dims) >= 1 else None,
+            min_value=dims[0] if len(dims) == 1 else None,
+            max_value=dims[-1] if len(dims) == 1 else None,
+            note=str(dims) if len(dims) > 1 else None,
         )
         guards.append(guard)
     return tuple(guards)

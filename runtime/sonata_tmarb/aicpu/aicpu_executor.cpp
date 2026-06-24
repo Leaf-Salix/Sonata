@@ -18,9 +18,42 @@
 #include "pto_shared_memory.h"   // PTO2SharedMemoryHandle, PTO2SharedMemoryHeader
 #include "tensor.h"              // Tensor, TensorCreateInfo
 #include "pto_types.h"           // Arg, TensorArgType, PTO2ScopeMode, MixedKernels, TaskOutputTensors
-#include "pto_orchestration_api.h"  // rt_submit_aic_task, rt_submit_task, rt_scope_begin, rt_scope_end
+extern "C" PTO2Runtime *framework_current_runtime(void);
+extern "C" void framework_bind_runtime(PTO2Runtime *rt);
 
-using namespace pto;
+static inline PTO2Runtime *sonata_current_runtime() { return framework_current_runtime(); }
+
+static inline TaskOutputTensors sonata_rt_submit_task(const MixedKernels &mk, const Arg &args) {
+    PTO2Runtime *rt = sonata_current_runtime();
+    if (rt->ops->is_fatal(rt)) return TaskOutputTensors{};
+    return rt->ops->submit_task(rt, mk, args);
+}
+
+static inline TaskOutputTensors sonata_rt_submit_aic_task(int32_t kernel_id, const Arg &args) {
+    MixedKernels mk;
+    mk.aic_kernel_id = kernel_id;
+    mk.aiv0_kernel_id = INVALID_KERNEL_ID;
+    mk.aiv1_kernel_id = INVALID_KERNEL_ID;
+    return sonata_rt_submit_task(mk, args);
+}
+
+static inline TaskOutputTensors sonata_rt_submit_aiv_task(int32_t kernel_id, const Arg &args) {
+    MixedKernels mk;
+    mk.aic_kernel_id = INVALID_KERNEL_ID;
+    mk.aiv0_kernel_id = kernel_id;
+    mk.aiv1_kernel_id = INVALID_KERNEL_ID;
+    return sonata_rt_submit_task(mk, args);
+}
+
+static inline void sonata_rt_scope_begin(PTO2Runtime *rt) {
+    if (rt->ops->is_fatal(rt)) return;
+    rt->ops->scope_begin(rt);
+}
+
+static inline void sonata_rt_scope_end(PTO2Runtime *rt) {
+    if (rt->ops->is_fatal(rt)) return;
+    rt->ops->scope_end(rt);
+}
 
 static constexpr int32_t MAX_DEPS_PER_TASK = 256;
 
@@ -118,20 +151,20 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         if (rg.kind == 1) {
             // Dynamic region
             rt->pending_scope_mode = PTO2ScopeMode::AUTO;
-            rt_scope_begin(rt);
-            rt_scope_end(rt);
+            sonata_rt_scope_begin(rt);
+            sonata_rt_scope_end(rt);
             continue;
         }
 
         // Static region — explicit tasks + deps
         rt->pending_scope_mode = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
-        rt_scope_begin(rt);
+        sonata_rt_scope_begin(rt);
 
         // Heap-allocated task ID array — sized to actual task count, avoids stack overflow
         int32_t alloc_size = rg.num_tasks > 0 ? rg.num_tasks : 1;
         PTO2TaskId* task_ids = new (std::nothrow) PTO2TaskId[alloc_size];
         if (!task_ids) {
-            rt_scope_end(rt);
+            sonata_rt_scope_end(rt);
             continue;  // allocation failed — skip region
         }
         int32_t num_submitted = 0;
@@ -156,22 +189,22 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 
             TaskOutputTensors result;
             if (ft.core_type == 1) {
-                result = rt_submit_aiv_task(ft.func_id, submit_arg);
+                result = sonata_rt_submit_aiv_task(ft.func_id, submit_arg);
             } else if (ft.core_type == 2) {
                 MixedKernels mk;
                 mk.aic_kernel_id = ft.func_id;
                 mk.aiv0_kernel_id = INVALID_KERNEL_ID;
                 mk.aiv1_kernel_id = INVALID_KERNEL_ID;
-                result = rt_submit_task(mk, submit_arg);
+                result = sonata_rt_submit_task(mk, submit_arg);
             } else {
-                result = rt_submit_aic_task(ft.func_id, submit_arg);
+                result = sonata_rt_submit_aic_task(ft.func_id, submit_arg);
             }
 
             task_ids[num_submitted++] = result.task_id();
         }
 
         delete[] task_ids;
-        rt_scope_end(rt);
+        sonata_rt_scope_end(rt);
     }
 }
 
@@ -186,7 +219,7 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 // nullptr if the host-side caller has not yet been updated to provide
 // tensor bindings (scalar-only tasks still work).
 
-extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
+extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t /*arena_size*/,
                            void* sm_ptr, uint64_t sm_size,
                            void* gm_heap, uint64_t heap_size,
                            int32_t aic_count, int32_t aiv_count,
@@ -198,7 +231,7 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
     if (flat_sched == nullptr || flat_sched->magic != 0x534F4E41) {
         return -1;
     }
-    if (flat_sched->version != 1) {
+    if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {
         return -3;  // unsupported format version
     }
 
@@ -226,7 +259,12 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
     framework_bind_runtime(rt);
 
     // ── Parse flat schedule using header fields ──
-    auto* regions = reinterpret_cast<const FlatRegion*>(flat_sched + 1);
+    //
+    // v1: header (88 bytes) → directly to arrays
+    // v2: header (88 bytes) + CRC-32 (4 bytes) → skip CRC before arrays
+    const auto* raw = reinterpret_cast<const uint8_t*>(flat_sched);
+    int32_t payload_skip = (flat_sched->version >= 2) ? 4 : 0;
+    auto* regions = reinterpret_cast<const FlatRegion*>(raw + sizeof(FlatSchedule) + payload_skip);
     auto* tasks   = reinterpret_cast<const FlatTask*>(regions + flat_sched->num_regions);
     auto* args    = reinterpret_cast<const FlatArg*>(tasks  + flat_sched->total_tasks);
     auto* fdeps   = reinterpret_cast<const FlatDep*>(args   + flat_sched->total_args);
