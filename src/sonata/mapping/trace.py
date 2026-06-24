@@ -17,17 +17,15 @@ and can be compared against traces extracted from real codegen output.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..schedule import (
     ArgBinding,
     ArgDirection,
-    MixedKernels,
     ScheduleDep,
     ScheduledRegion,
     ScheduledTask,
-    ScopeMode,
     SonataScheduleContract,
 )
 

@@ -17,8 +17,7 @@ TMARB ``submit_task`` / ``set_dependencies`` / TensorMap / scope semantics.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from ..schedule import SonataScheduleContract
 from ..fallback import FallbackCode

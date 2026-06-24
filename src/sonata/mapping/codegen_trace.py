@@ -16,7 +16,6 @@ against Sonata-generated traces.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from .trace import TMARBCallTraceEntry

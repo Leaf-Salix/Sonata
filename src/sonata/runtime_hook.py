@@ -35,7 +35,6 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger("sonata.runtime_hook")
 

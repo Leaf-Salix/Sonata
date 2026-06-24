@@ -28,7 +28,6 @@ from .serialization import (
     SCORE_SCHEMA_VERSION,
     score_fingerprint,
     score_to_dict,
-    score_to_json,
 )
 
 if TYPE_CHECKING:
@@ -86,7 +85,6 @@ class ScoreCache:
 
     def store_plan_handle(self, plan_handle: "PlanHandle", *, fingerprint: str | None = None) -> str:
         """Store a PlanHandle associated with a Score fingerprint."""
-        from .plan_handle import PlanHandle as PH
         from .serialization import plan_handle_to_dict
 
         fp = fingerprint or plan_handle.score_fingerprint

@@ -463,7 +463,6 @@ def extract_score_from_region(
     Returns None if no Calls are found in the subtree.
     """
     from .dependencies import build_dependencies
-    from .pypto_adapter import PostSimplifyPyPTOInputAdapter
     from .score import RuntimeTarget, Score, Task
 
     # Collect all IR nodes from this subtree
@@ -604,7 +603,7 @@ def check_region_eligibility(
             per_region_scores[region_key] = real_score
         else:
             # Fallback: placeholder Score for regions without extractable Calls
-            from .score import Score, Task, Dependency
+            from .score import Score
             placeholder_score = Score(
                 name=f"{entry_name or 'graph'}_region_{static_subtree.region.region_id}",
                 runtime_target=default_rt,

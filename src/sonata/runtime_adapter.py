@@ -28,7 +28,6 @@ from .plan_handle import (
 )
 from .score import (
     Dependency,
-    EligibilityResult,
     FallbackReason,
     Score,
     Task,

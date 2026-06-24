@@ -15,9 +15,8 @@ offset that does not conflict with overlapping lifetimes.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import time
-from typing import Any
 import warnings
 
 from .liveness import BufferLifetime, find_conflicts

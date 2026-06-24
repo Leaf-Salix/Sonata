@@ -19,7 +19,7 @@ from typing import Any
 import warnings
 
 from .fallback import FallbackCode
-from .guard import ShapeAssumption, GuardCondition
+from .guard import ShapeAssumption
 
 
 @dataclass(frozen=True)
