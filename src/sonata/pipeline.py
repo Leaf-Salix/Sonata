@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -164,21 +164,13 @@ class SonataAnalysisResult:
                 dep_kinds[kind_val] = dep_kinds.get(kind_val, 0) + 1
             data["dependency_kinds"] = dep_kinds
 
-        # Include guard statistics when available (v0.17 Phase 2 A1)
-        if self.score is not None and self.score.shape_assumptions:
-            assumptions = self.score.shape_assumptions
-            unique_symbols = {a.symbol for a in assumptions}
-            count = len(assumptions)
-            n_symbols = len(unique_symbols)
-            density = round(count / n_symbols, 2) if n_symbols > 0 else 0.0
-            data["guard_stats"] = {
-                "shape_assumption_count": count,
-                "unique_symbols": n_symbols,
-                "guard_density": density,
-            }
-            if density > 8:
+        # v0.17 Phase 2 A1: Guard statistics (extracted for readability)
+        guard_stats = _serialize_guard_stats(self.score)
+        if guard_stats is not None:
+            data["guard_stats"] = guard_stats
+            if guard_stats.get("guard_density", 0) > 8:
                 data.setdefault("warnings", []).append(
-                    f"guard_density={density} exceeds TorchDynamo reference threshold (8)"
+                    f"guard_density={guard_stats['guard_density']} exceeds TorchDynamo reference threshold (8)"
                 )
 
         # v0.21 Phase 2 B1: Per-region guard stats
@@ -713,6 +705,38 @@ def _extract_arg_names(compiled: Any) -> tuple[list[str], list[str]]:
     return [], []
 
 
+def _serialize_guard_stats(score: Any) -> dict[str, Any] | None:
+    """Extract guard statistics from a Score (v0.17+)."""
+    if score is None:
+        return None
+    assumptions = getattr(score, "shape_assumptions", None)
+    if not assumptions:
+        return None
+    unique_symbols = {a.symbol for a in assumptions}
+    count = len(assumptions)
+    n_symbols = len(unique_symbols)
+    density = round(count / n_symbols, 2) if n_symbols > 0 else 0.0
+    return {
+        "shape_assumption_count": count,
+        "unique_symbols": n_symbols,
+        "guard_density": density,
+    }
+
+
+def _serialize_memory_plan(result: SonataAnalysisResult) -> dict[str, Any] | None:
+    """Extract memory plan from analysis result (v0.21+)."""
+    mp = getattr(result, "memory_plan", None)
+    if mp is None:
+        return None
+    try:
+        return {
+            "total_bytes": mp.total_bytes if hasattr(mp, "total_bytes") else 0,
+            "device_memory_limit": mp.device_memory_limit if hasattr(mp, "device_memory_limit") else None,
+        }
+    except (AttributeError, TypeError):
+        return None
+
+
 def _safe_task_count(schedule: Any) -> int:
     try:
         return sum(len(r.tasks) for r in schedule.regions)
@@ -824,20 +848,8 @@ def execute_with_sonata(
                         plan.score,
                         source_adapter=DEFAULT_CERTIFIED_DUMP,
                     )
-                    plan = SonataAnalysisResult(
-                        eligible=plan.eligible,
-                        score=plan.score,
-                        eligibility_result=plan.eligibility_result,
-                        region_tree=plan.region_tree,
-                        region_eligibility=plan.region_eligibility,
-                        plan_handle=new_plan_handle,
-                        host_build_graph_plan=plan.host_build_graph_plan,
-                        adapter_result=plan.adapter_result,
-                        region_statuses=plan.region_statuses,
-                        fallback_reasons=plan.fallback_reasons,
-                        memory_plan=plan.memory_plan,
-                    )
-                    _region_log.info("[SONATA] Plan handle rebuilt from Score")
+                    plan = dataclasses.replace(plan, plan_handle=new_plan_handle)
+                _region_log.info("[SONATA] Plan handle rebuilt from Score")
 
             # Update guard status in sonata_plan.json
             guard_status = update_region_guard_status(plan.plan_handle, guard_results)

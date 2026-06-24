@@ -110,6 +110,9 @@ class ScheduleGuard:
     """Structured guard condition in a schedule contract.
 
     Replaces untyped dict to match TensorRT/TRT/JAX-style typed guard models.
+
+    Raises:
+        ValueError: If ``kind`` is not one of the known guard kind values.
     """
     guard_id: str = ""
     kind: str = "shape_range"
@@ -123,6 +126,17 @@ class ScheduleGuard:
     expression: str | None = None
     failure_code: str | None = None
     failure_message: str | None = None
+
+    _VALID_KINDS = frozenset({
+        "shape_range", "value_range", "hard_shape", "topology",
+        "storage", "alias", "custom",
+    })
+
+    def __post_init__(self) -> None:
+        if self.kind not in self._VALID_KINDS:
+            raise ValueError(
+                f"ScheduleGuard.kind={self.kind!r} not in {sorted(self._VALID_KINDS)}"
+            )
 
 
 @dataclass(frozen=True)

@@ -56,7 +56,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable, Optional
+import logging
 import warnings
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -283,14 +286,6 @@ class ShapeAssumption(GuardCondition):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ShapeAssumption":
         """Deserialize ShapeAssumption from dictionary."""
-        if data.get("type") != "ShapeAssumption":
-            # Fallback for old format without type field
-            return cls(
-                symbol=data["symbol"],
-                dims=tuple(data.get("dims", [])),
-                severity=GuardSeverity(data.get("severity", "hard")),
-            )
-        
         return cls(
             symbol=data["symbol"],
             dims=tuple(data.get("dims", [])),
@@ -372,8 +367,9 @@ class GuardEvaluator:
             satisfied = guard.evaluate(runtime_values)
             action = InvalidateAction.REPLAN if guard.severity.requires_replan else InvalidateAction.INVALIDATE_HANDLE
             return satisfied, action
-        except Exception as e:
+        except (TypeError, ValueError, KeyError, RuntimeError) as exc:
             # On evaluation error, treat as violation with conservative action
+            _log.debug("[guard] evaluate failed: %s", exc)
             return False, InvalidateAction.REPLAN
     
     def evaluate_all(
