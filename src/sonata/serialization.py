@@ -17,7 +17,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .plan_handle import PlanHandle
 
-from .score import EligibilityResult, Score
+from .score import EligibilityResult, Score, raw_runtime_target
 
 SCORE_SCHEMA_VERSION = 1
 ELIGIBILITY_RESULT_SCHEMA_VERSION = 1
@@ -90,10 +90,10 @@ def score_to_dict(score: Score) -> dict[str, Any]:
         "schema_version": SCORE_SCHEMA_VERSION,
         "name": score.name,
         "runtime_target": {
-            "runtime": score.runtime_target.runtime,
-            "function_name": score.runtime_target.function_name,
-            "aicpu_thread_num": score.runtime_target.aicpu_thread_num,
-            "config_comment": list(score.runtime_target.config_comment),
+            "runtime": raw_runtime_target(score).runtime,
+            "function_name": raw_runtime_target(score).function_name,
+            "aicpu_thread_num": raw_runtime_target(score).aicpu_thread_num,
+            "config_comment": list(raw_runtime_target(score).config_comment),
         },
         "tasks": [
             {

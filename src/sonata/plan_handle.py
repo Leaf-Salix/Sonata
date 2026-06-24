@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from .score import RuntimeTarget, Score
+from .score import RuntimeTarget, Score, raw_runtime_target
 
 
 class GuardStatus(Enum):
@@ -183,7 +183,7 @@ class PlanHandle:
         """
         from .serialization import score_fingerprint
 
-        target = runtime_target or score.runtime_target
+        target = runtime_target or raw_runtime_target(score)
 
         arg_bindings: list[RuntimeArgBinding] = []
         for task in score.tasks:

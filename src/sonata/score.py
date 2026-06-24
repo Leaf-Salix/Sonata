@@ -274,6 +274,15 @@ class Score:
         return EligibilityResult.accept(self)
 
 
+def raw_runtime_target(score: "Score") -> RuntimeTarget:
+    """Read ``score.runtime_target`` without triggering the deprecation warning.
+
+    For internal library use only, where the access isn't user-facing
+    field access but plumbing (serialization, fingerprinting, etc.).
+    """
+    return object.__getattribute__(score, "runtime_target")
+
+
 def _find_cycle(task_ids: set[int], dependencies: tuple[Dependency, ...]) -> tuple[int, ...] | None:
     successors: dict[int, list[int]] = {task_id: [] for task_id in task_ids}
     for dep in dependencies:

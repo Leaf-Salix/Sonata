@@ -33,6 +33,7 @@ from sonata import (
     module_api,
     schema_versions,
 )
+from sonata.score import raw_runtime_target
 
 
 class TestModuleImportSmoke:
@@ -168,7 +169,7 @@ class TestEndToEndChain:
         """Verify Score can be converted to PlanHandle."""
         plan_handle = PlanHandle.from_score(
             score=sample_score,
-            runtime_target=sample_score.runtime_target,
+            runtime_target=raw_runtime_target(sample_score),
         )
         assert plan_handle is not None
         assert plan_handle.score_fingerprint is not None
@@ -264,14 +265,14 @@ class TestEndToEndChain:
         # Create a PlanHandle with wrong fingerprint
         wrong_score = Score(
             name="different_score",
-            runtime_target=sample_score.runtime_target,
+            runtime_target=raw_runtime_target(sample_score),
             tasks=(),
             dependencies=(),
             shape_assumptions=(),
         )
         wrong_handle = PlanHandle.from_score(
             score=wrong_score,
-            runtime_target=wrong_score.runtime_target,
+            runtime_target=raw_runtime_target(wrong_score),
         )
 
         adapter = HostBuildGraphRuntimeAdapter()

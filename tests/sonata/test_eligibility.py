@@ -8,6 +8,7 @@ from sonata import (
     RuntimeTarget,
     check_static_eligibility,
 )
+from sonata.score import raw_runtime_target
 
 
 @dataclass
@@ -158,8 +159,8 @@ def test_static_eligibility_defaults_to_host_build_graph_runtime_target() -> Non
 
     assert result.eligible
     assert result.score is not None
-    assert result.score.runtime_target.runtime == "host_build_graph"
-    assert result.score.runtime_target.function_name == "build_main_graph"
+    assert raw_runtime_target(result.score).runtime == "host_build_graph"
+    assert raw_runtime_target(result.score).function_name == "build_main_graph"
 
 
 def test_static_eligibility_can_use_dataflow_dependency_policy() -> None:

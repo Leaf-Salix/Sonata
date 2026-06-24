@@ -16,6 +16,7 @@ from sonata import (
     score_to_json,
 )
 from sonata.guard import GUARD_SEVERITY_HARD
+from sonata.score import raw_runtime_target
 
 
 def test_score_to_dict_emits_stable_json_like_structure() -> None:
@@ -164,7 +165,7 @@ def test_score_fingerprint_ignores_metadata_by_default() -> None:
     )
     changed_metadata = Score(
         name="same_plan",
-        runtime_target=base.runtime_target,
+        runtime_target=raw_runtime_target(base),
         tasks=base.tasks,
         metadata={"audit": "second"},
     )
@@ -219,7 +220,7 @@ def test_score_fingerprint_changes_for_plan_semantics() -> None:
     )
     second = Score(
         name="plan",
-        runtime_target=first.runtime_target,
+        runtime_target=raw_runtime_target(first),
         tasks=(Task(task_id=0, func_id=1, core_type="aiv", args=("x",), name="kernel"),),
     )
 
@@ -234,7 +235,7 @@ def test_score_fingerprint_changes_for_shape_assumptions() -> None:
     )
     second = Score(
         name="plan",
-        runtime_target=first.runtime_target,
+        runtime_target=raw_runtime_target(first),
         shape_assumptions=(ShapeAssumption(symbol="x", dims=(128, 32), severity="hard"),),
     )
 

@@ -17,6 +17,7 @@ from sonata.score import (
     Score,
     ShapeAssumption,
     Task,
+    raw_runtime_target,
 )
 from sonata.guard import GUARD_SEVERITY_HARD, GUARD_SEVERITY_SOFT
 from sonata.serialization import (
@@ -110,7 +111,7 @@ class TestPlanHandle:
         score = _make_score()
         ph = PlanHandle.from_score(score)
         assert ph.score_fingerprint == score_fingerprint(score)
-        assert ph.runtime_target == object.__getattribute__(score, "runtime_target")
+        assert ph.runtime_target == raw_runtime_target(score)
         assert ph.source_adapter == "post_simplify"
         assert ph.runtime_contract_version == RUNTIME_CONTRACT_VERSION
         assert ph.func_registry.names() == frozenset({"matmul", "add"})

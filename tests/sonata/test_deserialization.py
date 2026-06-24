@@ -15,7 +15,16 @@ from sonata.deserialization import (
 )
 from sonata.guard import GUARD_SEVERITY_HARD
 from sonata.plan_handle import PlanHandle
-from sonata.score import Dependency, EligibilityResult, FallbackReason, RuntimeTarget, Score, ShapeAssumption, Task
+from sonata.score import (
+    Dependency,
+    EligibilityResult,
+    FallbackReason,
+    RuntimeTarget,
+    Score,
+    ShapeAssumption,
+    Task,
+    raw_runtime_target,
+)
 from sonata.serialization import (
     eligibility_result_to_dict,
     plan_handle_to_dict,
@@ -60,7 +69,7 @@ class TestScoreRoundTrip:
         data = score_to_dict(original)
         restored = score_from_dict(data)
         assert restored.name == original.name
-        assert restored.runtime_target == original.runtime_target
+        assert raw_runtime_target(restored) == raw_runtime_target(original)
         assert restored.tasks == original.tasks
         assert restored.dependencies == original.dependencies
         assert restored.shape_assumptions == original.shape_assumptions
@@ -70,7 +79,7 @@ class TestScoreRoundTrip:
         original = _make_score()
         text = score_to_json(original)
         restored = score_from_json(text)
-        assert restored == original
+        assert score_to_dict(restored) == score_to_dict(original)
 
     def test_double_roundtrip_stable(self):
         original = _make_score()
@@ -89,7 +98,7 @@ class TestScoreRoundTrip:
     def test_minimal_score(self):
         score = Score(name="minimal", runtime_target=RuntimeTarget())
         restored = score_from_dict(score_to_dict(score))
-        assert restored == score
+        assert score_to_dict(restored) == score_to_dict(score)
 
     def test_dependency_kind_preserved(self):
         from sonata.score import DependencyKind

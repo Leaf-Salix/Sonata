@@ -21,6 +21,7 @@ from sonata.score import (
     Score,
     ShapeAssumption,
     Task,
+    raw_runtime_target,
 )
 from sonata.serialization import score_fingerprint
 
@@ -64,7 +65,7 @@ def _make_bindings(score):
 def _make_plan_handle(score, **overrides):
     defaults = dict(
         score_fingerprint=score_fingerprint(score),
-        runtime_target=object.__getattribute__(score, "runtime_target"),
+        runtime_target=raw_runtime_target(score),
         source_adapter="post_simplify",
         func_registry=FuncRegistry.from_score(score),
         arg_bindings=_make_bindings(score),
