@@ -21,6 +21,13 @@ from types import SimpleNamespace
 
 import pytest
 
+try:
+    import pypto  # noqa: F401
+
+    _HAS_PYPTO = True
+except ImportError:
+    _HAS_PYPTO = False
+
 from sonata.pipeline import _extract_certified_ir, sonata_analyze, SonataAnalysisResult
 from sonata.regions import extract_regions, build_region_tree, check_region_eligibility
 from sonata.serialization import score_fingerprint
@@ -110,12 +117,14 @@ class TestSonataAnalysisOverhead:
 class TestIRCacheEffectiveness:
     """A3: Verify IR cache logic."""
 
+    @pytest.mark.skipif(not _HAS_PYPTO, reason="pypto not installed")
     def test_cache_returns_none_for_non_program(self):
         """Non-Program objects return None (pipeline can't process them)."""
         node = SimpleNamespace(body=[])
         result = _extract_certified_ir(node)
         assert result is None
 
+    @pytest.mark.skipif(not _HAS_PYPTO, reason="pypto not installed")
     def test_cache_stores_result(self):
         """Cache stores and retrieves results by program id."""
         from sonata.pipeline import _certified_ir_cache
@@ -133,6 +142,7 @@ class TestIRCacheEffectiveness:
         # Cleanup
         del _certified_ir_cache[id(prog)]
 
+    @pytest.mark.skipif(not _HAS_PYPTO, reason="pypto not installed")
     def test_cache_prevents_dual_pipeline(self):
         """v0.17 C1: Cache ensures only one pipeline run per program.
 
