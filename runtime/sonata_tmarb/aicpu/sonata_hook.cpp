@@ -19,8 +19,9 @@
 #include <cstdio>
 
 // Global enable flag. Set by SONATA_ENABLED env var at init time.
-// std::atomic<bool> with relaxed ordering — correctness of the env-var
-// read-once pattern does not depend on inter-thread visibility order.
+// std::atomic<bool> with sequentially-consistent ordering (default).
+// The env-var read-once pattern does not depend on a specific ordering
+// guarantee, so the default seq_cst is conservative and correct.
 static std::atomic<bool> g_sonata_enabled{false};
 
 struct Tensor;  // forward decl — aicpu_executor.cpp defines the full type
@@ -53,6 +54,19 @@ static bool validate_schedule(const void* blob, size_t blob_size) {
         return false;
     }
     // Verify total size covers all arrays (overflow-safe accumulation)
+    //
+    // Guard 1: prevent size_t multiplication overflow (relevant on 32-bit).
+    // Each int32_t field is cast to size_t then multiplied by sizeof(struct).
+    // On 32-bit size_t (~4.3B max), int32_t (~2.1B) × 24 (max struct) = ~50B
+    // which overflows. Pre-division checks catch this before the multiplication.
+    if (static_cast<size_t>(sched->num_regions) > SIZE_MAX / sizeof(FlatRegion)) return false;
+    if (static_cast<size_t>(sched->total_tasks) > SIZE_MAX / sizeof(FlatTask)) return false;
+    if (static_cast<size_t>(sched->total_args) > SIZE_MAX / sizeof(FlatArg)) return false;
+    if (static_cast<size_t>(sched->total_deps) > SIZE_MAX / sizeof(FlatDep)) return false;
+
+    // Guard 2: overflow-safe accumulation.  Each term is cast to size_t already
+    // (the multiplications above are safe because we checked for overflow).
+    // The add_sz sentinel catches unsigned wrap in the cumulative sum.
     size_t expected = sizeof(FlatSchedule);
     auto add_sz = [](size_t a, size_t b) -> size_t {
         size_t r = a + b;
