@@ -21,7 +21,6 @@ from sonata.schedule import (
     ScheduleDep,
     ScheduledRegion,
     ScheduledTask,
-    ScopeMode,
     SonataScheduleContract,
 )
 
