@@ -580,7 +580,7 @@ def check_region_eligibility(
     
     # Extract per-region Scores for static subtrees
     # This is the key enhancement over v0.4
-    per_region_scores: dict[str, Score] = {}
+    per_region_scores: dict[str, Score] = {}  # noqa: F823 - annotation only, Score imported below for the else branch
     fallback_reasons: list[FallbackReason] = []
     
     # Create a default RuntimeTarget for placeholder scores

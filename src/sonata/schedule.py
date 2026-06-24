@@ -260,9 +260,9 @@ class SonataScheduleContract:
                             "name": t.name,
                             "mixed_kernels": (
                                 {
-                                    "aic_func_id": mk.aic_func_id,
-                                    "aiv_func_id": mk.aiv_func_id,
-                                    "dual_aiv_func_id": mk.dual_aiv_func_id,
+                                    "aic_func_id": t.mixed_kernels.aic_func_id,
+                                    "aiv_func_id": t.mixed_kernels.aiv_func_id,
+                                    "dual_aiv_func_id": t.mixed_kernels.dual_aiv_func_id,
                                 } if t.mixed_kernels is not None else None
                             ),
                         }

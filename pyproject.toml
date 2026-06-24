@@ -39,6 +39,11 @@ exclude = ["tests*", "patches*", "upstream*"]
 line-length = 110
 target-version = "py310"
 
+[tool.ruff.lint.per-file-ignores]
+"src/sonata/__init__.py" = ["F401"]
+"src/sonata/pipeline.py" = ["E402"]
+"tests/**/*.py" = ["F401", "F811"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

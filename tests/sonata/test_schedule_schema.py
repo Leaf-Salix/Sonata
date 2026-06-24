@@ -7,6 +7,7 @@ import pytest
 from sonata.schedule import (
     ArgBinding,
     ArgDirection,
+    MixedKernels,
     RegionBoundary,
     ScheduleDep,
     ScheduleGuard,
@@ -135,6 +136,18 @@ class TestSonataScheduleContract:
         r = ScheduledRegion(region_id="r", kind="static", tasks=(t,))
         c = SonataScheduleContract(fingerprint="f", regions=(r,))
         assert c.regions[0].tasks[0].args[0].direction == ArgDirection.INPUT
+
+    def test_mixed_kernels_round_trips_through_dict(self):
+        t = ScheduledTask(task_id=0, kernel_identity="k", func_id=1, core_type="aic",
+            mixed_kernels=MixedKernels(aic_func_id=1, aiv_func_id=2, dual_aiv_func_id=3))
+        r = ScheduledRegion(region_id="r", kind="static", tasks=(t,))
+        c = SonataScheduleContract(fingerprint="f", regions=(r,))
+        d = c.to_dict()
+        assert d["regions"][0]["tasks"][0]["mixed_kernels"] == {
+            "aic_func_id": 1, "aiv_func_id": 2, "dual_aiv_func_id": 3,
+        }
+        c2 = SonataScheduleContract.from_dict(d)
+        assert c2.regions[0].tasks[0].mixed_kernels == t.mixed_kernels
 
 
 class TestScheduledRegion:

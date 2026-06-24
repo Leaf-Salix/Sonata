@@ -220,7 +220,7 @@ def _storage_keys(task: Task) -> tuple[object | None, ...]:
     return (None,) * len(task.args)
 
 
-def derive_storage_effects(task: Task) -> tuple["StorageEffect", ...]:
+def derive_storage_effects(task: Task) -> tuple["StorageEffect", ...]:  # noqa: F821 - lazily imported below
     """Derive StorageEffect list from a Task's arg_directions and arg_storage_keys.
 
     v0.17 Phase 3 A3: Maps argument directions to storage access types:

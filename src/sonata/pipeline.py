@@ -237,7 +237,7 @@ class SonataAnalysisResult:
 
         return data
 
-    def to_runtime_config(self) -> "SonataRuntimeConfig":
+    def to_runtime_config(self) -> "SonataRuntimeConfig":  # noqa: F821 - lazily imported below
         """Convert to SonataRuntimeConfig for embedding in RUNTIME_CONFIG.
 
         v0.22 Phase 1 A2: Computes scheduling hints from dispatch regions,
@@ -848,7 +848,7 @@ def execute_with_sonata(
                         plan.score,
                         source_adapter=DEFAULT_CERTIFIED_DUMP,
                     )
-                    plan = dataclasses.replace(plan, plan_handle=new_plan_handle)
+                    plan = replace(plan, plan_handle=new_plan_handle)
                 _region_log.info("[SONATA] Plan handle rebuilt from Score")
 
             # Update guard status in sonata_plan.json

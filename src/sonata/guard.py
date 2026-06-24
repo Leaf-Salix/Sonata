@@ -401,9 +401,9 @@ class GuardEvaluator:
 
     def evaluate_region(
         self,
-        node: "RegionTreeNode",
+        node: "RegionTreeNode",  # noqa: F821 - lazily imported elsewhere to avoid circular import
         runtime_values: dict[str, Any],
-    ) -> "GuardStatus":
+    ) -> "GuardStatus":  # noqa: F821 - see .plan_handle.GuardStatus import below
         """Evaluate all guards in a region subtree.
 
         Collects shape assumptions (which are GuardConditions) from the
@@ -421,7 +421,7 @@ class GuardEvaluator:
 
         guards: list[GuardCondition] = []
 
-        def _collect(n: "RegionTreeNode") -> None:
+        def _collect(n: "RegionTreeNode") -> None:  # noqa: F821 - see evaluate_region
             if n.score is not None:
                 guards.extend(n.score.shape_assumptions)
             for child in n.children:
@@ -444,7 +444,7 @@ class GuardEvaluator:
 
     def select_region_guards(
         self,
-        node: "RegionTreeNode",
+        node: "RegionTreeNode",  # noqa: F821 - see evaluate_region
         selector: "GuardSelector | None" = None,
         *,
         density_threshold: int = 50,
@@ -467,7 +467,7 @@ class GuardEvaluator:
         """
         guards: list[GuardCondition] = []
 
-        def _collect(n: "RegionTreeNode") -> None:
+        def _collect(n: "RegionTreeNode") -> None:  # noqa: F821 - see evaluate_region
             if n.score is not None:
                 guards.extend(n.score.shape_assumptions)
             for child in n.children:
