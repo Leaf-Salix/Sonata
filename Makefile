@@ -19,4 +19,4 @@ test-st-baseline:
 test-all: test-sonata test-integration
 
 lint:
-	PYTHONPATH=$(PYTHONPATH_SRC) $(PYTHON) -m py_compile src/sonata/__init__.py
+	$(PYTHON) -m ruff check src/sonata/ tests/sonata/
