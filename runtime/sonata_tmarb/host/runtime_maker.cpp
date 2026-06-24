@@ -127,12 +127,12 @@ extern "C" int bind_callable_to_runtime_impl(
     // ── Stage tensors to device (same as upstream) ──
     ChipStorageTaskArgs device_args;
     for (int i = 0; i < tensor_count; i++) {
-        ContinuousTensor t = orch_args->tensor(i);
+        Tensor t = orch_args->tensor(i);
         if (t.is_child_memory()) {
             device_args.add_tensor(t);
             continue;
         }
-        void *host_ptr = reinterpret_cast<void *>(static_cast<uintptr_t>(t.data));
+        void *host_ptr = reinterpret_cast<void *>(static_cast<uintptr_t>(t.buffer.addr));
         size_t size = static_cast<size_t>(t.nbytes());
 
         void *dev_ptr = runtime->host_api.device_malloc(size);
@@ -154,7 +154,7 @@ extern "C" int bind_callable_to_runtime_impl(
         }
         bool needs_copy_back = !(signature != nullptr && i < sig_count && signature[i] == ArgDirection::IN);
         runtime->tensor_pairs_.push_back({host_ptr, dev_ptr, size, needs_copy_back});
-        t.data = reinterpret_cast<uint64_t>(dev_ptr);
+        t.buffer.addr = reinterpret_cast<uint64_t>(dev_ptr);
         device_args.add_tensor(t);
     }
     for (int i = 0; i < scalar_count; i++) {
