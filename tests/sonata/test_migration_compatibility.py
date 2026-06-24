@@ -29,12 +29,14 @@ class TestShapeAssumptionAsGuardCondition:
     
     def test_shape_assumption_is_guard_condition(self):
         """ShapeAssumption should be an instance of GuardCondition."""
-        sa = ShapeAssumption(symbol="N", dims=(128,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="N", dims=(128,))
         assert isinstance(sa, GuardCondition)
     
     def test_shape_assumption_has_required_fields(self):
         """ShapeAssumption must have symbol and severity fields."""
-        sa = ShapeAssumption(symbol="batch", dims=(32,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="batch", dims=(32,))
         assert hasattr(sa, "symbol")
         assert hasattr(sa, "severity")
         assert sa.symbol == "batch"
@@ -42,15 +44,18 @@ class TestShapeAssumptionAsGuardCondition:
     
     def test_shape_assumption_default_severity(self):
         """ShapeAssumption defaults to HARD severity."""
-        sa = ShapeAssumption(symbol="N", dims=(128,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="N", dims=(128,))
         assert sa.severity == GUARD_SEVERITY_HARD
     
     def test_shape_assumption_custom_severity(self):
         """ShapeAssumption accepts custom severity."""
-        sa_soft = ShapeAssumption(symbol="M", dims=(64,), severity=GUARD_SEVERITY_SOFT)
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa_soft = ShapeAssumption(symbol="M", dims=(64,), severity=GUARD_SEVERITY_SOFT)
         assert sa_soft.severity == GUARD_SEVERITY_SOFT
-        
-        sa_hard = ShapeAssumption(symbol="K", dims=(32,), severity=GUARD_SEVERITY_HARD)
+
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa_hard = ShapeAssumption(symbol="K", dims=(32,), severity=GUARD_SEVERITY_HARD)
         assert sa_hard.severity == GUARD_SEVERITY_HARD
 
 
@@ -103,26 +108,30 @@ class TestConversionFunction:
     
     def test_conversion_preserves_symbol(self):
         """Converted guard should have same symbol as original."""
-        sa = ShapeAssumption(symbol="test_symbol", dims=(128,))
-        gc = shape_assumption_to_guard_condition(sa)
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="test_symbol", dims=(128,))
+            gc = shape_assumption_to_guard_condition(sa)
         assert gc.symbol == "test_symbol"
-    
+
     def test_conversion_preserves_dims(self):
         """Converted guard should have same dims as original."""
-        sa = ShapeAssumption(symbol="N", dims=(32, 64))
-        gc = shape_assumption_to_guard_condition(sa)
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="N", dims=(32, 64))
+            gc = shape_assumption_to_guard_condition(sa)
         assert gc.dims == (32, 64)
-    
+
     def test_conversion_preserves_severity(self):
         """Converted guard should preserve original severity."""
-        sa = ShapeAssumption(symbol="M", dims=(128,), severity=GUARD_SEVERITY_SOFT)
-        gc = shape_assumption_to_guard_condition(sa)
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="M", dims=(128,), severity=GUARD_SEVERITY_SOFT)
+            gc = shape_assumption_to_guard_condition(sa)
         assert gc.severity == GUARD_SEVERITY_SOFT
-    
+
     def test_conversion_accepts_override_severity(self):
         """Converter can override severity if provided."""
-        sa = ShapeAssumption(symbol="N", dims=(128,), severity=GUARD_SEVERITY_HARD)
-        gc = shape_assumption_to_guard_condition(sa, severity=GUARD_SEVERITY_SOFT)
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="N", dims=(128,), severity=GUARD_SEVERITY_HARD)
+            gc = shape_assumption_to_guard_condition(sa, severity=GUARD_SEVERITY_SOFT)
         assert gc.severity == GUARD_SEVERITY_SOFT
     
     def test_conversion_rejects_non_shape_assumption(self):
@@ -139,27 +148,32 @@ class TestBackwardCompatibility:
     
     def test_shape_assumption_frozen(self):
         """ShapeAssumption should remain frozen (immutable)."""
-        sa = ShapeAssumption(symbol="N", dims=(128,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="N", dims=(128,))
         with pytest.raises(AttributeError):
             sa.symbol = "new_value"
-    
+
     def test_shape_assumption_hashable(self):
         """ShapeAssumption should be hashable (frozen dataclass)."""
-        sa = ShapeAssumption(symbol="N", dims=(128,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="N", dims=(128,))
         hash(sa)  # Should not raise
-    
+
     def test_multiple_shape_assumptions_equal(self):
         """Equal ShapeAssumptions should compare equal."""
-        sa1 = ShapeAssumption(symbol="N", dims=(128,))
-        sa2 = ShapeAssumption(symbol="N", dims=(128,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa1 = ShapeAssumption(symbol="N", dims=(128,))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa2 = ShapeAssumption(symbol="N", dims=(128,))
         assert sa1 == sa2
-    
+
     def test_shape_assumption_tuple_usage(self):
         """ShapeAssumptions should work in tuples (as in Score)."""
-        guards = (
-            ShapeAssumption(symbol="N", dims=(128,)),
-            ShapeAssumption(symbol="M", dims=(64,)),
-        )
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            guards = (
+                ShapeAssumption(symbol="N", dims=(128,)),
+                ShapeAssumption(symbol="M", dims=(64,)),
+            )
         assert len(guards) == 2
         assert all(isinstance(g, ShapeAssumption) for g in guards)
         assert all(isinstance(g, GuardCondition) for g in guards)
@@ -172,21 +186,22 @@ class TestIntegrationWithCache:
         """ScoreCache should handle scores with ShapeAssumptions."""
         from sonata.cache import ScoreCache
         from sonata.score import Score, Task, Dependency, RuntimeTarget
-        
-        score = Score(
-            name="test",
-            runtime_target=RuntimeTarget(),
-            tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
-            dependencies=(Dependency(producer=0, consumer=0),),
-            shape_assumptions=(
-                ShapeAssumption(symbol="N", dims=(128,), severity=GUARD_SEVERITY_HARD),
-            ),
-        )
-        
+
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            score = Score(
+                name="test",
+                runtime_target=RuntimeTarget(),
+                tasks=(Task(task_id=0, func_id=0, core_type="aic"),),
+                dependencies=(Dependency(producer=0, consumer=0),),
+                shape_assumptions=(
+                    ShapeAssumption(symbol="N", dims=(128,), severity=GUARD_SEVERITY_HARD),
+                ),
+            )
+
         cache = ScoreCache()
         fp = cache.store(score)
         payload = cache.lookup(fp)
-        
+
         assert payload is not None
         assert payload["name"] == "test"
     
@@ -302,29 +317,33 @@ class TestEdgeCases:
     
     def test_empty_dims(self):
         """ShapeAssumption with empty dims should work."""
-        sa = ShapeAssumption(symbol="scalar", dims=())
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="scalar", dims=())
         assert sa.dims == ()
         assert sa.symbol == "scalar"
-    
+
     def test_large_dims(self):
         """ShapeAssumption with large dimension values should work."""
-        sa = ShapeAssumption(symbol="big", dims=(10**6, 10**6))
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            sa = ShapeAssumption(symbol="big", dims=(10**6, 10**6))
         assert sa.dims == (10**6, 10**6)
-    
+
     def test_special_symbols(self):
         """ShapeAssumption with special symbol names should work."""
         symbols = ["batch_size", "seq-len", "tensor_0", "123numeric"]
         for sym in symbols:
-            sa = ShapeAssumption(symbol=sym, dims=(32,))
+            with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+                sa = ShapeAssumption(symbol=sym, dims=(32,))
             assert sa.symbol == sym
-    
+
     def test_mixed_severity_list(self):
         """List of ShapeAssumptions with mixed severities should work."""
-        guards = (
-            ShapeAssumption(symbol="a", dims=(1,), severity=GUARD_SEVERITY_HARD),
-            ShapeAssumption(symbol="b", dims=(2,), severity=GUARD_SEVERITY_SOFT),
-            ShapeAssumption(symbol="c", dims=(3,)),  # Defaults to HARD
-        )
+        with pytest.warns(DeprecationWarning, match="ShapeAssumption"):
+            guards = (
+                ShapeAssumption(symbol="a", dims=(1,), severity=GUARD_SEVERITY_HARD),
+                ShapeAssumption(symbol="b", dims=(2,), severity=GUARD_SEVERITY_SOFT),
+                ShapeAssumption(symbol="c", dims=(3,)),  # Defaults to HARD
+            )
         assert len(guards) == 3
         assert guards[0].severity == GUARD_SEVERITY_HARD
         assert guards[1].severity == GUARD_SEVERITY_SOFT
