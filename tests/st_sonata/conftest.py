@@ -239,7 +239,19 @@ def _patch_kernel_config_sonata(work_dir: Path, sonata_dict: dict) -> None:
     sonata_repr = repr(sonata_dict)
     sonata_line = f'\t"sonata": {sonata_repr},\n'
 
-    new_content = content[:close_idx] + sonata_line + content[close_idx:]
+    # Also promote block_dim / aicpu_thread_num to top-level RUNTIME_CONFIG
+    # keys that the runtime actually reads (device_runner.py → Worker.run)
+    extra_lines = ""
+    bd = sonata_dict.get("suggested_block_dim")
+    if bd is not None:
+        extra_lines += f'\t"block_dim": {bd!r},\n'
+    at = sonata_dict.get("suggested_aicpu_thread_num")
+    if at is not None:
+        extra_lines += f'\t"aicpu_thread_num": {at!r},\n'
+
+    # Insert sonata dict + promoted keys before closing brace
+    insert_block = sonata_line + extra_lines
+    new_content = content[:close_idx] + insert_block + content[close_idx:]
 
     # Atomic write: write to temp, then replace
     fd, tmp_path = tempfile.mkstemp(
