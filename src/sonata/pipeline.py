@@ -29,6 +29,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from typing import Any
 # Module-level certified IR cache: program id → (program_ref, certified IR)
 # Holds a strong reference to program to prevent GC and id() reuse collision.
 _certified_ir_cache: dict[int, tuple[Any, Any]] = {}
+_log = logging.getLogger("sonata.pipeline")
 
 
 def _clear_ir_cache() -> None:
@@ -78,6 +80,7 @@ def _extract_certified_ir(program: object) -> Any | None:
                     certified_ir = current
                     break
     except Exception:
+        _log.debug("certified IR extraction failed", exc_info=True)
         certified_ir = None
 
     _certified_ir_cache[prog_id] = (program, certified_ir)
@@ -85,7 +88,7 @@ def _extract_certified_ir(program: object) -> Any | None:
 
 from .eligibility import check_static_eligibility
 from .plan_handle import PlanHandle
-from .pypto_adapter import DEFAULT_CERTIFIED_DUMP, PostSimplifyPyPTOInputAdapter
+from .pypto_adapter import DEFAULT_CERTIFIED_DUMP
 from .regions import (
     RegionTree,
     build_region_tree,
@@ -428,7 +431,7 @@ def sonata_analyze(
                         len(score.tasks),
                     )
         except Exception:
-            pass  # keep placeholder score
+            _log.debug("task extraction from IR failed, keeping placeholder score", exc_info=True)
 
     if score is None:
         return SonataAnalysisResult(
@@ -503,8 +506,6 @@ def sonata_compile(
         ``(compiled_program, sonata_result)``.
     """
     from pypto import ir as _ir
-    from pypto.pypto_core import passes as _core_passes
-    from pypto.ir.pass_manager import OptimizationStrategy, PassManager
 
     compiled = _ir.compile(program, output_dir=output_dir)
 
@@ -580,6 +581,17 @@ def _write_bound_schedule(
         "[SONATA] bound schedule written: %s (tasks=%d, regions=%d)",
         path, _safe_task_count(bound_schedule), len(bound_schedule.regions),
     )
+
+    # v0.27: Write binary schedule alongside JSON for fast-path interpreter
+    try:
+        bin_path = work_dir / "sonata_schedule.bin"
+        bin_path.write_bytes(bound_schedule.to_binary())
+        _region_log.info(
+            "[SONATA] binary schedule written: %s (%d bytes)",
+            bin_path, len(bin_path.read_bytes()),
+        )
+    except Exception as exc:
+        _region_log.debug("[SONATA] binary schedule skipped: %s", exc)
 
     # Store schedule_path on result for to_runtime_config() to emit
     result.schedule_path = str(path.relative_to(work_dir)) if path.is_relative_to(work_dir) else str(path)
@@ -697,7 +709,7 @@ def _extract_arg_names(compiled: Any) -> tuple[list[str], list[str]]:
             scalars = [p["name"] for p in params if p.get("direction", "") == "scalar"]
             return tensors, scalars
     except Exception:
-        pass
+        _log.debug("kernel config extraction failed for %s", kc_path, exc_info=True)
     return [], []
 
 
