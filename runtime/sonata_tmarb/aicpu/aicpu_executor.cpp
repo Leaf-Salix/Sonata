@@ -236,27 +236,48 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t /*arena_size*/,
     }
 
     // ── Initialize PTO2Runtime from prebuilt arena ──
+    //
+    // The host-side (bind_callable_to_runtime_impl) has already reserved,
+    // committed, initialized, and wired the arena.  We just attach to it
+    // and retrieve the rt pointer.
+    //
+    // The rt address is communicated via SONATA_RT_ADDR env var (set by
+    // runtime_maker.cpp as a hex string) because framework_bind_runtime in
+    // the aicpu .so is a different global than in the host .so.
     DeviceArena runtime_arena;
     runtime_arena.attach(prebuilt_arena, DeviceArena::kDefaultBaseAlign);
 
-    PTO2RuntimeArenaLayout layout;
-    layout = runtime_reserve_layout(runtime_arena, task_window_size, PTO2_DEP_LIST_POOL_SIZE);
+    PTO2Runtime *rt = nullptr;
+    const char *rt_addr_str = std::getenv("SONATA_RT_ADDR");
+    if (rt_addr_str != nullptr) {
+        uint64_t rt_addr = 0;
+        try {
+            rt_addr = std::stoull(rt_addr_str, nullptr, 16);
+        } catch (...) {}
+        if (rt_addr != 0) {
+            rt = reinterpret_cast<PTO2Runtime *>(rt_addr);
+        }
+    }
+    if (rt == nullptr) {
+        // Fallback: init from layout (works when aicpu_entry is called
+        // directly, not via the dlsym path from host_runtime.so).
+        PTO2RuntimeArenaLayout layout;
+        layout = runtime_reserve_layout(runtime_arena, task_window_size, PTO2_DEP_LIST_POOL_SIZE);
+        rt = runtime_init_data_from_layout(
+            runtime_arena, layout, PTO2_MODE_EXECUTE,
+            sm_ptr, sm_size, gm_heap, heap_size
+        );
+        if (!rt) return -2;
+        runtime_wire_arena_pointers(runtime_arena, layout, rt);
+    }
+    framework_bind_runtime(rt);
 
-    PTO2Runtime* rt = runtime_init_data_from_layout(
-        runtime_arena, layout, PTO2_MODE_EXECUTE,
-        sm_ptr, sm_size, gm_heap, heap_size
-    );
-    if (!rt) return -2;
-
-    runtime_wire_arena_pointers(runtime_arena, layout, rt);
-
-    // Reset SM and mailbox
+    // Reset SM and mailbox (these use the rt pointer, ok to do on prebuilt)
     std::memset(rt->sm_handle, 0, sizeof(*rt->sm_handle));
     rt->sm_handle->init(sm_ptr, sm_size, task_window_size, heap_size);
     std::memset(rt->aicore_mailbox, 0, sizeof(*rt->aicore_mailbox));
 
     runtime_finalize_after_wire(rt, aic_count, aiv_count);
-    framework_bind_runtime(rt);
 
     // ── Parse flat schedule using header fields ──
     //

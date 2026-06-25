@@ -260,16 +260,40 @@ extern "C" int bind_callable_to_runtime_impl(
     }
 
     // ── Invoke interpreter via dlsym (from aicpu_kernel.so) ──
+    // aicpu_kernel.so is loaded by the TMARB framework with RTLD_LOCAL,
+    // so its symbols are NOT visible to dlsym(RTLD_DEFAULT).  We dlopen
+    // it explicitly using the absolute path from SONATA_AICPU_PATH env var.
     using AicpuEntryFn = int (*)(void*, uint64_t, void*, uint64_t, void*, uint64_t,
                                   int32_t, int32_t, int32_t,
                                   const FlatSchedule*, const void*, int32_t);
-    static const AicpuEntryFn aicpu_entry =
-        reinterpret_cast<AicpuEntryFn>(dlsym(RTLD_DEFAULT, "aicpu_entry"));
+    AicpuEntryFn aicpu_entry = nullptr;
+    const char *aicpu_path = std::getenv("SONATA_AICPU_PATH");
+    if (aicpu_path != nullptr) {
+        void *aicpu_handle = dlopen(aicpu_path, RTLD_LAZY | RTLD_GLOBAL);
+        if (aicpu_handle != nullptr) {
+            aicpu_entry = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_entry"));
+        } else {
+            LOG_WARN("dlopen(%s) failed: %s", aicpu_path, dlerror());
+        }
+    }
+    // Last-resort fallback: RTLD_DEFAULT (Linux with RTLD_GLOBAL lib loading)
     if (aicpu_entry == nullptr) {
-        LOG_ERROR("dlsym(aicpu_entry) failed: %s", dlerror());
+        aicpu_entry = reinterpret_cast<AicpuEntryFn>(dlsym(RTLD_DEFAULT, "aicpu_entry"));
+    }
+    if (aicpu_entry == nullptr) {
+        LOG_ERROR("dlsym(aicpu_entry) failed: "
+                  "set SONATA_AICPU_PATH to the aicpu_kernel.so path");
         std::free(sched_buf);
         return -1;
     }
+    // Pass the PTO2Runtime pointer to aicpu_entry via env var (hex string).
+    // Both host_runtime.so and aicpu_kernel.so are in the same process on
+    // simulator; the env var is read by aicpu_entry to skip re-initialization
+    // of the prebuilt arena.
+    char rt_addr_hex[32];
+    std::snprintf(rt_addr_hex, sizeof(rt_addr_hex), "%" PRIxPTR,
+                  reinterpret_cast<uintptr_t>(rt));
+    setenv("SONATA_RT_ADDR", rt_addr_hex, 1);
     int interp_rc = aicpu_entry(
         runtime_arena_dev, layout.arena_size,
         sm_ptr, sm_size,

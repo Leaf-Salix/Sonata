@@ -66,17 +66,23 @@ BUILD_CONFIG = {
             "../../upstream/pypto/runtime/src/common",
             "../../upstream/pypto/runtime/src/common/log/include",
             "../../upstream/pypto/runtime/src/common/platform/sim/aicpu",
+            "../../upstream/pypto/runtime/src/common/platform/sim/host",
+            "../../upstream/pypto/runtime/src/common/platform/shared",
+            "../../upstream/pypto/runtime/src/common/platform/include",
             f"{UPSTREAM_TMARB}/../../platform/include/aicpu",
             f"{UPSTREAM_TMARB}/../../platform/shared",
             f"{UPSTREAM_TMARB}/../../platform/shared/aicpu",
             "runtime",
             "include",
         ],
-        # source_dirs 精简：只编译 host/runtime_maker.cpp + runtime/shared 生命周期函数。
-        # aicpu_entry 通过 dlsym 从 aicpu_kernel.so 动态加载，避免链接 scheduler / platform 符号。
+        # source_dirs: host/runtime_maker.cpp + runtime/shared 生命周期函数 +
+        # platform C API (simpler_init, prepare_callable, run_prepared) 使
+        # sonata_tmarb 满足 ChipWorker 的 ABI 要求。
         "source_dirs": [
             "host",
             f"{UPSTREAM_TMARB}/runtime/shared",
+            f"{UPSTREAM_TMARB}/../../platform/sim/host",
+            "../../upstream/pypto/runtime/src/common/platform/sim/host",
         ],
     },
 }
