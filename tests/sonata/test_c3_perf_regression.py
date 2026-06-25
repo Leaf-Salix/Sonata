@@ -78,8 +78,17 @@ def _format_ms(seconds: float) -> str:
 
 
 def run_c3_benchmark() -> dict:
-    """Run C3 benchmark and return results."""
-    print(f"\n=== C3: Performance Regression ({SAMPLES} samples per mode) ===\n")
+    """Run C3 benchmark and return results.
+
+    Samples are interleaved (baseline, sonata, baseline, sonata, ...) rather
+    than run as two separate blocks. Each subprocess invocation pays for a
+    full ptoas+g++ compile, which heats up the machine; if all baseline
+    samples ran first, system-wide drift (thermal throttling, background
+    load) over the run would land entirely on whichever mode runs second,
+    masquerading as "Sonata overhead" instead of as noise distributed
+    between both modes.
+    """
+    print(f"\n=== C3: Performance Regression ({SAMPLES} samples per mode, interleaved) ===\n")
     print(f"Test: {ST_TEST}")
     print(f"Budget: Sonata overhead < {PERF_BUDGET_PCT}%\n")
 
@@ -91,20 +100,21 @@ def run_c3_benchmark() -> dict:
         baseline_times.append(t)
         print(f"  baseline sample {s}: {_format_ms(t)}")
 
-    print()
-
-    for s in range(1, SAMPLES + 1):
         t = _run_test(with_sonata=True, sample=s)
         sonata_times.append(t)
         print(f"  sonata   sample {s}: {_format_ms(t)}")
 
-    baseline_avg = statistics.mean(baseline_times)
-    sonata_avg = statistics.mean(sonata_times)
+    # Median, not mean: each sample is a full subprocess (ptoas + g++ compile),
+    # so a single sample disrupted by unrelated system load (e.g. Spotlight,
+    # background indexing) easily swings 2x: a mean would let that one outlier
+    # dominate a 3-sample budget check, a median absorbs it.
+    baseline_avg = statistics.median(baseline_times)
+    sonata_avg = statistics.median(sonata_times)
     overhead_pct = (sonata_avg - baseline_avg) / baseline_avg * 100
 
-    print(f"\n  baseline avg: {_format_ms(baseline_avg)}")
-    print(f"  sonata   avg: {_format_ms(sonata_avg)}")
-    print(f"  overhead:    {overhead_pct:+.1f}%")
+    print(f"\n  baseline median: {_format_ms(baseline_avg)}")
+    print(f"  sonata   median: {_format_ms(sonata_avg)}")
+    print(f"  overhead:       {overhead_pct:+.1f}%")
 
     return {
         "baseline_samples": baseline_times,
