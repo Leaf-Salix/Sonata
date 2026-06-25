@@ -177,11 +177,11 @@ class TestC1BinaryScheduleE2E:
         )
 
 
-def test_real_aicpu_entry_executes_schedule():
-    """Prove REAL aicpu_entry processes Python-produced v2 binary schedule.
+def test_real_aicpu_execute_executes_schedule():
+    """Prove REAL aicpu_execute processes Python-produced v2 binary schedule.
 
     This ctypes test loads the compiled sonata_tmarb libaicpu_kernel.so and
-    calls the unwrapped aicpu_entry — NOT a stub.  The interpreter reads the
+    calls the unwrapped aicpu_execute — NOT a stub.  The interpreter reads the
     v2 binary, validates magic/version, skips CRC, and reaches runtime init
     (DeviceArena:attach fails because no host_runtime.so set up the arena).
 
@@ -218,7 +218,7 @@ def handler(sig, frame):
 signal.signal(signal.SIGABRT, handler)
 
 lib = ctypes.CDLL("{so_path}")
-fn = lib.aicpu_entry
+fn = lib.aicpu_execute
 fn.argtypes = [ctypes.c_void_p, ctypes.c_uint64]*3 + [ctypes.c_int32]*3 + [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32]
 fn.restype = ctypes.c_int
 
@@ -244,6 +244,6 @@ print(f"rc={{rc}}", flush=True)
     # Expected: either SIGABRT (arena init — detected via stderr) or rc=-2 (graceful)
     sigabrt_device_arena = "DeviceArena::attach" in err or "DeviceArena::attach" in out
     assert sigabrt_device_arena or "rc=-2" in out or "rc=0" in out, (
-        f"aicpu_entry did not process schedule.\n"
+        f"aicpu_execute did not process schedule.\n"
         f"  stdout={out}\n  stderr={err[:300]}"
     )

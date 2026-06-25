@@ -1,6 +1,7 @@
 // test_hook_harness.cpp — gtest harness for sonata_hook.h fail-open modes.
 //
-// Compiled against sonata_hook.cpp with a stub aicpu_entry.
+// Compiled against sonata_hook.cpp with a stub aicpu_execute.
+// Stub: replaces real aicpu_execute (which requires TMARB runtime).
 // Validates that all 6 fail-open modes return correct status codes and
 // do NOT crash (graceful degradation to original path).
 
@@ -18,9 +19,9 @@
 static int g_aicpu_call_count = 0;
 static int g_aicpu_return_code = 0;
 
-// Stub: replaces real aicpu_entry (which requires TMARB runtime).
+// Stub: replaces real aicpu_execute (which requires TMARB runtime).
 // Returns g_aicpu_return_code; increments counter for diagnostics.
-extern "C" int aicpu_entry(void*, uint64_t,
+extern "C" int aicpu_execute(void*, uint64_t,
                            void*, uint64_t,
                            void*, uint64_t,
                            int32_t, int32_t,
@@ -290,7 +291,7 @@ static bool try_load_and_validate(const char* path) {
         unsetenv("SONATA_ENABLED");
         return false;
     }
-    printf("OK: process_schedule OK for %s (aicpu_entry called %d time(s))\n",
+    printf("OK: process_schedule OK for %s (aicpu_execute called %d time(s))\n",
            path, g_aicpu_call_count);
 
     sonata_hook_fini();

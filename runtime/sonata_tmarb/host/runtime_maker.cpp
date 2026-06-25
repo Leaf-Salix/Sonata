@@ -263,38 +263,40 @@ extern "C" int bind_callable_to_runtime_impl(
     // aicpu_kernel.so is loaded by the TMARB framework with RTLD_LOCAL,
     // so its symbols are NOT visible to dlsym(RTLD_DEFAULT).  We dlopen
     // it explicitly using the absolute path from SONATA_AICPU_PATH env var.
+    // The function is named "aicpu_execute" (device_runner.cpp dlsyms this).
+    // Fall back to "aicpu_entry" for backward compatibility.
     using AicpuEntryFn = int (*)(void*, uint64_t, void*, uint64_t, void*, uint64_t,
                                   int32_t, int32_t, int32_t,
                                   const FlatSchedule*, const void*, int32_t);
-    AicpuEntryFn aicpu_entry = nullptr;
+    AicpuEntryFn aicpu_exec_fn = nullptr;
     const char *aicpu_path = std::getenv("SONATA_AICPU_PATH");
     if (aicpu_path != nullptr) {
         void *aicpu_handle = dlopen(aicpu_path, RTLD_LAZY | RTLD_GLOBAL);
         if (aicpu_handle != nullptr) {
-            aicpu_entry = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_entry"));
+            aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_execute"));
+            if (aicpu_exec_fn == nullptr) {
+                aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_entry"));
+            }
         } else {
             LOG_WARN("dlopen(%s) failed: %s", aicpu_path, dlerror());
         }
     }
     // Last-resort fallback: RTLD_DEFAULT (Linux with RTLD_GLOBAL lib loading)
-    if (aicpu_entry == nullptr) {
-        aicpu_entry = reinterpret_cast<AicpuEntryFn>(dlsym(RTLD_DEFAULT, "aicpu_entry"));
+    if (aicpu_exec_fn == nullptr) {
+        aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(RTLD_DEFAULT, "aicpu_execute"));
     }
-    if (aicpu_entry == nullptr) {
-        LOG_ERROR("dlsym(aicpu_entry) failed: "
+    if (aicpu_exec_fn == nullptr) {
+        LOG_ERROR("dlsym(aicpu_execute) failed: "
                   "set SONATA_AICPU_PATH to the aicpu_kernel.so path");
         std::free(sched_buf);
         return -1;
     }
-    // Pass the PTO2Runtime pointer to aicpu_entry via env var (hex string).
-    // Both host_runtime.so and aicpu_kernel.so are in the same process on
-    // simulator; the env var is read by aicpu_entry to skip re-initialization
-    // of the prebuilt arena.
+    // Pass the PTO2Runtime pointer via env var (hex string).
     char rt_addr_hex[32];
     std::snprintf(rt_addr_hex, sizeof(rt_addr_hex), "%" PRIxPTR,
                   reinterpret_cast<uintptr_t>(rt));
     setenv("SONATA_RT_ADDR", rt_addr_hex, 1);
-    int interp_rc = aicpu_entry(
+    int interp_rc = aicpu_exec_fn(
         runtime_arena_dev, layout.arena_size,
         sm_ptr, sm_size,
         gm_heap, eff_heap_size,

@@ -210,16 +210,12 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 
 // ── Device-side entry point ──
 //
-// Called by simpler runtime after host-side bind. Initializes the
-// PTO2Runtime from the prebuilt arena, parses the flat schedule,
-// and runs the interpreter loop.
-//
-// tensor_registry: array of Tensor objects populated from orch_args by
-// the host-side framework. Indexed by FlatArg.runtime_slot. May be
-// nullptr if the host-side caller has not yet been updated to provide
-// tensor bindings (scalar-only tasks still work).
+// Named aicpu_execute (not aicpu_entry) because device_runner.cpp
+// dlsyms "aicpu_execute" from the aicpu_kernel.so at runtime.
+// The host-side dlsym in runtime_maker.cpp also searches for
+// "aicpu_entry" and falls back; both names resolve to this function.
 
-extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t /*arena_size*/,
+extern "C" int aicpu_execute(void* prebuilt_arena, uint64_t /*arena_size*/,
                            void* sm_ptr, uint64_t sm_size,
                            void* gm_heap, uint64_t heap_size,
                            int32_t aic_count, int32_t aiv_count,
