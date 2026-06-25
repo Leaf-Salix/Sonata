@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <limits.h>
 
 #include "flat_schedule.h"
 #include "sonata_hook.h"
@@ -191,21 +192,15 @@ extern "C" int bind_callable_to_runtime_impl(
     runtime->set_orch_args(device_args);
 
     // ── Build prebuilt runtime arena image ──
-    PTO2Runtime *rt = runtime_init_data_from_layout(
-        host_arena, layout, PTO2_MODE_EXECUTE, sm_ptr, sm_size, gm_heap, eff_heap_size);
-    if (rt == nullptr) {
-        LOG_ERROR("runtime_init_data_from_layout failed");
-        return -1;
-    }
-    runtime_wire_arena_pointers(host_arena, layout, rt);
-    rt->prebuilt_layout = layout;
-
-    int rc_upload = runtime->host_api.copy_to_device(runtime_arena_dev, host_arena.base(), layout.arena_size);
-    if (rc_upload != 0) {
-        LOG_ERROR("Failed to upload prebuilt arena (rc=%d)", rc_upload);
-        return -1;
-    }
-    runtime->set_prebuilt_arena(runtime_arena_dev, layout.off_runtime);
+    // (delegated to aicpu_kernel.so's aicpu_execute — it handles
+    // reserve_layout / init_data_from_layout / wire_arena_pointers
+    // internally, matching the upstream TMARB pattern where the aicpu
+    // kernel initializes the runtime itself.  We only set up the GM
+    // heap and SM; the aicpu side attaches to those.)
+    runtime->set_gm_heap(gm_heap);
+    runtime->set_gm_sm_ptr(sm_ptr);
+    runtime->set_orch_args(device_args);
+    runtime->set_prebuilt_arena(runtime_arena_dev, 0);
 
     // ── Extract flat_schedule from callable's orch binary ──
     // The orch_so_data contains the flat_schedule binary that was uploaded
@@ -224,7 +219,14 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
-    FILE *f = std::fopen(schedule_path_env, "rb");
+    // Canonicalize path to prevent directory traversal.
+    char resolved_path[PATH_MAX];
+    if (realpath(schedule_path_env, resolved_path) == nullptr) {
+        LOG_ERROR("Cannot resolve schedule path: %s", schedule_path_env);
+        return -1;
+    }
+
+    FILE *f = std::fopen(resolved_path, "rb");
     if (f == nullptr) {
         LOG_ERROR("Cannot open schedule file: %s", schedule_path_env);
         return -1;
@@ -234,6 +236,13 @@ extern "C" int bind_callable_to_runtime_impl(
     std::fseek(f, 0, SEEK_SET);
     if (file_size < static_cast<long>(sizeof(FlatSchedule))) {
         LOG_ERROR("Schedule file too small: %ld bytes", file_size);
+        std::fclose(f);
+        return -1;
+    }
+    // Sanity cap: 64 MiB max for a schedule binary (prevents OOM).
+    static constexpr long MAX_SCHEDULE_SIZE = 64L * 1024L * 1024L;
+    if (file_size > MAX_SCHEDULE_SIZE) {
+        LOG_ERROR("Schedule file too large: %ld bytes (max %ld)", file_size, MAX_SCHEDULE_SIZE);
         std::fclose(f);
         return -1;
     }
@@ -255,6 +264,27 @@ extern "C" int bind_callable_to_runtime_impl(
     auto *flat_sched = reinterpret_cast<FlatSchedule*>(sched_buf);
     if (flat_sched->magic != 0x534F4E41) {
         LOG_ERROR("Bad schedule magic: 0x%08x", flat_sched->magic);
+        std::free(sched_buf);
+        return -1;
+    }
+    // Validate header fields: no negative counts, version must be known.
+    if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {
+        LOG_ERROR("Unsupported schedule version: %d", flat_sched->version);
+        std::free(sched_buf);
+        return -1;
+    }
+    // Bounds check: verify declared arrays fit within blob (overflow-safe).
+    size_t expected_size = sizeof(FlatSchedule)
+        + static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion)
+        + static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask)
+        + static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg)
+        + static_cast<size_t>(flat_sched->total_deps) * sizeof(FlatDep);
+    // v2 has 4-byte CRC between header and arrays; v1 does not.
+    if (flat_sched->version >= 2) {
+        expected_size += 4;
+    }
+    if (expected_size > static_cast<size_t>(file_size) || expected_size < sizeof(FlatSchedule)) {
+        LOG_ERROR("Schedule header fields overflow or exceed file size");
         std::free(sched_buf);
         return -1;
     }
@@ -291,11 +321,6 @@ extern "C" int bind_callable_to_runtime_impl(
         std::free(sched_buf);
         return -1;
     }
-    // Pass the PTO2Runtime pointer via env var (hex string).
-    char rt_addr_hex[32];
-    std::snprintf(rt_addr_hex, sizeof(rt_addr_hex), "%" PRIxPTR,
-                  reinterpret_cast<uintptr_t>(rt));
-    setenv("SONATA_RT_ADDR", rt_addr_hex, 1);
     int interp_rc = aicpu_exec_fn(
         runtime_arena_dev, layout.arena_size,
         sm_ptr, sm_size,
