@@ -6,20 +6,12 @@ Traces the path: RUNTIME_CONFIG → execute_on_device → ChipCallConfig.
 """
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from sonata.pipeline import SonataAnalysisResult, dispatch_regions, compute_scheduling_instructions
-
-# a2a3sim check
-_HAS_A2A3SIM = bool(os.environ.get("PTOAS_ROOT"))
-_skip_no_a2a3sim = pytest.mark.skipif(
-    not _HAS_A2A3SIM,
-    reason="a2a3sim not available (PTOAS_ROOT not set)",
-)
+from sonata.pipeline import SonataAnalysisResult
 
 
 class TestPhaseDRuntimeBlockDimEffect:
