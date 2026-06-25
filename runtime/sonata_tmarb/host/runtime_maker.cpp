@@ -125,6 +125,20 @@ extern "C" int bind_callable_to_runtime_impl(
 
     // ── Stage tensors to device (same as upstream) ──
     ChipStorageTaskArgs device_args;
+    // Track whether bind has succeeded. If not, TensorCleanupGuard frees
+    // any tensor device allocations on error exit.
+    bool bind_succeeded = false;
+    struct TensorCleanupGuard {
+        Runtime *r;
+        bool *success;
+        ~TensorCleanupGuard() noexcept {
+            if (!r || *success) return;
+            for (auto &tp : r->tensor_pairs_) {
+                r->host_api.device_free(tp.dev_ptr);
+            }
+            r->tensor_pairs_.clear();
+        }
+    } tensor_cleanup{runtime, &bind_succeeded};
     for (int i = 0; i < tensor_count; i++) {
         Tensor t = orch_args->tensor(i);
         if (t.is_child_memory()) {
@@ -187,20 +201,15 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
+    // ── Store runtime objects for the aicpu side ──
+    // GM heap, SM, and orch_args are needed by aicpu_execute's runtime init.
+    // The prebuilt arena offset is stored for consistency (aicpu doesn't
+    // read it — it does its own runtime_init_data_from_layout — but the
+    // upstream TMARB path expects the correct offset here).
     runtime->set_gm_heap(gm_heap);
     runtime->set_gm_sm_ptr(sm_ptr);
     runtime->set_orch_args(device_args);
-
-    // ── Build prebuilt runtime arena image ──
-    // (delegated to aicpu_kernel.so's aicpu_execute — it handles
-    // reserve_layout / init_data_from_layout / wire_arena_pointers
-    // internally, matching the upstream TMARB pattern where the aicpu
-    // kernel initializes the runtime itself.  We only set up the GM
-    // heap and SM; the aicpu side attaches to those.)
-    runtime->set_gm_heap(gm_heap);
-    runtime->set_gm_sm_ptr(sm_ptr);
-    runtime->set_orch_args(device_args);
-    runtime->set_prebuilt_arena(runtime_arena_dev, 0);
+    runtime->set_prebuilt_arena(runtime_arena_dev, layout.off_runtime);
 
     // ── Extract flat_schedule from callable's orch binary ──
     // The orch_so_data contains the flat_schedule binary that was uploaded
@@ -301,14 +310,20 @@ extern "C" int bind_callable_to_runtime_impl(
     AicpuEntryFn aicpu_exec_fn = nullptr;
     const char *aicpu_path = std::getenv("SONATA_AICPU_PATH");
     if (aicpu_path != nullptr) {
-        void *aicpu_handle = dlopen(aicpu_path, RTLD_LAZY | RTLD_GLOBAL);
-        if (aicpu_handle != nullptr) {
-            aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_execute"));
-            if (aicpu_exec_fn == nullptr) {
-                aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_entry"));
-            }
+        // Validate path via realpath() to prevent injection.
+        char resolved_aicpu[PATH_MAX];
+        if (realpath(aicpu_path, resolved_aicpu) == nullptr) {
+            LOG_WARN("Cannot resolve aicpu_kernel path: %s", aicpu_path);
         } else {
-            LOG_WARN("dlopen(%s) failed: %s", aicpu_path, dlerror());
+            void *aicpu_handle = dlopen(resolved_aicpu, RTLD_LAZY | RTLD_GLOBAL);
+            if (aicpu_handle != nullptr) {
+                aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_execute"));
+                if (aicpu_exec_fn == nullptr) {
+                    aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_entry"));
+                }
+            } else {
+                LOG_WARN("dlopen(%s) failed: %s", aicpu_path, dlerror());
+            }
         }
     }
     // Last-resort fallback: RTLD_DEFAULT (Linux with RTLD_GLOBAL lib loading)
@@ -342,6 +357,7 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
+    bind_succeeded = true;
     return 0;
 }
 
