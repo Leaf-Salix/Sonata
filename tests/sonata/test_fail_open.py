@@ -34,13 +34,12 @@ HARNESS_BIN = TOOLS_DIR / "test_hook_harness"
 @pytest.fixture(scope="module")
 def harness_output():
     """Compile and run the C++ gtest harness once; cache JSON results for all tests."""
-    if not HARNESS_BIN.exists():
-        result = subprocess.run(
-            ["make", "-C", str(TOOLS_DIR), "all"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            pytest.skip(f"Failed to compile test_hook_harness: {result.stderr}")
+    result = subprocess.run(
+        ["make", "-C", str(TOOLS_DIR), "all"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Failed to compile test_hook_harness: {result.stderr}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         json_path = Path(tmpdir) / "results.json"
