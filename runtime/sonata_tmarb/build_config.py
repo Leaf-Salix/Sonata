@@ -61,12 +61,22 @@ BUILD_CONFIG = {
             f"{UPSTREAM_TMARB}/orchestration",
             f"{UPSTREAM_TMARB}/host",
             f"{UPSTREAM_TMARB}/runtime/shared",
+            f"{UPSTREAM_TMARB}/runtime/scheduler",
             f"{UPSTREAM_TMARB}/..",
             "../../upstream/pypto/runtime/src/common",
             "../../upstream/pypto/runtime/src/common/log/include",
+            "../../upstream/pypto/runtime/src/common/platform/sim/aicpu",
+            f"{UPSTREAM_TMARB}/../../platform/include/aicpu",
+            f"{UPSTREAM_TMARB}/../../platform/shared",
+            f"{UPSTREAM_TMARB}/../../platform/shared/aicpu",
             "runtime",
             "include",
         ],
-        "source_dirs": ["host"],
+        # source_dirs 精简：只编译 host/runtime_maker.cpp + runtime/shared 生命周期函数。
+        # aicpu_entry 通过 dlsym 从 aicpu_kernel.so 动态加载，避免链接 scheduler / platform 符号。
+        "source_dirs": [
+            "host",
+            f"{UPSTREAM_TMARB}/runtime/shared",
+        ],
     },
 }

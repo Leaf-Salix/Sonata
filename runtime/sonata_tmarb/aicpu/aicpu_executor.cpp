@@ -276,8 +276,6 @@ extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t /*arena_size*/,
     // ── Run interpreter ──
     interpret_schedule(rt, flat_sched, regions, tasks, args, fdeps, dep_buf,
                        tensor_registry, tensor_registry_size);
-    rt_orchestration_done(rt);
-
     delete[] dep_buf;
     return 0;
 }

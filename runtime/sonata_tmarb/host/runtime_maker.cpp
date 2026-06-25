@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 
 #include "flat_schedule.h"
 #include "sonata_hook.h"
@@ -89,17 +90,14 @@ prepare_callable_impl(const ChipCallable *callable, uint64_t (*upload_fn)(const 
 //
 // The flat_schedule binary is extracted from the callable's orch_so_data
 // (staged by prepare_callable_impl) and passed directly to aicpu_entry.
-
-// Forward declaration: device-side entry point
-struct Tensor;
-extern "C" int aicpu_entry(void* prebuilt_arena, uint64_t arena_size,
-                           void* sm_ptr, uint64_t sm_size,
-                           void* gm_heap, uint64_t heap_size,
-                           int32_t aic_count, int32_t aiv_count,
-                           int32_t task_window_size,
-                           const FlatSchedule* flat_sched,
-                           const Tensor* tensor_registry,
-                           int32_t tensor_registry_size);
+//
+// aicpu_entry 通过 dlsym 从 aicpu_kernel.so 动态解析，避免 host_runtime.so
+// 链接 TMARB 运行时函数（scheduler / platform_regs 等）。aicpu_kernel.so
+// 已经包含完整的 TMARB 运行时 + 平台代码，且由 ChipWorker 在 host_runtime.so
+// 之前加载。dlsym(RTLD_DEFAULT, "aicpu_entry") 可在当前进程空间中找到它。
+//
+// 这仅在模拟环境（a2a3sim）中有效，在该环境所有 .so 运行在同一进程空间。
+// Onboard / 真机环境需要不同机制（跨芯片调用）。
 
 extern "C" int bind_callable_to_runtime_impl(
     Runtime *runtime, const ChipStorageTaskArgs *orch_args, void *host_orch_func_ptr, const ArgDirection *signature,
@@ -261,7 +259,17 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
-    // ── Invoke the interpreter (replaces TMARB orchestrator) ──
+    // ── Invoke interpreter via dlsym (from aicpu_kernel.so) ──
+    using AicpuEntryFn = int (*)(void*, uint64_t, void*, uint64_t, void*, uint64_t,
+                                  int32_t, int32_t, int32_t,
+                                  const FlatSchedule*, const void*, int32_t);
+    static const AicpuEntryFn aicpu_entry =
+        reinterpret_cast<AicpuEntryFn>(dlsym(RTLD_DEFAULT, "aicpu_entry"));
+    if (aicpu_entry == nullptr) {
+        LOG_ERROR("dlsym(aicpu_entry) failed: %s", dlerror());
+        std::free(sched_buf);
+        return -1;
+    }
     int interp_rc = aicpu_entry(
         runtime_arena_dev, layout.arena_size,
         sm_ptr, sm_size,
