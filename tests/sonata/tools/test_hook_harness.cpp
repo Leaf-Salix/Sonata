@@ -1,8 +1,10 @@
-// test_hook_harness.cpp — C++ test harness for sonata_hook.h fail-open modes.
+// test_hook_harness.cpp — gtest harness for sonata_hook.h fail-open modes.
 //
 // Compiled against sonata_hook.cpp with a stub aicpu_entry.
 // Validates that all 6 fail-open modes return correct status codes and
 // do NOT crash (graceful degradation to original path).
+
+#include <gtest/gtest.h>
 
 #include "sonata_hook.h"
 #include "flat_schedule.h"
@@ -11,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 static int g_aicpu_call_count = 0;
 static int g_aicpu_return_code = 0;
@@ -28,16 +31,6 @@ extern "C" int aicpu_entry(void*, uint64_t,
     return g_aicpu_return_code;
 }
 
-static int g_tests_run = 0;
-static int g_tests_passed = 0;
-static int g_tests_failed = 0;
-
-#define CHECK(cond, msg) do { \
-    g_tests_run++; \
-    if (cond) { g_tests_passed++; printf("  PASS: %s\n", msg); } \
-    else { g_tests_failed++; printf("  FAIL: %s\n", msg); } \
-} while(0)
-
 // ── Helpers ──
 
 static FlatSchedule make_valid_header() {
@@ -52,188 +45,152 @@ static FlatSchedule make_valid_header() {
     return h;
 }
 
+class SonataHook : public ::testing::Test {
+protected:
+    void SetUp() override {
+        g_aicpu_call_count = 0;
+        g_aicpu_return_code = 0;
+    }
+    void TearDown() override {
+        sonata_hook_fini();
+        unsetenv("SONATA_ENABLED");
+    }
+};
+
+// ── Test: struct sizes match flat_schedule.h packing ──
+
+TEST_F(SonataHook, StructSizesArePacked) {
+    EXPECT_EQ(sizeof(FlatSchedule), 88u);
+    EXPECT_EQ(sizeof(FlatRegion), 24u);
+    EXPECT_EQ(sizeof(FlatTask), 16u);
+    EXPECT_EQ(sizeof(FlatArg), 6u);
+    EXPECT_EQ(sizeof(FlatDep), 8u);
+}
+
 // ── Test: init/fini without SONATA_ENABLED ──
 
-static void test_init_fini_default() {
-    printf("\n[TEST] init/fini without SONATA_ENABLED\n");
+TEST_F(SonataHook, DisabledModeSkipsAicpu) {
     unsetenv("SONATA_ENABLED");
 
-    int rc_init = sonata_hook_init();
-    CHECK(rc_init == SONATA_HOOK_OK, "sonata_hook_init returns OK");
+    EXPECT_EQ(sonata_hook_init(), SONATA_HOOK_OK);
 
-    g_aicpu_call_count = 0;
     FlatSchedule h = make_valid_header();
-    int rc_proc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc_proc == SONATA_HOOK_DISABLED, "process_schedule returns DISABLED (no SONATA_ENABLED)");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called when disabled");
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_DISABLED);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 
-    int rc_fini = sonata_hook_fini();
-    CHECK(rc_fini == SONATA_HOOK_OK, "sonata_hook_fini returns OK");
+    EXPECT_EQ(sonata_hook_fini(), SONATA_HOOK_OK);
 }
 
 // ── Test: SONATA_ENABLED set, aicpu_entry returns 0 (success) ──
 
-static void test_enabled_success() {
-    printf("\n[TEST] SONATA_ENABLED set, aicpu_entry returns 0\n");
+TEST_F(SonataHook, EnabledSuccessCallsAicpu) {
     setenv("SONATA_ENABLED", "1", 1);
 
-    int rc_init = sonata_hook_init();
-    CHECK(rc_init == SONATA_HOOK_OK, "sonata_hook_init returns OK");
+    EXPECT_EQ(sonata_hook_init(), SONATA_HOOK_OK);
 
-    g_aicpu_call_count = 0;
-    g_aicpu_return_code = 0;
     FlatSchedule h = make_valid_header();
-    int rc_proc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc_proc == SONATA_HOOK_OK, "process_schedule returns OK");
-    CHECK(g_aicpu_call_count == 1, "aicpu_entry called once");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_OK);
+    EXPECT_EQ(g_aicpu_call_count, 1);
 }
 
 // ── Test: SONATA_ENABLED set, aicpu_entry returns -2 (device init failure) ──
 
-static void test_enabled_aicpu_fails() {
-    printf("\n[TEST] SONATA_ENABLED set, aicpu_entry returns -2\n");
+TEST_F(SonataHook, EnabledAicpuFailureReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
-
-    int rc_init = sonata_hook_init();
-    CHECK(rc_init == SONATA_HOOK_OK, "sonata_hook_init returns OK");
-
-    g_aicpu_call_count = 0;
     g_aicpu_return_code = -2;
-    FlatSchedule h = make_valid_header();
-    int rc_proc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc_proc == SONATA_HOOK_ERROR, "process_schedule returns ERROR (aicpu failed)");
-    CHECK(g_aicpu_call_count == 1, "aicpu_entry called once despite failure");
 
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_init(), SONATA_HOOK_OK);
+
+    FlatSchedule h = make_valid_header();
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 1);
 }
 
 // ── Test: B4 mode 1 — schedule blob NULL ──
 
-static void test_null_blob() {
-    printf("\n[TEST] B4 mode 1: null blob\n");
+TEST_F(SonataHook, NullBlobReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
-    g_aicpu_call_count = 0;
-    int rc = sonata_hook_process_schedule(nullptr, 0);
-    CHECK(rc == SONATA_HOOK_ERROR, "null blob returns ERROR");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called for null blob");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(nullptr, 0), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 }
 
 // ── Test: B4 mode 1b — blob too small ──
 
-static void test_too_small_blob() {
-    printf("\n[TEST] B4 mode 1b: blob too small (4 bytes)\n");
+TEST_F(SonataHook, TooSmallBlobReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
-    g_aicpu_call_count = 0;
     uint32_t tiny = 0x534F4E41;
-    int rc = sonata_hook_process_schedule(&tiny, sizeof(tiny));
-    CHECK(rc == SONATA_HOOK_ERROR, "too-small blob returns ERROR");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called for too-small blob");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(&tiny, sizeof(tiny)), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 }
 
 // ── Test: B4 mode 2 — wrong magic ──
 
-static void test_wrong_magic() {
-    printf("\n[TEST] B4 mode 2: wrong magic (0xDEADBEEF)\n");
+TEST_F(SonataHook, WrongMagicReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
-    g_aicpu_call_count = 0;
     FlatSchedule h = make_valid_header();
     h.magic = 0xDEADBEEF;
-    int rc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc == SONATA_HOOK_ERROR, "wrong magic returns ERROR");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called for wrong magic");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 }
 
 // ── Test: B4 mode 3 — wrong version ──
 
-static void test_wrong_version() {
-    printf("\n[TEST] B4 mode 3: wrong version (99)\n");
+TEST_F(SonataHook, WrongVersionReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
-    g_aicpu_call_count = 0;
     FlatSchedule h = make_valid_header();
     h.version = 99;
-    int rc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc == SONATA_HOOK_ERROR, "wrong version returns ERROR");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called for wrong version");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 }
 
 // ── Test: B4 mode 4 — negative region count (bounds violation) ──
 
-static void test_negative_regions() {
-    printf("\n[TEST] B4 mode 4: negative num_regions (-1)\n");
+TEST_F(SonataHook, NegativeRegionsReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
-    g_aicpu_call_count = 0;
     FlatSchedule h = make_valid_header();
     h.num_regions = -1;
-    int rc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc == SONATA_HOOK_ERROR, "negative regions returns ERROR");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called for invalid header");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 }
 
 // ── Test: B4 — truncated blob (header OK but arrays too short) ──
 
-static void test_truncated_blob() {
-    printf("\n[TEST] B4: truncated blob (header claims 1 region, blob too short)\n");
+TEST_F(SonataHook, TruncatedBlobReturnsError) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
-    g_aicpu_call_count = 0;
     FlatSchedule h = make_valid_header();
     h.num_regions = 1;  // claims 1 region (24 bytes) but blob is only sizeof(header)
-    int rc = sonata_hook_process_schedule(&h, sizeof(h));
-    CHECK(rc == SONATA_HOOK_ERROR, "truncated blob returns ERROR");
-    CHECK(g_aicpu_call_count == 0, "aicpu_entry NOT called for truncated blob");
-
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(&h, sizeof(h)), SONATA_HOOK_ERROR);
+    EXPECT_EQ(g_aicpu_call_count, 0);
 }
 
 // ── Test: valid minimal schedule with one empty static region ──
 
-static void test_valid_minimal_schedule() {
-    printf("\n[TEST] valid minimal schedule (1 empty static region)\n");
+TEST_F(SonataHook, ValidMinimalScheduleReturnsOk) {
     setenv("SONATA_ENABLED", "1", 1);
     sonata_hook_init();
 
     // Build: header + 1 empty static region (0 tasks, 0 deps)
     size_t blob_size = sizeof(FlatSchedule) + sizeof(FlatRegion);
-    uint8_t* blob = new uint8_t[blob_size];
-    std::memset(blob, 0, blob_size);
+    std::vector<uint8_t> blob(blob_size, 0);
 
-    FlatSchedule* h = reinterpret_cast<FlatSchedule*>(blob);
+    FlatSchedule* h = reinterpret_cast<FlatSchedule*>(blob.data());
     h->magic = 0x534F4E41;
     h->version = 1;
     h->num_regions = 1;
 
-    FlatRegion* r = reinterpret_cast<FlatRegion*>(blob + sizeof(FlatSchedule));
+    FlatRegion* r = reinterpret_cast<FlatRegion*>(blob.data() + sizeof(FlatSchedule));
     r->kind = 0;  // static
     r->scope_mode = 0;  // auto
     r->task_start = 0;
@@ -241,28 +198,18 @@ static void test_valid_minimal_schedule() {
     r->dep_start = 0;
     r->num_deps = 0;
 
-    g_aicpu_call_count = 0;
-    g_aicpu_return_code = 0;
-    int rc = sonata_hook_process_schedule(blob, blob_size);
-    CHECK(rc == SONATA_HOOK_OK, "valid minimal schedule returns OK");
-    CHECK(g_aicpu_call_count == 1, "aicpu_entry called for valid schedule");
-
-    delete[] blob;
-    sonata_hook_fini();
-    unsetenv("SONATA_ENABLED");
+    EXPECT_EQ(sonata_hook_process_schedule(blob.data(), blob_size), SONATA_HOOK_OK);
+    EXPECT_EQ(g_aicpu_call_count, 1);
 }
 
 // ── Test: sonata_hook_info on valid blob (with region array) ──
 
-static void test_hook_info() {
-    printf("\n[TEST] sonata_hook_info on valid blob (1 region)\n");
-
+TEST_F(SonataHook, HookInfoOnValidBlob) {
     // Build a blob with header + 1 region (zero tasks/deps) so validate_schedule
     // sees a complete, consistent binary.
     size_t blob_size = sizeof(FlatSchedule) + 1 * sizeof(FlatRegion);
-    uint8_t* blob = new uint8_t[blob_size];
-    std::memset(blob, 0, blob_size);
-    FlatSchedule* h = reinterpret_cast<FlatSchedule*>(blob);
+    std::vector<uint8_t> blob(blob_size, 0);
+    FlatSchedule* h = reinterpret_cast<FlatSchedule*>(blob.data());
     h->magic = 0x534F4E41;
     h->version = 1;
     h->num_regions = 1;
@@ -273,43 +220,38 @@ static void test_hook_info() {
 
     SonataScheduleInfo info;
     std::memset(&info, 0xFF, sizeof(info));
-    int rc = sonata_hook_info(blob, blob_size, &info);
-    CHECK(rc == SONATA_HOOK_OK, "hook_info returns OK");
-    CHECK(info.num_regions == 1, "info.num_regions == 1");
-    CHECK(info.total_tasks == 0, "info.total_tasks == 0");
-    CHECK(info.total_args == 0, "info.total_args == 0");
-    CHECK(info.total_deps == 0, "info.total_deps == 0");
-    CHECK(memcmp(info.fingerprint, "test_fp_123", 12) == 0, "info.fingerprint matches");
-    delete[] blob;
+    EXPECT_EQ(sonata_hook_info(blob.data(), blob_size, &info), SONATA_HOOK_OK);
+    EXPECT_EQ(info.num_regions, 1);
+    EXPECT_EQ(info.total_tasks, 0);
+    EXPECT_EQ(info.total_args, 0);
+    EXPECT_EQ(info.total_deps, 0);
+    EXPECT_EQ(memcmp(info.fingerprint, "test_fp_123", 12), 0);
 }
 
 // ── Test: sonata_hook_info on invalid blob ──
 
-static void test_hook_info_invalid() {
-    printf("\n[TEST] sonata_hook_info on invalid blob\n");
-
+TEST_F(SonataHook, HookInfoOnInvalidBlobReturnsError) {
     FlatSchedule h = make_valid_header();
     h.magic = 0;  // invalid
     SonataScheduleInfo info;
-    int rc = sonata_hook_info(&h, sizeof(h), &info);
-    CHECK(rc == SONATA_HOOK_ERROR, "hook_info returns ERROR for invalid blob");
+    EXPECT_EQ(sonata_hook_info(&h, sizeof(h), &info), SONATA_HOOK_ERROR);
 }
 
 // ── Test: null pointer to hook_info ──
 
-static void test_hook_info_null() {
-    printf("\n[TEST] sonata_hook_info with null output pointer\n");
-
+TEST_F(SonataHook, HookInfoWithNullOutputReturnsError) {
     FlatSchedule h = make_valid_header();
-    int rc = sonata_hook_info(&h, sizeof(h), nullptr);
-    CHECK(rc == SONATA_HOOK_ERROR, "hook_info returns ERROR for null output");
+    EXPECT_EQ(sonata_hook_info(&h, sizeof(h), nullptr), SONATA_HOOK_ERROR);
 }
 
-// ── Test: load and validate a binary schedule from file ──
+// ── Cross-language file validation mode ──
 //
 // Reads a .bin file (produced by Python's to_binary()), sets SONATA_ENABLED,
 // and validates it through the full hook pipeline. This exercises the
 // cross-language round-trip: Python serialization → C validation + dispatch.
+// Not a gtest case — invoked directly from main() when argv[1] is a path,
+// so test_fail_open.py's test_cross_language_binary_validation can keep
+// calling the harness binary with a file argument.
 
 static bool try_load_and_validate(const char* path) {
     FILE* f = fopen(path, "rb");
@@ -325,78 +267,46 @@ static bool try_load_and_validate(const char* path) {
         fclose(f);
         return false;
     }
-    auto* buf = new uint8_t[static_cast<size_t>(sz)];
-    size_t nread = fread(buf, 1, static_cast<size_t>(sz), f);
+    std::vector<uint8_t> buf(static_cast<size_t>(sz));
+    size_t nread = fread(buf.data(), 1, buf.size(), f);
     fclose(f);
     if (static_cast<long>(nread) != sz) {
         fprintf(stderr, "ERROR: short read %s\n", path);
-        delete[] buf;
         return false;
     }
 
     setenv("SONATA_ENABLED", "1", 1);
     if (sonata_hook_init() != SONATA_HOOK_OK) {
         fprintf(stderr, "ERROR: sonata_hook_init failed\n");
-        delete[] buf;
         unsetenv("SONATA_ENABLED");
         return false;
     }
 
     g_aicpu_return_code = 0;
-    int rc = sonata_hook_process_schedule(buf, static_cast<size_t>(sz));
+    int rc = sonata_hook_process_schedule(buf.data(), buf.size());
     if (rc != SONATA_HOOK_OK) {
-        printf("  FAIL: process_schedule returned %d for %s\n", rc, path);
+        printf("FAIL: process_schedule returned %d for %s\n", rc, path);
         sonata_hook_fini();
-        delete[] buf;
         unsetenv("SONATA_ENABLED");
         return false;
     }
-    printf("  PASS: process_schedule OK for %s (aicpu_entry called %d time(s))\n",
+    printf("OK: process_schedule OK for %s (aicpu_entry called %d time(s))\n",
            path, g_aicpu_call_count);
 
     sonata_hook_fini();
-    delete[] buf;
     unsetenv("SONATA_ENABLED");
     return true;
 }
 
-// ── Main ──
-
 int main(int argc, char** argv) {
-    // If a file path is given, validate it and exit
+    // InitGoogleTest strips --gtest_* flags from argv first, so a leftover
+    // positional arg here is a real file path (cross-language mode), not a
+    // gtest flag this harness doesn't otherwise consume.
+    ::testing::InitGoogleTest(&argc, argv);
     if (argc >= 2) {
         bool ok = try_load_and_validate(argv[1]);
         return ok ? 0 : 1;
     }
 
-    printf("=== Sonata Hook Fail-Open Test Harness ===\n");
-    printf("sizeof(FlatSchedule) = %zu\n", sizeof(FlatSchedule));
-    printf("sizeof(FlatRegion)   = %zu\n", sizeof(FlatRegion));
-    printf("sizeof(FlatTask)     = %zu\n", sizeof(FlatTask));
-    printf("sizeof(FlatArg)      = %zu\n", sizeof(FlatArg));
-    printf("sizeof(FlatDep)      = %zu\n", sizeof(FlatDep));
-
-    CHECK(sizeof(FlatSchedule) == 88, "FlatSchedule is 88 bytes (packed)");
-    CHECK(sizeof(FlatRegion) == 24, "FlatRegion is 24 bytes (packed)");
-    CHECK(sizeof(FlatTask) == 16, "FlatTask is 16 bytes (packed)");
-    CHECK(sizeof(FlatArg) == 6, "FlatArg is 6 bytes (packed)");
-    CHECK(sizeof(FlatDep) == 8, "FlatDep is 8 bytes (packed)");
-
-    test_init_fini_default();       // B3: no SONATA_ENABLED → disabled
-    test_enabled_success();         // enabled path, aicpu succeeds
-    test_enabled_aicpu_fails();     // enabled path, aicpu fails
-    test_null_blob();               // B4 mode 1
-    test_too_small_blob();          // B4 mode 1b
-    test_wrong_magic();             // B4 mode 2
-    test_wrong_version();           // B4 mode 3
-    test_negative_regions();        // B4 mode 4 (bounds)
-    test_truncated_blob();          // B4 mode 4b (bounds)
-    test_valid_minimal_schedule();  // valid schedule (baseline)
-    test_hook_info();               // introspection OK
-    test_hook_info_invalid();       // introspection on bad blob
-    test_hook_info_null();          // introspection with null out
-
-    printf("\n=== Results: %d/%d passed, %d failed ===\n",
-           g_tests_passed, g_tests_run, g_tests_failed);
-    return g_tests_failed > 0 ? 1 : 0;
+    return RUN_ALL_TESTS();
 }
