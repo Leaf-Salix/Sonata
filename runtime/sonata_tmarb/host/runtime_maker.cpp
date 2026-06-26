@@ -395,8 +395,8 @@ extern "C" int bind_callable_to_runtime_impl(
         0, 0,  // aic_count, aiv_count (unused by interpreter)
         static_cast<int32_t>(eff_task_window_size),
         flat_sched,
-        nullptr,  // tensor_registry — TODO: build from device_args
-        0         // tensor_registry_size
+        device_args.tensor_data(),
+        tensor_count
     );
 
     int64_t t_total_end = _now_ms();
