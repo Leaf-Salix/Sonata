@@ -7,9 +7,12 @@
 // Exports the three symbols required by simpler's runtime framework:
 //   prepare_callable_impl, bind_callable_to_runtime_impl, validate_runtime_impl
 //
-// The interpreter reads a pre-serialized flat_schedule binary from disk
-// (written by Sonata's compile hook as sonata_schedule.bin) and feeds it
-// to aicpu_entry() for device-side interpretation.
+// The interpreter reads a pre-serialized flat_schedule binary embedded in
+// the ChipCallable's binary_data() by the compile-time hook (sonata_hook).
+// prepare_callable_impl stashes a host copy; bind_callable_to_runtime_impl
+// reads it out and passes it to aicpu_execute.
+//
+// Fallback: SONATA_SCHEDULE_PATH env var (v0.28 compatibility path).
 
 #include <sys/time.h>
 
@@ -38,6 +41,109 @@ static int64_t _now_ms() {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     return static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+}
+
+// ── Host-side schedule buffer ──
+//
+// prepare_callable_impl stashes the schedule binary from the callable's
+// binary_data() into this static buffer.  bind_callable_to_runtime_impl
+// reads it back, avoiding a second file-system read (v0.28 env-var path)
+// or a deep dive into the framework's callable-artifact lifecycle.
+//
+// Thread-safety: the simpler framework serialises prepare + bind per
+// Worker, so no locking is needed.  Multiple Workers each go through
+// their own prepare→bind→validate sequence, but since prepare overwrites
+// the buffer, only one active Worker is expected at a time (L2 Worker).
+//
+// The env-var fallback (SONATA_SCHEDULE_PATH) is preserved for debugging
+// and cross-language binary validation.
+
+static uint8_t *g_schedule_buf = nullptr;
+static size_t   g_schedule_size = 0;
+
+static void _clear_schedule_buf() {
+    std::free(g_schedule_buf);
+    g_schedule_buf = nullptr;
+    g_schedule_size = 0;
+}
+
+static bool _set_schedule_buf(const uint8_t *data, size_t size) {
+    _clear_schedule_buf();
+    if (data == nullptr || size == 0) return false;
+    g_schedule_buf = static_cast<uint8_t *>(std::malloc(size));
+    if (g_schedule_buf == nullptr) return false;
+    std::memcpy(g_schedule_buf, data, size);
+    g_schedule_size = size;
+    return true;
+}
+
+// ── Find stashed schedule ──
+//
+// First tries the host-side static buffer (stashed by prepare_callable_impl).
+// Falls back to SONATA_SCHEDULE_PATH env var (v0.28 compatibility path).
+// The returned pointer is owned by the schedule-buffer; caller must NOT free it.
+
+static const FlatSchedule *_find_stashed_schedule(size_t *out_size) {
+    *out_size = 0;
+
+    if (g_schedule_buf != nullptr && g_schedule_size > 0) {
+        auto *fs = reinterpret_cast<const FlatSchedule *>(g_schedule_buf);
+        if (fs->magic == 0x534F4E41) {
+            *out_size = g_schedule_size;
+            LOG_INFO_V0("Sonata: using stashed schedule (%zu bytes)", g_schedule_size);
+            return fs;
+        }
+        LOG_WARN("Sonata: stashed schedule bad magic 0x%08x, fallback to env var", fs->magic);
+    }
+
+    // env var fallback
+    const char *path = std::getenv("SONATA_SCHEDULE_PATH");
+    if (path == nullptr) {
+        LOG_ERROR("SONATA_SCHEDULE_PATH not set and no stashed schedule");
+        return nullptr;
+    }
+
+    char resolved[PATH_MAX];
+    if (realpath(path, resolved) == nullptr) {
+        LOG_ERROR("Cannot resolve schedule path: %s", path);
+        return nullptr;
+    }
+
+    FILE *f = std::fopen(resolved, "rb");
+    if (f == nullptr) {
+        LOG_ERROR("Cannot open schedule: %s", resolved);
+        return nullptr;
+    }
+    std::fseek(f, 0, SEEK_END);
+    long file_size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (file_size < static_cast<long>(sizeof(FlatSchedule))) {
+        LOG_ERROR("Schedule file too small: %ld bytes", file_size);
+        std::fclose(f);
+        return nullptr;
+    }
+    static constexpr long MAX_SCHEDULE_SIZE = 64L * 1024L * 1024L;
+    if (file_size > MAX_SCHEDULE_SIZE) {
+        LOG_ERROR("Schedule file too large: %ld bytes", file_size);
+        std::fclose(f);
+        return nullptr;
+    }
+
+    _clear_schedule_buf();
+    auto *buf = static_cast<uint8_t *>(std::malloc(static_cast<size_t>(file_size)));
+    if (buf == nullptr) { std::fclose(f); return nullptr; }
+    if (std::fread(buf, 1, static_cast<size_t>(file_size), f) != static_cast<size_t>(file_size)) {
+        LOG_ERROR("Short read from schedule file");
+        std::free(buf); std::fclose(f);
+        return nullptr;
+    }
+    std::fclose(f);
+    g_schedule_buf = buf;
+    g_schedule_size = static_cast<size_t>(file_size);
+
+    auto *fs = reinterpret_cast<const FlatSchedule *>(g_schedule_buf);
+    LOG_INFO_V0("Sonata: loaded schedule from env var (%s, %zu bytes)", resolved, g_schedule_size);
+    return fs;
 }
 
 // ── prepare_callable_impl ──
@@ -80,6 +186,12 @@ prepare_callable_impl(const ChipCallable *callable, uint64_t (*upload_fn)(const 
     out->orch_so_size = orch_so_size;
     out->func_name = callable->func_name();
     out->config_name = callable->config_name();
+
+    // Stash a host-side copy of the schedule binary.
+    if (!_set_schedule_buf(orch_so, orch_so_size)) {
+        LOG_WARN("Sonata prepare: failed to stash schedule buffer (%zu bytes)", orch_so_size);
+    }
+
     LOG_INFO_V0("Sonata prepare: orch binary staged (%zu bytes)", orch_so_size);
     return 0;
 }
@@ -213,88 +325,29 @@ extern "C" int bind_callable_to_runtime_impl(
 
     // ── Extract flat_schedule from callable's orch binary ──
     // The orch_so_data contains the flat_schedule binary that was uploaded
-    // by prepare_callable_impl. Copy it to a host-side buffer for validation.
-    //
-    // NOTE: The callable artifacts are passed via the Runtime's callable_
-    // member (set by the framework before bind_callable is called).
-    // For now, we rely on SONATA_SCHEDULE_PATH env var or a well-known
-    // work_dir path as a fallback.
-    //
-    // TODO: Extract flat_schedule from callable_.orch_so_data when
-    // the framework passes callable artifacts through the Runtime.
-    const char *schedule_path_env = std::getenv("SONATA_SCHEDULE_PATH");
-    if (schedule_path_env == nullptr) {
-        LOG_ERROR("SONATA_SCHEDULE_PATH not set — cannot locate sonata_schedule.bin");
+    // by prepare_callable_impl and stashed via _set_schedule_buf.
+    // Fall back to SONATA_SCHEDULE_PATH env var when stash is missing.
+
+    size_t flat_sched_size = 0;
+    const FlatSchedule *flat_sched = _find_stashed_schedule(&flat_sched_size);
+    if (flat_sched == nullptr) {
+        LOG_ERROR("No schedule binary available");
         return -1;
     }
 
-    // Canonicalize path to prevent directory traversal.
-    char resolved_path[PATH_MAX];
-    if (realpath(schedule_path_env, resolved_path) == nullptr) {
-        LOG_ERROR("Cannot resolve schedule path: %s", schedule_path_env);
-        return -1;
-    }
-
-    FILE *f = std::fopen(resolved_path, "rb");
-    if (f == nullptr) {
-        LOG_ERROR("Cannot open schedule file: %s", schedule_path_env);
-        return -1;
-    }
-    std::fseek(f, 0, SEEK_END);
-    long file_size = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-    if (file_size < static_cast<long>(sizeof(FlatSchedule))) {
-        LOG_ERROR("Schedule file too small: %ld bytes", file_size);
-        std::fclose(f);
-        return -1;
-    }
-    // Sanity cap: 64 MiB max for a schedule binary (prevents OOM).
-    static constexpr long MAX_SCHEDULE_SIZE = 64L * 1024L * 1024L;
-    if (file_size > MAX_SCHEDULE_SIZE) {
-        LOG_ERROR("Schedule file too large: %ld bytes (max %ld)", file_size, MAX_SCHEDULE_SIZE);
-        std::fclose(f);
-        return -1;
-    }
-
-    auto *sched_buf = static_cast<uint8_t*>(std::malloc(static_cast<size_t>(file_size)));
-    if (sched_buf == nullptr) {
-        LOG_ERROR("Failed to allocate schedule buffer");
-        std::fclose(f);
-        return -1;
-    }
-    size_t read = std::fread(sched_buf, 1, static_cast<size_t>(file_size), f);
-    std::fclose(f);
-    if (read != static_cast<size_t>(file_size)) {
-        LOG_ERROR("Short read: %zu of %ld bytes", read, file_size);
-        std::free(sched_buf);
-        return -1;
-    }
-
-    auto *flat_sched = reinterpret_cast<FlatSchedule*>(sched_buf);
-    if (flat_sched->magic != 0x534F4E41) {
-        LOG_ERROR("Bad schedule magic: 0x%08x", flat_sched->magic);
-        std::free(sched_buf);
-        return -1;
-    }
-    // Validate header fields: no negative counts, version must be known.
+    // Validate header fields: magic, version, overflow-safe bounds.
     if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {
         LOG_ERROR("Unsupported schedule version: %d", flat_sched->version);
-        std::free(sched_buf);
         return -1;
     }
-    // Bounds check: verify declared arrays fit within blob (overflow-safe).
     size_t expected_size = sizeof(FlatSchedule)
         + static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion)
         + static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask)
         + static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg)
         + static_cast<size_t>(flat_sched->total_deps) * sizeof(FlatDep);
-    // v2 has 4-byte CRC between header and arrays; v1 does not.
-    if (flat_sched->version >= 2) {
-        expected_size += 4;
-    }
-    if (expected_size > static_cast<size_t>(file_size) || expected_size < sizeof(FlatSchedule)) {
-        LOG_ERROR("Schedule header fields overflow or exceed file size");
-        std::free(sched_buf);
+    if (flat_sched->version >= 2) expected_size += 4;
+    if (expected_size > flat_sched_size || expected_size < sizeof(FlatSchedule)) {
+        LOG_ERROR("Schedule header fields overflow or exceed blob size");
         return -1;
     }
 
@@ -333,7 +386,6 @@ extern "C" int bind_callable_to_runtime_impl(
     if (aicpu_exec_fn == nullptr) {
         LOG_ERROR("dlsym(aicpu_execute) failed: "
                   "set SONATA_AICPU_PATH to the aicpu_kernel.so path");
-        std::free(sched_buf);
         return -1;
     }
     int interp_rc = aicpu_exec_fn(
@@ -346,8 +398,6 @@ extern "C" int bind_callable_to_runtime_impl(
         nullptr,  // tensor_registry — TODO: build from device_args
         0         // tensor_registry_size
     );
-
-    std::free(sched_buf);
 
     int64_t t_total_end = _now_ms();
     LOG_INFO_V0("Sonata bind total: %" PRId64 "ms (interp rc=%d)", t_total_end - t_total_start, interp_rc);
@@ -364,7 +414,7 @@ extern "C" int bind_callable_to_runtime_impl(
 // ── validate_runtime_impl ──
 //
 // Copy output tensors back from device to host and free device allocations.
-// Same as upstream TMARB.
+// Same as upstream TMARB. Also releases the host-side schedule buffer.
 
 extern "C" int validate_runtime_impl(Runtime *runtime) {
     if (runtime == nullptr) {
@@ -382,6 +432,9 @@ extern "C" int validate_runtime_impl(Runtime *runtime) {
         runtime->host_api.device_free(tp.dev_ptr);
     }
     runtime->tensor_pairs_.clear();
+
+    // Release the host-side schedule buffer.
+    _clear_schedule_buf();
 
     return 0;
 }
