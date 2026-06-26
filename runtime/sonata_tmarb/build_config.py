@@ -75,14 +75,12 @@ BUILD_CONFIG = {
             "runtime",
             "include",
         ],
-        # source_dirs: host/runtime_maker.cpp + runtime/shared 生命周期函数 +
-        # platform C API (simpler_init, prepare_callable, run_prepared) 使
-        # sonata_tmarb 满足 ChipWorker 的 ABI 要求。
+        # host source_dirs 仅包含 sonata 特有文件 + runtime/shared 基础设施。
+        # 平台特定的源文件（sim/onboard）由各平台 CMakeLists.txt 管理，不在
+        # build_config.py 中重复添加，以免 onboard 编译时引入 sim 特有代码。
         "source_dirs": [
             "host",
             f"{UPSTREAM_TMARB}/runtime/shared",
-            f"{UPSTREAM_TMARB}/../../platform/sim/host",
-            "../../upstream/pypto/runtime/src/common/platform/sim/host",
         ],
     },
 }
