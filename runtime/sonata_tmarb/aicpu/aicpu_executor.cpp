@@ -71,20 +71,26 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
     for (int16_t i = 0; i < ftask->num_args; i++) {
         const FlatArg& fa = fargs[i];
         int32_t slot = fa.runtime_slot;
+        // Validate tensor slot bounds for directional args that need a tensor.
+        bool slot_valid = (tensor_registry && slot >= 0 && slot < registry_size);
+        if (!slot_valid && fa.direction != 3) {
+            LOG_WARN("build_arg: task=%s arg=%d dir=%d slot=%d out of range [0,%d)",
+                     ftask->func_id, i, fa.direction, slot, registry_size);
+        }
         switch (fa.direction) {
             case 0:  // input
-                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                if (slot_valid) {
                     arg.add_input(tensor_registry[slot]);
                 }
                 break;
             case 1:  // output
             case 5:  // outputexisting — same runtime behavior as output
-                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                if (slot_valid) {
                     arg.add_output(tensor_registry[slot]);
                 }
                 break;
             case 2:  // inout
-                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                if (slot_valid) {
                     arg.add_inout(tensor_registry[slot]);
                 }
                 break;
@@ -92,7 +98,7 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
                 arg.add_scalar(slot);
                 break;
             case 4:  // nodep
-                if (tensor_registry && slot >= 0 && slot < registry_size) {
+                if (slot_valid) {
                     arg.add_no_dep(tensor_registry[slot]);
                 }
                 break;

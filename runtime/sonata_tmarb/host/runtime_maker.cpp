@@ -28,6 +28,9 @@
 #include "flat_schedule.h"
 #include "sonata_hook.h"
 
+// FlatSchedule magic constant (0x534F4E41 = "SONA").
+static constexpr uint32_t FLAT_SCHEDULE_MAGIC = 0x534F4E41;
+
 // Upstream TMARB headers (resolved via build_config include_dirs + platform cmake)
 #include "callable.h"
 #include "prepare_callable_common.h"
@@ -70,6 +73,9 @@ static void _clear_schedule_buf() {
 static bool _set_schedule_buf(const uint8_t *data, size_t size) {
     _clear_schedule_buf();
     if (data == nullptr || size == 0) return false;
+    // Sanity cap: 64 MiB max for a schedule binary (prevents OOM).
+    static constexpr size_t MAX_SCHEDULE_SIZE = 64UL * 1024UL * 1024UL;
+    if (size > MAX_SCHEDULE_SIZE) return false;
     g_schedule_buf = static_cast<uint8_t *>(std::malloc(size));
     if (g_schedule_buf == nullptr) return false;
     std::memcpy(g_schedule_buf, data, size);
@@ -86,14 +92,15 @@ static bool _set_schedule_buf(const uint8_t *data, size_t size) {
 static const FlatSchedule *_find_stashed_schedule(size_t *out_size) {
     *out_size = 0;
 
-    if (g_schedule_buf != nullptr && g_schedule_size > 0) {
+    if (g_schedule_buf != nullptr && g_schedule_size >= sizeof(FlatSchedule)) {
         auto *fs = reinterpret_cast<const FlatSchedule *>(g_schedule_buf);
-        if (fs->magic == 0x534F4E41) {
+        if (fs->magic == FLAT_SCHEDULE_MAGIC) {
             *out_size = g_schedule_size;
             LOG_INFO_V0("Sonata: using stashed schedule (%zu bytes)", g_schedule_size);
             return fs;
         }
-        LOG_WARN("Sonata: stashed schedule bad magic 0x%08x, fallback to env var", fs->magic);
+        LOG_WARN("Sonata: stashed schedule bad magic 0x%08x, clearing", fs->magic);
+        _clear_schedule_buf();
     }
 
     // env var fallback
@@ -118,7 +125,7 @@ static const FlatSchedule *_find_stashed_schedule(size_t *out_size) {
     long file_size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
     if (file_size < static_cast<long>(sizeof(FlatSchedule))) {
-        LOG_ERROR("Schedule file too small: %ld bytes", file_size);
+        LOG_ERROR("Schedule file too small: %ld bytes (need %zu)", file_size, sizeof(FlatSchedule));
         std::fclose(f);
         return nullptr;
     }
@@ -142,6 +149,11 @@ static const FlatSchedule *_find_stashed_schedule(size_t *out_size) {
     g_schedule_size = static_cast<size_t>(file_size);
 
     auto *fs = reinterpret_cast<const FlatSchedule *>(g_schedule_buf);
+    if (fs->magic != FLAT_SCHEDULE_MAGIC) {
+        LOG_ERROR("Bad schedule magic in env-var file: 0x%08x", fs->magic);
+        _clear_schedule_buf();
+        return nullptr;
+    }
     LOG_INFO_V0("Sonata: loaded schedule from env var (%s, %zu bytes)", resolved, g_schedule_size);
     return fs;
 }
@@ -165,11 +177,13 @@ prepare_callable_impl(const ChipCallable *callable, uint64_t (*upload_fn)(const 
     LOG_INFO_V0("Sonata prepare: registering %d kernel(s)", callable->child_count());
     if (upload_and_collect_child_addrs(callable, upload_fn, &out->kernel_addrs) != 0) {
         LOG_ERROR("Failed to upload ChipCallable buffer");
+        _clear_schedule_buf();
         return -1;
     }
     for (const ChildKernelAddr &c : out->kernel_addrs) {
         if (c.func_id < 0 || c.func_id >= RUNTIME_MAX_FUNC_ID) {
             LOG_ERROR("func_id=%d out of range [0, %d)", c.func_id, RUNTIME_MAX_FUNC_ID);
+            _clear_schedule_buf();
             return -1;
         }
     }
@@ -179,6 +193,7 @@ prepare_callable_impl(const ChipCallable *callable, uint64_t (*upload_fn)(const 
 
     if (orch_so == nullptr || orch_so_size == 0) {
         LOG_ERROR("Orchestration binary is required (carries the flat_schedule)");
+        _clear_schedule_buf();
         return -1;
     }
 
@@ -335,16 +350,23 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
-    // Validate header fields: magic, version, overflow-safe bounds.
+    // Validate header fields: version, overflow-safe bounds.
     if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {
         LOG_ERROR("Unsupported schedule version: %d", flat_sched->version);
         return -1;
     }
-    size_t expected_size = sizeof(FlatSchedule)
-        + static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion)
-        + static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask)
-        + static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg)
-        + static_cast<size_t>(flat_sched->total_deps) * sizeof(FlatDep);
+    // Reject negative counts (corrupt or malicious) before computing expected size.
+    if (flat_sched->num_regions < 0 || flat_sched->total_tasks < 0 ||
+        flat_sched->total_args < 0 || flat_sched->total_deps < 0) {
+        LOG_ERROR("Schedule has negative field counts");
+        return -1;
+    }
+    // Bounds check: verify declared arrays fit within blob (overflow-safe).
+    size_t expected_size = sizeof(FlatSchedule);
+    expected_size += static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion);
+    expected_size += static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask);
+    expected_size += static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg);
+    expected_size += static_cast<size_t>(flat_sched->total_deps) * sizeof(FlatDep);
     if (flat_sched->version >= 2) expected_size += 4;
     if (expected_size > flat_sched_size || expected_size < sizeof(FlatSchedule)) {
         LOG_ERROR("Schedule header fields overflow or exceed blob size");
@@ -414,7 +436,11 @@ extern "C" int bind_callable_to_runtime_impl(
 // ── validate_runtime_impl ──
 //
 // Copy output tensors back from device to host and free device allocations.
-// Same as upstream TMARB. Also releases the host-side schedule buffer.
+// Same as upstream TMARB. The host-side schedule buffer is NOT released
+// here — run_prepared may be called multiple times per prepare_callable,
+// and the buffer must survive across runs. buffer is freed on the next
+// prepare_callable_impl call (via _set_schedule_buf → _clear_schedule_buf)
+// or when the host process exits.
 
 extern "C" int validate_runtime_impl(Runtime *runtime) {
     if (runtime == nullptr) {
@@ -432,9 +458,6 @@ extern "C" int validate_runtime_impl(Runtime *runtime) {
         runtime->host_api.device_free(tp.dev_ptr);
     }
     runtime->tensor_pairs_.clear();
-
-    // Release the host-side schedule buffer.
-    _clear_schedule_buf();
 
     return 0;
 }
