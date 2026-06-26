@@ -25,6 +25,9 @@
 // Current binary format version. Bump when the wire layout changes.
 static constexpr int32_t BINARY_FORMAT_VERSION = 2;
 
+// FlatSchedule magic identifier ("SONA" = 0x534F4E41).
+static constexpr uint32_t FLAT_SCHEDULE_MAGIC = 0x534F4E41;
+
 #pragma pack(push, 1)
 
 struct FlatArg {

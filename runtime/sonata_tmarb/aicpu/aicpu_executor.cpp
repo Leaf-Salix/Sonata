@@ -74,7 +74,7 @@ static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
         // Validate tensor slot bounds for directional args that need a tensor.
         bool slot_valid = (tensor_registry && slot >= 0 && slot < registry_size);
         if (!slot_valid && fa.direction != 3) {
-            LOG_WARN("build_arg: task=%s arg=%d dir=%d slot=%d out of range [0,%d)",
+            LOG_WARN("build_arg: task=%d arg=%d dir=%d slot=%d out of range [0,%d)",
                      ftask->func_id, i, fa.direction, slot, registry_size);
         }
         switch (fa.direction) {
@@ -240,7 +240,7 @@ extern "C" int aicpu_execute(void* prebuilt_arena, uint64_t /*arena_size*/,
                            const Tensor* tensor_registry,
                            int32_t tensor_registry_size) {
 
-    if (flat_sched == nullptr || flat_sched->magic != 0x534F4E41) {
+    if (flat_sched == nullptr || flat_sched->magic != FLAT_SCHEDULE_MAGIC) {
         return -1;
     }
     if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {

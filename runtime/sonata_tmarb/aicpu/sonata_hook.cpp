@@ -43,7 +43,7 @@ static bool validate_schedule(const void* blob, size_t blob_size) {
         return false;
     }
     auto* sched = static_cast<const FlatSchedule*>(blob);
-    if (sched->magic != 0x534F4E41) {  // "SONA"
+    if (sched->magic != FLAT_SCHEDULE_MAGIC) {
         return false;
     }
     if (sched->version != 1 && sched->version != BINARY_FORMAT_VERSION) {

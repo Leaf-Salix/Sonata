@@ -28,9 +28,6 @@
 #include "flat_schedule.h"
 #include "sonata_hook.h"
 
-// FlatSchedule magic constant (0x534F4E41 = "SONA").
-static constexpr uint32_t FLAT_SCHEDULE_MAGIC = 0x534F4E41;
-
 // Upstream TMARB headers (resolved via build_config include_dirs + platform cmake)
 #include "callable.h"
 #include "prepare_callable_common.h"
@@ -45,6 +42,9 @@ static int64_t _now_ms() {
     gettimeofday(&tv, nullptr);
     return static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
 }
+
+// Sanity cap: 64 MiB max for a schedule binary (prevents OOM).
+static constexpr size_t MAX_SCHEDULE_SIZE = 64UL * 1024UL * 1024UL;
 
 // ── Host-side schedule buffer ──
 //
@@ -73,8 +73,6 @@ static void _clear_schedule_buf() {
 static bool _set_schedule_buf(const uint8_t *data, size_t size) {
     _clear_schedule_buf();
     if (data == nullptr || size == 0) return false;
-    // Sanity cap: 64 MiB max for a schedule binary (prevents OOM).
-    static constexpr size_t MAX_SCHEDULE_SIZE = 64UL * 1024UL * 1024UL;
     if (size > MAX_SCHEDULE_SIZE) return false;
     g_schedule_buf = static_cast<uint8_t *>(std::malloc(size));
     if (g_schedule_buf == nullptr) return false;
@@ -129,8 +127,7 @@ static const FlatSchedule *_find_stashed_schedule(size_t *out_size) {
         std::fclose(f);
         return nullptr;
     }
-    static constexpr long MAX_SCHEDULE_SIZE = 64L * 1024L * 1024L;
-    if (file_size > MAX_SCHEDULE_SIZE) {
+    if (file_size > static_cast<long>(MAX_SCHEDULE_SIZE)) {
         LOG_ERROR("Schedule file too large: %ld bytes", file_size);
         std::fclose(f);
         return nullptr;
@@ -363,6 +360,14 @@ extern "C" int bind_callable_to_runtime_impl(
     }
     // Bounds check: verify declared arrays fit within blob (overflow-safe).
     size_t expected_size = sizeof(FlatSchedule);
+    // Guard against SIZE_MAX overflow in multiplication (32-bit).
+    if (static_cast<size_t>(flat_sched->num_regions) > SIZE_MAX / sizeof(FlatRegion) ||
+        static_cast<size_t>(flat_sched->total_tasks) > SIZE_MAX / sizeof(FlatTask) ||
+        static_cast<size_t>(flat_sched->total_args)  > SIZE_MAX / sizeof(FlatArg) ||
+        static_cast<size_t>(flat_sched->total_deps)  > SIZE_MAX / sizeof(FlatDep)) {
+        LOG_ERROR("Schedule field counts would overflow");
+        return -1;
+    }
     expected_size += static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion);
     expected_size += static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask);
     expected_size += static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg);
