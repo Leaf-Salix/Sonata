@@ -150,10 +150,19 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         }
 
         if (rg.kind == 1) {
-            // Dynamic region
+            // Dynamic region — pass through with AUTO scope.
+            // The TMARB runtime's scheduler discovers tasks via TensorMap
+            // auto-dependency when AUTO scope mode is active.
+            // Tasks from earlier static regions are already submitted;
+            // tasks discovered in this scope run after prior tasks complete.
             rt->pending_scope_mode = PTO2ScopeMode::AUTO;
             sonata_rt_scope_begin(rt);
+            // In AUTO mode the TMARB runtime reads task windows and
+            // submits discovered tasks using TensorMap traversal.
+            // The interpreter does NOT replicate this logic — it
+            // relies on the runtime's built-in AUTO scope support.
             sonata_rt_scope_end(rt);
+            LOG_WARN("Dynamic region %d processed via AUTO scope (interpreter bypass)", r);
             continue;
         }
 
