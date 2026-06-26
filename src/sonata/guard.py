@@ -54,15 +54,28 @@ for detailed design decisions and trade-offs.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Iterable, Optional
+import json
 import logging
+import sys
 import warnings
 
 _log = logging.getLogger(__name__)
 
 
-class GuardSeverity(StrEnum):
+# StrEnum backward compat: Python <3.11 lacks enum.StrEnum
+if sys.version_info >= (3, 11):
+    from enum import StrEnum as _StrEnumCls
+else:
+    class _StrEnumCls(str, Enum):
+        """Backport of Python 3.11's StrEnum for Python 3.10."""
+        def __str__(self):
+            return self.value
+        pass
+
+
+class GuardSeverity(_StrEnumCls):
     """Classification of guard invalidation severity.
 
     Members:

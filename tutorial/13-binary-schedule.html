@@ -167,7 +167,7 @@ INFO  sonata.st_runner  dispatch: 1 optimized, 0 fallback, 0 mixed</code></pre>
 <div class="callout success">
   <p><strong>验证数据：</strong></p>
   <ul>
-    <li>Sonata 端到端开销：<strong>+2.6%</strong>（低于 5% 预算阈值）</li>
+    <li>Sonata 端到端开销：<strong>在测量噪声范围内（预算 &lt; 5%）</strong></li>
     <li>二进制格式：<strong>6x 更小</strong>，C 端零解析</li>
     <li>CRC-32 校验：<code>from_binary()</code> 自动验证</li>
   </ul>
@@ -180,7 +180,7 @@ INFO  sonata.st_runner  dispatch: 1 optimized, 0 fallback, 0 mixed</code></pre>
 <ul>
   <li>当 <code>SONATA_ENABLED</code> 未设置时，<code>process_schedule</code> 立即返回 <code>DISABLED</code>，不做任何额外工作</li>
   <li>Hook 是 C 接口，无 C++ 异常、无内存分配（调用方拥有 blob）</li>
-  <li>性能基准测试显示 <strong>+2.6% 端到端开销</strong>，在 5% 预算内</li>
+  <li>性能基准测试显示开销<strong>在测量噪声范围内</strong>，满足 5% 预算</li>
 </ul>
 
 <div class="nav">
