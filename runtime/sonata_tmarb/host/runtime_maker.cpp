@@ -373,7 +373,37 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
-    // ── Invoke interpreter via dlsym (sim path) ──
+    // ── NPU path: upload schedule to device memory ──
+    // When SONATA_RUNTIME_MODE=npu, the schedule binary is uploaded to device
+    // memory via the HostApi (CANN rtMalloc/rtMemcpy on NPU, malloc/memcpy on
+    // sim).  The AICPU reads it from the Runtime struct fields.
+    // Default (unset or =sim) → existing dlsym path below.
+    const char *rt_mode = std::getenv("SONATA_RUNTIME_MODE");
+    if (rt_mode != nullptr && strcmp(rt_mode, "npu") == 0) {
+        LOG_INFO_V0("Sonata: NPU path — uploading schedule (%zu bytes)", flat_sched_size);
+        void *sched_dev = runtime->host_api.device_malloc(flat_sched_size);
+        if (sched_dev == nullptr) {
+            LOG_ERROR("Failed to allocate device memory for schedule");
+            return -1;
+        }
+        int rc = runtime->host_api.copy_to_device(
+            sched_dev,
+            static_cast<const void *>(flat_sched),
+            flat_sched_size);
+        if (rc != 0) {
+            LOG_ERROR("Failed to copy schedule to device (rc=%d)", rc);
+            runtime->host_api.device_free(sched_dev);
+            return -1;
+        }
+        runtime->set_sonata_schedule(
+            reinterpret_cast<uint64_t>(sched_dev),
+            flat_sched_size);
+        LOG_INFO_V0("Sonata: schedule uploaded to dev_addr=0x%llx",
+                    (unsigned long long)(uintptr_t)sched_dev);
+        return 0;
+    }
+
+    // ── Sim path: invoke interpreter via dlsym ──
     // The function is named "sonata_standalone_interpreter" (renamed from
     // "aicpu_execute" to avoid extern "C" collision with TMARB's aicpu_execute).
     // Fall back to "aicpu_entry" / "aicpu_execute" for backward compatibility.
