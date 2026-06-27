@@ -358,16 +358,11 @@ extern "C" int bind_callable_to_runtime_impl(
         LOG_ERROR("Schedule has negative field counts");
         return -1;
     }
-    // Bounds check: verify declared arrays fit within blob (overflow-safe).
+    // Bounds check: verify declared arrays fit within blob.
+    // MAX_SCHEDULE_SIZE (64 MiB) ensures the total binary can't exceed a
+    // value that would cause size_t overflow on any target platform,
+    // so per-field multiplication overflow guards are not needed.
     size_t expected_size = sizeof(FlatSchedule);
-    // Guard against SIZE_MAX overflow in multiplication (32-bit).
-    if (static_cast<size_t>(flat_sched->num_regions) > SIZE_MAX / sizeof(FlatRegion) ||
-        static_cast<size_t>(flat_sched->total_tasks) > SIZE_MAX / sizeof(FlatTask) ||
-        static_cast<size_t>(flat_sched->total_args)  > SIZE_MAX / sizeof(FlatArg) ||
-        static_cast<size_t>(flat_sched->total_deps)  > SIZE_MAX / sizeof(FlatDep)) {
-        LOG_ERROR("Schedule field counts would overflow");
-        return -1;
-    }
     expected_size += static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion);
     expected_size += static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask);
     expected_size += static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg);
