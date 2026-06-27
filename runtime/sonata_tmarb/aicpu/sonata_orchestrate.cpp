@@ -106,6 +106,7 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 
         if (rg.kind == 1) {
             // Dynamic region — AUTO scope (TMARB runtime discovers tasks)
+            if (rt->ops->is_fatal(rt)) return;
             rt->pending_scope_mode = PTO2ScopeMode::AUTO;
             rt->ops->scope_begin(rt);
             rt->ops->scope_end(rt);
@@ -114,6 +115,7 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         }
 
         // Static region — explicit tasks + deps
+        if (rt->ops->is_fatal(rt)) return;
         rt->pending_scope_mode = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
         rt->ops->scope_begin(rt);
 
@@ -137,16 +139,25 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                      submit_arg);
 
             MixedKernels mk;
-            mk.aiv0_kernel_id = (ft.core_type == 1) ? ft.func_id : INVALID_KERNEL_ID;
-            mk.aic_kernel_id = (ft.core_type == 0) ? ft.func_id : INVALID_KERNEL_ID;
+            if (ft.core_type == 1) {
+                mk.aiv0_kernel_id = ft.func_id;
+                mk.aic_kernel_id = INVALID_KERNEL_ID;
+            } else if (ft.core_type == 2) {
+                mk.aic_kernel_id = ft.func_id;
+                mk.aiv0_kernel_id = INVALID_KERNEL_ID;
+            } else {
+                mk.aic_kernel_id = ft.func_id;
+                mk.aiv0_kernel_id = INVALID_KERNEL_ID;
+            }
             mk.aiv1_kernel_id = INVALID_KERNEL_ID;
 
+            if (rt->ops->is_fatal(rt)) break;
             auto result = rt->ops->submit_task(rt, mk, submit_arg);
             task_ids[num_submitted++] = result.task_id();
         }
 
         delete[] task_ids;
-        rt->ops->scope_end(rt);
+        if (!rt->ops->is_fatal(rt)) rt->ops->scope_end(rt);
     }
 }
 
@@ -170,14 +181,14 @@ extern "C" void sonata_orchestrate_with_schedule(
         LOG_ERROR("sonata_orchestrate_with_schedule: null raw pointer");
         return;
     }
+    if (sched_size < sizeof(FlatSchedule)) {
+        LOG_ERROR("sonata_orchestrate_with_schedule: blob too small (%zu)", sched_size);
+        return;
+    }
 
     auto* sched = reinterpret_cast<const FlatSchedule*>(raw);
     if (sched->magic != FLAT_SCHEDULE_MAGIC) {
         LOG_ERROR("sonata_orchestrate_with_schedule: bad magic 0x%08x", sched->magic);
-        return;
-    }
-    if (sched_size < sizeof(FlatSchedule)) {
-        LOG_ERROR("sonata_orchestrate_with_schedule: blob too small (%zu)", sched_size);
         return;
     }
 

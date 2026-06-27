@@ -29,7 +29,7 @@ index 1234567..abcdef0 100644
 +                // Precomputed schedule available → use FlatSchedule interpreter
 +                // The bridge function is compiled into the same aicpu_kernel.so
 +                // (sonata_tmarb/aicpu/sonata_orchestrate.cpp), linked normally.
-+                extern void sonata_orchestrate_with_schedule(
++                extern "C" void sonata_orchestrate_with_schedule(
 +                    PTO2Runtime* rt, Runtime* runtime,
 +                    uint64_t sched_addr, uint64_t sched_size
 +                );

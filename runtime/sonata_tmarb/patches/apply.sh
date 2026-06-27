@@ -26,9 +26,9 @@ echo "Applying Sonata patches to $TARGET_FILE ..."
 for patch in "$PATCH_DIR"/*.patch; do
     [ -f "$patch" ] || continue
     echo "  applying $(basename "$patch")"
-    if ! patch -p1 -d "$TARGET_DIR/../.." < "$patch" 2>/dev/null; then
+    if ! patch -p1 -d "$TARGET_DIR/../../../.." < "$patch" 2>/dev/null; then
         # Check if already applied (patch -N for reverse check)
-        if ! patch -p1 -R --dry-run -d "$TARGET_DIR/../.." < "$patch" >/dev/null 2>&1; then
+        if ! patch -p1 -R --dry-run -d "$TARGET_DIR/../../../.." < "$patch" >/dev/null 2>&1; then
             echo "WARN: patch failed — may be a conflict. Check $TARGET_FILE"
             exit 1
         fi
