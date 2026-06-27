@@ -1,0 +1,46 @@
+From: Sonata AGENTS <sonata@pypto-sonata>
+Date: 2026-06-27
+Subject: [PATCH] aicpu_executor: add Sonata schedule branch at orchestrator call
+
+Adds a conditional branch at the orchestrator thread's ``(*p_func)(orch_args)``
+call site.  When ``Runtime::sonata_sched_addr_`` is non-zero, a precomputed
+FlatSchedule binary is available and the orchestrator delegates to
+``sonata_orchestrate_with_schedule()`` instead of invoking the standard
+orchestration SO.
+
+Zero default (``sonata_sched_addr_ == 0``) → TMARB behaviour unchanged.
+Part of Sonata NPU dual-path integration (ADR-002).
+
+
+diff --git a/src/a2a3/runtime/tensormap_and_ringbuffer/aicpu/aicpu_executor.cpp b/src/a2a3/runtime/tensormap_and_ringbuffer/aicpu/aicpu_executor.cpp
+index 1234567..abcdef0 100644
+--- a/src/a2a3/runtime/tensormap_and_ringbuffer/aicpu/aicpu_executor.cpp
++++ b/src/a2a3/runtime/tensormap_and_ringbuffer/aicpu/aicpu_executor.cpp
+@@ -564,7 +564,25 @@
+             framework_bind_runtime(rt);
+             if (*p_bind != nullptr) {
+                 (*p_bind)(rt);
+             }
+             rt_scope_begin(rt);
+-            (*p_func)(*orch_args_cached_);
++            // Sonata schedule branch (ADR-002): check for precomputed FlatSchedule
++            uint64_t sonata_sched_addr = runtime->get_sonata_sched_addr();
++            if (sonata_sched_addr != 0) {
++                // Precomputed schedule available → use FlatSchedule interpreter
++                // The bridge function is compiled into the same aicpu_kernel.so
++                // (sonata_tmarb/aicpu/sonata_orchestrate.cpp), linked normally.
++                extern void sonata_orchestrate_with_schedule(
++                    PTO2Runtime* rt, uint64_t sched_addr, uint64_t sched_size
++                );
++                sonata_orchestrate_with_schedule(
++                    rt,
++                    sonata_sched_addr,
++                    runtime->get_sonata_sched_size()
++                );
++            } else {
++                // No schedule → normal TMARB orchestrator path
++                (*p_func)(*orch_args_cached_);
++            }
+             rt_scope_end(rt);
+
+             // Flush the (potentially partially-filled) DepGenBuffer so the host
