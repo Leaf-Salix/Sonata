@@ -27,7 +27,7 @@ static std::atomic<bool> g_sonata_enabled{false};
 struct Tensor;  // forward decl — aicpu_executor.cpp defines the full type
 
 // Forward declaration: device-side entry point (aicpu_executor.cpp)
-extern "C" int aicpu_execute(void* prebuilt_arena, uint64_t arena_size,
+extern "C" int sonata_standalone_interpreter(void* prebuilt_arena, uint64_t arena_size,
                            void* sm_ptr, uint64_t sm_size,
                            void* gm_heap, uint64_t heap_size,
                            int32_t aic_count, int32_t aiv_count,
@@ -120,7 +120,7 @@ extern "C" int sonata_hook_process_schedule(const void* blob, size_t blob_size) 
     // This is sufficient for the simulator path and fail-open tests.
     // The real host-side integration (runtime_maker.cpp) will fill these in
     // when the simpler runtime framework calls prepare/bind/validate.
-    int rc = aicpu_execute(
+    int rc = sonata_standalone_interpreter(
         nullptr, 0,   // prebuilt_arena
         nullptr, 0,   // sm_ptr
         nullptr, 0,   // gm_heap

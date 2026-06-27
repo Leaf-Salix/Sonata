@@ -224,14 +224,17 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
     }
 }
 
-// ── Device-side entry point ──
+// ── Device-side entry point (sim path) ──
 //
-// Named aicpu_execute (not aicpu_entry) because device_runner.cpp
-// dlsyms "aicpu_execute" from the aicpu_kernel.so at runtime.
-// The host-side dlsym in runtime_maker.cpp also searches for
-// "aicpu_entry" and falls back; both names resolve to this function.
+// This is the standalone FlatSchedule interpreter entry point for sim.
+// Called by runtime_maker.cpp via dlsym("sonata_standalone_interpreter").
+// NOT used on NPU — there the CANN dispatch path calls aicpu_execute(Runtime*).
+//
+// Renamed from aicpu_execute to avoid extern "C" symbol collision with
+// TMARB's aicpu_execute(Runtime*) when both are compiled into the same
+// aicpu_kernel.so (ADR-002 dual-path architecture).
 
-extern "C" int aicpu_execute(void* prebuilt_arena, uint64_t /*arena_size*/,
+extern "C" int sonata_standalone_interpreter(void* prebuilt_arena, uint64_t /*arena_size*/,
                            void* sm_ptr, uint64_t sm_size,
                            void* gm_heap, uint64_t heap_size,
                            int32_t aic_count, int32_t aiv_count,

@@ -378,12 +378,10 @@ extern "C" int bind_callable_to_runtime_impl(
         return -1;
     }
 
-    // ── Invoke interpreter via dlsym (from aicpu_kernel.so) ──
-    // aicpu_kernel.so is loaded by the TMARB framework with RTLD_LOCAL,
-    // so its symbols are NOT visible to dlsym(RTLD_DEFAULT).  We dlopen
-    // it explicitly using the absolute path from SONATA_AICPU_PATH env var.
-    // The function is named "aicpu_execute" (device_runner.cpp dlsyms this).
-    // Fall back to "aicpu_entry" for backward compatibility.
+    // ── Invoke interpreter via dlsym (sim path) ──
+    // The function is named "sonata_standalone_interpreter" (renamed from
+    // "aicpu_execute" to avoid extern "C" collision with TMARB's aicpu_execute).
+    // Fall back to "aicpu_entry" / "aicpu_execute" for backward compatibility.
     using AicpuEntryFn = int (*)(void*, uint64_t, void*, uint64_t, void*, uint64_t,
                                   int32_t, int32_t, int32_t,
                                   const FlatSchedule*, const void*, int32_t);
@@ -397,7 +395,7 @@ extern "C" int bind_callable_to_runtime_impl(
         } else {
             void *aicpu_handle = dlopen(resolved_aicpu, RTLD_LAZY | RTLD_GLOBAL);
             if (aicpu_handle != nullptr) {
-                aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_execute"));
+                aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "sonata_standalone_interpreter"));
                 if (aicpu_exec_fn == nullptr) {
                     aicpu_exec_fn = reinterpret_cast<AicpuEntryFn>(dlsym(aicpu_handle, "aicpu_entry"));
                 }
