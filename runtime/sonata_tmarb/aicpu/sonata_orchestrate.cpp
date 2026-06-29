@@ -95,8 +95,6 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                                const Tensor* tensor_registry,
                                int32_t registry_size) {
 
-    static constexpr int32_t MAX_DEPS_PER_TASK = 256;
-
     for (int32_t r = 0; r < sched->num_regions; r++) {
         const FlatRegion& rg = regions[r];
 
@@ -152,13 +150,16 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             }
             mk.aiv1_kernel_id = INVALID_KERNEL_ID;
 
-            if (rt->ops->is_fatal(rt)) break;
+            if (rt->ops->is_fatal(rt)) {
+                rt->ops->scope_end(rt);  // close scope before aborting
+                break;
+            }
             auto result = rt->ops->submit_task(rt, mk, submit_arg);
             task_ids[num_submitted++] = result.task_id();
         }
 
         delete[] task_ids;
-        if (!rt->ops->is_fatal(rt)) rt->ops->scope_end(rt);
+        rt->ops->scope_end(rt);
     }
 }
 
@@ -206,7 +207,6 @@ extern "C" void sonata_orchestrate_with_schedule(
     const Tensor* tensor_registry = (registry_size > 0) ? orch_args.tensor_data() : nullptr;
 
     // Pre-allocate dependency buffer.
-    static constexpr int32_t MAX_DEPS_PER_TASK = 256;
     auto* dep_buf = new (std::nothrow) PTO2TaskId[MAX_DEPS_PER_TASK];
     if (!dep_buf) {
         LOG_ERROR("sonata_orchestrate_with_schedule: dep_buf alloc failed");

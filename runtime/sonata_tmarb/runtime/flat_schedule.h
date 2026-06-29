@@ -28,6 +28,9 @@ static constexpr int32_t BINARY_FORMAT_VERSION = 2;
 // FlatSchedule magic identifier ("SONA" = 0x534F4E41).
 static constexpr uint32_t FLAT_SCHEDULE_MAGIC = 0x534F4E41;
 
+// Maximum number of dependency edges per task.
+static constexpr int32_t MAX_DEPS_PER_TASK = 256;
+
 #pragma pack(push, 1)
 
 struct FlatArg {

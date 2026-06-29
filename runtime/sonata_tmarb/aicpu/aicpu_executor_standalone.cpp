@@ -56,7 +56,7 @@ static inline void sonata_rt_scope_end(PTO2Runtime *rt) {
     rt->ops->scope_end(rt);
 }
 
-static constexpr int32_t MAX_DEPS_PER_TASK = 256;
+// MAX_DEPS_PER_TASK defined in flat_schedule.h
 
 // ── Build Arg from FlatTask ──
 //
