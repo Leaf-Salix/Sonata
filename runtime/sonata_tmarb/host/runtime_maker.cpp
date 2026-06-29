@@ -342,50 +342,21 @@ extern "C" int bind_callable_to_runtime_impl(
 
     size_t flat_sched_size = 0;
     const FlatSchedule *flat_sched = _find_stashed_schedule(&flat_sched_size);
-    if (flat_sched == nullptr) {
-        LOG_ERROR("No schedule binary available");
-        return -1;
-    }
-
-    // Validate header fields: version, overflow-safe bounds.
-    if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {
-        LOG_ERROR("Unsupported schedule version: %d", flat_sched->version);
-        return -1;
-    }
-    // Reject negative counts (corrupt or malicious) before computing expected size.
-    if (flat_sched->num_regions < 0 || flat_sched->total_tasks < 0 ||
-        flat_sched->total_args < 0 || flat_sched->total_deps < 0) {
-        LOG_ERROR("Schedule has negative field counts");
-        return -1;
-    }
-    // Bounds check: verify declared arrays fit within blob.
-    // MAX_SCHEDULE_SIZE (64 MiB) ensures the total binary can't exceed a
-    // value that would cause size_t overflow on any target platform,
-    // so per-field multiplication overflow guards are not needed.
-    size_t expected_size = sizeof(FlatSchedule);
-    expected_size += static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion);
-    expected_size += static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask);
-    expected_size += static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg);
-    expected_size += static_cast<size_t>(flat_sched->total_deps) * sizeof(FlatDep);
-    if (flat_sched->version >= 2) expected_size += 4;
-    if (expected_size > flat_sched_size || expected_size < sizeof(FlatSchedule)) {
-        LOG_ERROR("Schedule header fields overflow or exceed blob size");
-        return -1;
-    }
 
     // ── NPU path: upload schedule to device memory ──
-    // Check before schedule validation so NPU mode works even without a valid
-    // schedule (TMARB orchestrator fallback).
+    // Check BEFORE the schedule-null return and validation so TMARB can run
+    // as a fallback when no schedule exists.  When schedule IS available under
+    // NPU mode, upload it to device memory and set Runtime fields for the
+    // AICPU orchestrator to consume.
     const char *rt_mode = std::getenv("SONATA_RUNTIME_MODE");
     if (rt_mode != nullptr && strcmp(rt_mode, "npu") == 0) {
-        size_t sched_sz = flat_sched_size;
-        if (flat_sched != nullptr && sched_sz >= sizeof(FlatSchedule)) {
-            LOG_INFO_V0("Sonata: NPU — uploading schedule (%zu bytes)", sched_sz);
-            void *sched_dev = runtime->host_api.device_malloc(sched_sz);
+        if (flat_sched != nullptr && flat_sched_size >= sizeof(FlatSchedule)) {
+            LOG_INFO_V0("Sonata: NPU — uploading schedule (%zu bytes)", flat_sched_size);
+            void *sched_dev = runtime->host_api.device_malloc(flat_sched_size);
             if (sched_dev != nullptr) {
-                int rc = runtime->host_api.copy_to_device(sched_dev, flat_sched, sched_sz);
+                int rc = runtime->host_api.copy_to_device(sched_dev, flat_sched, flat_sched_size);
                 if (rc == 0) {
-                    runtime->set_sonata_schedule(reinterpret_cast<uint64_t>(sched_dev), sched_sz);
+                    runtime->set_sonata_schedule(reinterpret_cast<uint64_t>(sched_dev), flat_sched_size);
                     LOG_INFO_V0("Sonata: schedule uploaded to 0x%llx",
                                 (unsigned long long)(uintptr_t)sched_dev);
                 } else {
@@ -401,11 +372,34 @@ extern "C" int bind_callable_to_runtime_impl(
         return 0;
     }
 
-    // ── Sim path: schedule validation + dlsym ──
+    // ── Sim path: validate schedule + dlsym ──
     // Only reachable when SONATA_RUNTIME_MODE is not set or is "sim".
-    // The function is named "sonata_standalone_interpreter" (renamed from
-    // "aicpu_execute" to avoid extern "C" collision with TMARB's aicpu_execute).
-    // Fall back to "aicpu_entry" / "aicpu_execute" for backward compatibility.
+    if (flat_sched == nullptr) {
+        LOG_ERROR("No schedule binary available");
+        return -1;
+    }
+
+    // Validate header fields for the sim path (version, overflow-safe bounds).
+    if (flat_sched->version != 1 && flat_sched->version != BINARY_FORMAT_VERSION) {
+        LOG_ERROR("Unsupported schedule version: %d", flat_sched->version);
+        return -1;
+    }
+    if (flat_sched->num_regions < 0 || flat_sched->total_tasks < 0 ||
+        flat_sched->total_args < 0 || flat_sched->total_deps < 0) {
+        LOG_ERROR("Schedule has negative field counts");
+        return -1;
+    }
+    size_t expected_size = sizeof(FlatSchedule);
+    expected_size += static_cast<size_t>(flat_sched->num_regions) * sizeof(FlatRegion);
+    expected_size += static_cast<size_t>(flat_sched->total_tasks) * sizeof(FlatTask);
+    expected_size += static_cast<size_t>(flat_sched->total_args) * sizeof(FlatArg);
+    expected_size += static_cast<size_t>(flat_sched->total_deps) * sizeof(FlatDep);
+    if (flat_sched->version >= 2) expected_size += 4;
+    if (expected_size > flat_sched_size || expected_size < sizeof(FlatSchedule)) {
+        LOG_ERROR("Schedule header fields overflow or exceed blob size");
+        return -1;
+    }
+
     using AicpuEntryFn = int (*)(void*, uint64_t, void*, uint64_t, void*, uint64_t,
                                   int32_t, int32_t, int32_t,
                                   const FlatSchedule*, const void*, int32_t);
