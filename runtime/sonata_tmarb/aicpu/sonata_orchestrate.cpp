@@ -104,9 +104,11 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         if (rg.task_start < 0 || rg.num_tasks > sched->total_tasks - rg.task_start) continue;
         if (rg.dep_start < 0 || rg.num_deps > sched->total_deps - rg.dep_start) continue;
 
+        // Single is_fatal check before any scope or task operations.
+        if (rt->ops->is_fatal(rt)) return;
+
         if (rg.kind == 1) {
             // Dynamic region — AUTO scope (TMARB runtime discovers tasks)
-            if (rt->ops->is_fatal(rt)) return;
             rt->pending_scope_mode = PTO2ScopeMode::AUTO;
             rt->ops->scope_begin(rt);
             rt->ops->scope_end(rt);
@@ -115,7 +117,6 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
         }
 
         // Static region — explicit tasks + deps
-        if (rt->ops->is_fatal(rt)) return;
         rt->pending_scope_mode = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
         rt->ops->scope_begin(rt);
 
