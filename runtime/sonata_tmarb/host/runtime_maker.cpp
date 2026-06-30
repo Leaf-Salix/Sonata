@@ -199,9 +199,17 @@ prepare_callable_impl(const ChipCallable *callable, uint64_t (*upload_fn)(const 
     out->func_name = callable->func_name();
     out->config_name = callable->config_name();
 
-    // Stash a host-side copy of the schedule binary.
-    if (!_set_schedule_buf(orch_so, orch_so_size)) {
-        LOG_WARN("Sonata prepare: failed to stash schedule buffer (%zu bytes)", orch_so_size);
+    // Stash a host-side copy ONLY if the binary looks like a FlatSchedule
+    // (magic = 0x534F4E41).  Standard compile_and_assemble puts an orchestration
+    // ELF in binary_data(), which is not a valid schedule.  The env-var fallback
+    // (SONATA_SCHEDULE_PATH) is the primary delivery mechanism for now.
+    if (orch_so_size >= sizeof(FlatSchedule)) {
+        auto *hdr = reinterpret_cast<const FlatSchedule *>(orch_so);
+        if (hdr->magic == FLAT_SCHEDULE_MAGIC) {
+            if (!_set_schedule_buf(orch_so, orch_so_size)) {
+                LOG_WARN("Sonata prepare: failed to stash schedule (%zu bytes)", orch_so_size);
+            }
+        }
     }
 
     LOG_INFO_V0("Sonata prepare: orch binary staged (%zu bytes)", orch_so_size);
