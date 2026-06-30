@@ -469,6 +469,26 @@ extern "C" int validate_runtime_impl(Runtime *runtime) {
         return -1;
     }
 
+    // ── SONATA PROOF: read schedule buffer sentinel from device memory ──
+    // If sonata_orchestrate_with_schedule() was entered on the AICPU, it
+    // overwrote the first 8 bytes of the schedule buffer with 0xCAFEBABE
+    // and 0xFACEFEED.  Reading them back proves the sonata path was taken.
+    // Works on both sim (same address space) and NPU (HBM shared memory).
+    {
+        uint64_t probe_addr = runtime->get_sonata_sched_addr();
+        if (probe_addr != 0 && runtime->get_sonata_sched_size() > 8) {
+            uint32_t marker[2] = {0, 0};
+            int rc = runtime->host_api.copy_from_device(
+                marker, reinterpret_cast<void*>(static_cast<uintptr_t>(probe_addr)), 8);
+            if (rc == 0 && marker[0] == 0xCAFEBABE && marker[1] == 0xFACEFEED) {
+                LOG_INFO_V0("[SONATA PROOF] orchestrator branch executed on AICPU");
+            } else if (rc == 0) {
+                LOG_INFO_V0("[SONATA PROOF] NOT executed (magic=0x%08x 0x%08x)",
+                            marker[0], marker[1]);
+            }
+        }
+    }
+
     for (auto &tp : runtime->tensor_pairs_) {
         if (tp.needs_copy_back) {
             int rc = runtime->host_api.copy_from_device(tp.host_ptr, tp.dev_ptr, tp.size);

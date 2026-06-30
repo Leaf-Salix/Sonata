@@ -188,6 +188,16 @@ extern "C" void sonata_orchestrate_with_schedule(
         return;
     }
 
+    // ── PROOF: overwrite schedule magic with sentinel ──
+    // If this code runs on the AICPU, the schedule buffer in HBM is modified.
+    // The host reads it back in validate_runtime_impl; 0xCAFEBABE = proof.
+    if (sched_size >= 8) {
+        // Cast away const to write sentinel (safe: buffer is device-writable)
+        auto* mutable_raw = const_cast<uint8_t*>(raw);
+        reinterpret_cast<uint32_t*>(mutable_raw)[0] = 0xCAFEBABE;
+        reinterpret_cast<uint32_t*>(mutable_raw)[1] = 0xFACEFEED;
+    }
+
     auto* sched = reinterpret_cast<const FlatSchedule*>(raw);
     if (sched->magic != FLAT_SCHEDULE_MAGIC) {
         LOG_ERROR("sonata_orchestrate_with_schedule: bad magic 0x%08x", sched->magic);
