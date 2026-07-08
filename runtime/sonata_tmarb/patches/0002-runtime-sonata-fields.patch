@@ -1,0 +1,78 @@
+From 8220da1b4a949148413f4cc70d8ca0593d4f862b Mon Sep 17 00:00:00 2001
+From: Leaf-Salix <2503954024@qq.com>
+Date: Fri, 3 Jul 2026 13:55:23 +0800
+Subject: [PATCH] feat(runtime): add sonata_sched_addr/size fields (10a7680b +
+ A1)
+
+---
+ .../runtime/tensormap_and_ringbuffer/runtime/runtime.h   | 5 +++++
+ .../tensormap_and_ringbuffer/runtime/shared/runtime.cpp  | 9 +++++++++
+ src/common/platform/sim/sim_context/CMakeLists.txt       | 2 ++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/runtime.h b/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/runtime.h
+index d13a9519..5dd5fd6e 100644
+--- a/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/runtime.h
++++ b/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/runtime.h
+@@ -233,6 +233,8 @@ private:
+     // owned by DeviceRunner; only the metadata below travels inside Runtime.
+     uint64_t dev_orch_so_addr_;
+     uint64_t dev_orch_so_size_;
++    uint64_t sonata_sched_addr_{0};
++    uint64_t sonata_sched_size_{0};
+     // Per-callable_id dispatch. AICPU dispatches via
+     // `orch_so_table_[active_callable_id_]`; `register_new_callable_id_`
+     // signals whether the host is delivering a freshly-registered
+@@ -278,6 +280,9 @@ public:
+     void set_dev_orch_so(uint64_t dev_addr, uint64_t size);
+     uint64_t get_dev_orch_so_addr() const;
+     uint64_t get_dev_orch_so_size() const;
++    void set_sonata_schedule(uint64_t dev_addr, uint64_t size);
++    uint64_t get_sonata_sched_addr() const;
++    uint64_t get_sonata_sched_size() const;
+     // Per-callable_id dispatch. callable_id must be in
+     // [0, MAX_REGISTERED_CALLABLE_IDS); register_new_callable_id_ tells AICPU
+     // whether to (re)load the orch SO into orch_so_table_[callable_id] or
+diff --git a/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/shared/runtime.cpp b/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/shared/runtime.cpp
+index ef639753..1b836500 100644
+--- a/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/shared/runtime.cpp
++++ b/src/a2a3/runtime/tensormap_and_ringbuffer/runtime/shared/runtime.cpp
+@@ -47,6 +47,8 @@ Runtime::Runtime() {
+     // Initialize device orchestration SO binary
+     dev_orch_so_addr_ = 0;
+     dev_orch_so_size_ = 0;
++    sonata_sched_addr_ = 0;
++    sonata_sched_size_ = 0;
+     active_callable_id_ = -1;
+     register_new_callable_id_ = false;
+     device_orch_func_name_[0] = '\0';
+@@ -91,6 +93,13 @@ uint64_t Runtime::get_dev_orch_so_addr() const { return dev_orch_so_addr_; }
+ 
+ uint64_t Runtime::get_dev_orch_so_size() const { return dev_orch_so_size_; }
+ 
++void Runtime::set_sonata_schedule(uint64_t dev_addr, uint64_t size) {
++    sonata_sched_addr_ = dev_addr;
++    sonata_sched_size_ = size;
++}
++uint64_t Runtime::get_sonata_sched_addr() const { return sonata_sched_addr_; }
++uint64_t Runtime::get_sonata_sched_size() const { return sonata_sched_size_; }
++
+ void Runtime::set_active_callable_id(int32_t callable_id, bool is_new) {
+     active_callable_id_ = callable_id;
+     register_new_callable_id_ = is_new;
+diff --git a/src/common/platform/sim/sim_context/CMakeLists.txt b/src/common/platform/sim/sim_context/CMakeLists.txt
+index 8d58a451..8f05a8a3 100644
+--- a/src/common/platform/sim/sim_context/CMakeLists.txt
++++ b/src/common/platform/sim/sim_context/CMakeLists.txt
+@@ -39,6 +39,8 @@ set_target_properties(cpu_sim_context PROPERTIES
+     OUTPUT_NAME "cpu_sim_context"
+     SUFFIX ".so"
+     POSITION_INDEPENDENT_CODE ON
++    CXX_STANDARD 17
++    CXX_STANDARD_REQUIRED ON
+ )
+ 
+ # Apply compiler sanitizers to this host-compiled target. No-op unless
+-- 
+2.39.5 (Apple Git-154)
+

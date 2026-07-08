@@ -51,6 +51,7 @@ BUILD_CONFIG = {
         # the root that IS needed is pto_runtime2.cpp (runtime2 core APIs).
         "source_dirs": [
             "aicpu",
+            f"{UPSTREAM_TMARB}/aicpu",
             f"{UPSTREAM_TMARB}/runtime",
         ],
     },
@@ -88,3 +89,12 @@ BUILD_CONFIG = {
 # NPU dual-path build (ADR-002):
 # Before building for a2a3 onboard, apply the upstream patch:
 #   ./patches/apply.sh ../../upstream/pypto/runtime/src/a2a3/runtime/tensormap_and_ringbuffer/aicpu/
+BUILD_CONFIG["orchestration"] = {
+    "include_dirs": [
+        f"{UPSTREAM_TMARB}/runtime",       # for runtime.h
+        f"{UPSTREAM_TMARB}/orchestration",  # for orchestration headers
+        f"{UPSTREAM_TMARB}/common",         # for common headers
+        "runtime",                           # for flat_schedule.h etc.
+    ],
+    "source_dirs": [],
+}

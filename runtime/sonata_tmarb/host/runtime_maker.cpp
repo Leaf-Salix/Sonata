@@ -16,6 +16,7 @@
 
 #include <sys/time.h>
 
+#include <cctype>
 #include <cerrno>
 #include <cinttypes>
 #include <cstddef>
@@ -23,7 +24,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <limits>
 #include <limits.h>
+#include <string>
 
 #include "flat_schedule.h"
 #include "sonata_hook.h"
@@ -41,6 +44,129 @@ static int64_t _now_ms() {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     return static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+}
+
+// ── Ring config helpers (mirroring upstream TMARB) ──
+static bool is_power_of_2_u64(uint64_t value) { return value != 0 && (value & (value - 1)) == 0; }
+
+template <typename T>
+static std::string format_ring_array(const T (&values)[PTO2_MAX_RING_DEPTH]) {
+    std::string out = "[";
+    for (int r = 0; r < PTO2_MAX_RING_DEPTH; ++r) {
+        if (r != 0) out += ", ";
+        out += std::to_string(values[r]);
+    }
+    out += "]";
+    return out;
+}
+
+static std::string trim_copy(const std::string &input) {
+    size_t begin = 0;
+    while (begin < input.size() && std::isspace(static_cast<unsigned char>(input[begin]))) ++begin;
+    size_t end = input.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(input[end - 1]))) --end;
+    return input.substr(begin, end - begin);
+}
+
+static bool parse_uint_token(const char *name, const std::string &raw, uint64_t min_val, uint64_t max_val,
+                              bool require_power_of_2, uint64_t *out) {
+    std::string token = trim_copy(raw);
+    if (token.empty()) { LOG_WARN("%s has empty value, ignored", name); return false; }
+    char *endptr = nullptr;
+    errno = 0;
+    unsigned long long parsed = std::strtoull(token.c_str(), &endptr, 10);
+    if (errno == ERANGE || endptr == token.c_str() || *endptr != '\0') {
+        LOG_WARN("%s=%s invalid integer, ignored", name, token.c_str()); return false;
+    }
+    uint64_t val = static_cast<uint64_t>(parsed);
+    if (val < min_val || val > max_val) {
+        LOG_WARN("%s=%s out of range [%" PRIu64 ", %" PRIu64 "], ignored", name, token.c_str(), min_val, max_val);
+        return false;
+    }
+    if (require_power_of_2 && !is_power_of_2_u64(val)) {
+        LOG_WARN("%s=%s not a power of 2, ignored", name, token.c_str()); return false;
+    }
+    *out = val;
+    return true;
+}
+
+static void apply_env_ring_values(const char *name, uint64_t min_val, uint64_t max_val, bool require_power_of_2,
+                                   uint64_t out[PTO2_MAX_RING_DEPTH]) {
+    const char *env = std::getenv(name);
+    if (!env) return;
+    std::string text(env);
+    if (text.find(',') == std::string::npos) {
+        uint64_t value = 0;
+        if (!parse_uint_token(name, text, min_val, max_val, require_power_of_2, &value)) return;
+        for (int r = 0; r < PTO2_MAX_RING_DEPTH; r++) out[r] = value;
+        return;
+    }
+    uint64_t parsed[PTO2_MAX_RING_DEPTH]{};
+    size_t pos = 0;
+    for (int r = 0; r < PTO2_MAX_RING_DEPTH; r++) {
+        size_t comma = text.find(',', pos);
+        std::string token = text.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+        if (!parse_uint_token(name, token, min_val, max_val, require_power_of_2, &parsed[r])) return;
+        if (comma == std::string::npos) {
+            if (r != PTO2_MAX_RING_DEPTH - 1) {
+                LOG_WARN("%s: expected %d comma-separated values, got fewer", name, PTO2_MAX_RING_DEPTH);
+                return;
+            }
+            pos = text.size();
+        } else { pos = comma + 1; }
+    }
+    if (pos < text.size() || (!text.empty() && text.back() == ',')) {
+        LOG_WARN("%s: expected %d comma-separated values, got more", name, PTO2_MAX_RING_DEPTH);
+        return;
+    }
+    for (int r = 0; r < PTO2_MAX_RING_DEPTH; r++) out[r] = parsed[r];
+}
+
+static uint64_t read_ring_override(const uint64_t *base, int idx) {
+    if (base == nullptr) return 0;
+    uint64_t value;
+    std::memcpy(&value, base + idx, sizeof(value));
+    return value;
+}
+
+static bool resolve_ring_config(const uint64_t *ring_task_window, const uint64_t *ring_heap,
+                                 const uint64_t *ring_dep_pool,
+                                 uint64_t eff_task_window_sizes[PTO2_MAX_RING_DEPTH],
+                                 uint64_t eff_heap_sizes[PTO2_MAX_RING_DEPTH],
+                                 int32_t eff_dep_pool_capacities[PTO2_MAX_RING_DEPTH]) {
+    uint64_t dep_pool_values[PTO2_MAX_RING_DEPTH];
+    for (int r = 0; r < PTO2_MAX_RING_DEPTH; r++) {
+        eff_task_window_sizes[r] = PTO2_TASK_WINDOW_SIZE;
+        eff_heap_sizes[r] = PTO2_HEAP_SIZE;
+        dep_pool_values[r] = PTO2_DEP_LIST_POOL_SIZE;
+    }
+    apply_env_ring_values("PTO2_RING_TASK_WINDOW", 4, static_cast<uint64_t>(INT32_MAX), true, eff_task_window_sizes);
+    apply_env_ring_values("PTO2_RING_HEAP", 1024, std::numeric_limits<uint64_t>::max(), false, eff_heap_sizes);
+    apply_env_ring_values("PTO2_RING_DEP_POOL", 4, static_cast<uint64_t>(INT32_MAX), false, dep_pool_values);
+    for (int r = 0; r < PTO2_MAX_RING_DEPTH; r++) {
+        uint64_t val = read_ring_override(ring_task_window, r);
+        if (val != 0) eff_task_window_sizes[r] = val;
+        val = read_ring_override(ring_heap, r);
+        if (val != 0) eff_heap_sizes[r] = val;
+        val = read_ring_override(ring_dep_pool, r);
+        if (val != 0) dep_pool_values[r] = val;
+        if (eff_task_window_sizes[r] < 4 || eff_task_window_sizes[r] > static_cast<uint64_t>(INT32_MAX) ||
+            !is_power_of_2_u64(eff_task_window_sizes[r])) {
+            LOG_ERROR("ring_task_window[%d]=%" PRIu64 " must be power of 2 in [4, INT32_MAX]",
+                      r, eff_task_window_sizes[r]);
+            return false;
+        }
+        if (eff_heap_sizes[r] < 1024) {
+            LOG_ERROR("ring_heap[%d]=%" PRIu64 " must be >= 1024", r, eff_heap_sizes[r]);
+            return false;
+        }
+        if (dep_pool_values[r] < 4 || dep_pool_values[r] > static_cast<uint64_t>(INT32_MAX)) {
+            LOG_ERROR("ring_dep_pool[%d]=%" PRIu64 " must be in [4, INT32_MAX]", r, dep_pool_values[r]);
+            return false;
+        }
+        eff_dep_pool_capacities[r] = static_cast<int32_t>(dep_pool_values[r]);
+    }
+    return true;
 }
 
 // Sanity cap: 64 MiB max for a schedule binary (prevents OOM).
@@ -152,6 +278,7 @@ static const FlatSchedule *_find_stashed_schedule(size_t *out_size) {
         return nullptr;
     }
     LOG_INFO_V0("Sonata: loaded schedule from env var (%s, %zu bytes)", resolved, g_schedule_size);
+    *out_size = g_schedule_size;
     return fs;
 }
 
@@ -234,7 +361,7 @@ prepare_callable_impl(const ChipCallable *callable, uint64_t (*upload_fn)(const 
 
 extern "C" int bind_callable_to_runtime_impl(
     Runtime *runtime, const ChipStorageTaskArgs *orch_args, void *host_orch_func_ptr, const ArgDirection *signature,
-    int sig_count, uint64_t ring_task_window, uint64_t ring_heap, uint64_t ring_dep_pool
+    int sig_count, const uint64_t *ring_task_window, const uint64_t *ring_heap, const uint64_t *ring_dep_pool
 ) {
     if (runtime == nullptr) {
         LOG_ERROR("bind_callable_to_runtime_impl: runtime is null");
@@ -306,15 +433,45 @@ extern "C" int bind_callable_to_runtime_impl(
         device_args.add_scalar(orch_args->scalar(i));
     }
 
-    // ── Set up GM heap + SM (same as upstream) ──
-    uint64_t eff_heap_size = ring_heap ? ring_heap : PTO2_HEAP_SIZE;
-    uint64_t eff_task_window_size = ring_task_window ? ring_task_window : PTO2_TASK_WINDOW_SIZE;
-    uint64_t total_heap_size = eff_heap_size * PTO2_MAX_RING_DEPTH;
-    uint64_t sm_size = PTO2SharedMemoryHandle::calculate_size(eff_task_window_size);
-    int32_t eff_dep_pool_capacity = PTO2_DEP_LIST_POOL_SIZE;
+    // ── Resolve per-ring config (mirroring upstream TMARB) ──
+    uint64_t eff_task_window_sizes[PTO2_MAX_RING_DEPTH];
+    uint64_t eff_heap_sizes[PTO2_MAX_RING_DEPTH];
+    int32_t eff_dep_pool_capacities[PTO2_MAX_RING_DEPTH];
+    if (!resolve_ring_config(ring_task_window, ring_heap, ring_dep_pool,
+                              eff_task_window_sizes, eff_heap_sizes, eff_dep_pool_capacities)) {
+        return -1;
+    }
+    const std::string tw_log = format_ring_array(eff_task_window_sizes);
+    const std::string hp_log = format_ring_array(eff_heap_sizes);
+    const std::string dp_log = format_ring_array(eff_dep_pool_capacities);
+    LOG_INFO_V0("Ring config: task_window=%s heap=%s dep_pool=%s", tw_log.c_str(), hp_log.c_str(), dp_log.c_str());
+
+    uint64_t total_heap_size = 0;
+    for (int r = 0; r < PTO2_MAX_RING_DEPTH; r++) {
+        if (eff_heap_sizes[r] > std::numeric_limits<uint64_t>::max() - total_heap_size) {
+            LOG_ERROR("Total ring heap size overflows uint64_t");
+            return -1;
+        }
+        total_heap_size += eff_heap_sizes[r];
+    }
+    uint64_t sm_size = PTO2SharedMemoryHandle::calculate_size_per_ring(eff_task_window_sizes);
+    int32_t eff_dep_pool_capacity = eff_dep_pool_capacities[0];  // used only by SIM path
 
     DeviceArena host_arena;
-    PTO2RuntimeArenaLayout layout = runtime_reserve_layout(host_arena, eff_task_window_size, eff_dep_pool_capacity);
+    PTO2RuntimeArenaLayout layout = runtime_reserve_layout(
+        host_arena, eff_task_window_sizes, eff_heap_sizes, eff_dep_pool_capacities);
+    // NOTE: scheduler_timeout_ms stays 0 (default) because
+    // resolve_scheduler_timeout_ms() is a static function in the upstream TMARB
+    // runtime_maker.cpp that is not available in the sonata_tmarb build unit.
+    fprintf(stderr, "C2_DEBUG: reserve_layout done arena_size=%zu off_runtime=%zu\n",
+            layout.arena_size, layout.off_runtime);
+
+    // ── Extract flat_schedule early ──
+    size_t flat_sched_size = 0;
+    const FlatSchedule *flat_sched = _find_stashed_schedule(&flat_sched_size);
+    fprintf(stderr, "C2_DEBUG: find_stashed_schedule: sched=%p size=%zu\n",
+            (void*)flat_sched, flat_sched_size);
+
     if (host_arena.commit(DeviceArena::kDefaultBaseAlign) == nullptr) {
         LOG_ERROR("Failed to commit host arena");
         return -1;
@@ -334,50 +491,62 @@ extern "C" int bind_callable_to_runtime_impl(
     }
 
     // ── Store runtime objects for the aicpu side ──
-    // GM heap, SM, and orch_args are needed by aicpu_execute's runtime init.
-    // The prebuilt arena offset is stored for consistency (aicpu doesn't
-    // read it — it does its own runtime_init_data_from_layout — but the
-    // upstream TMARB path expects the correct offset here).
     runtime->set_gm_heap(gm_heap);
     runtime->set_gm_sm_ptr(sm_ptr);
     runtime->set_orch_args(device_args);
-    runtime->set_prebuilt_arena(runtime_arena_dev, layout.off_runtime);
 
-    // ── Extract flat_schedule from callable's orch binary ──
-    // The orch_so_data contains the flat_schedule binary that was uploaded
-    // by prepare_callable_impl and stashed via _set_schedule_buf.
-    // Fall back to SONATA_SCHEDULE_PATH env var when stash is missing.
-
-    size_t flat_sched_size = 0;
-    const FlatSchedule *flat_sched = _find_stashed_schedule(&flat_sched_size);
-
-    // ── NPU path: upload schedule to device memory ──
-    // Check BEFORE the schedule-null return and validation so TMARB can run
-    // as a fallback when no schedule exists.  When schedule IS available under
-    // NPU mode, upload it to device memory and set Runtime fields for the
-    // AICPU orchestrator to consume.
-    const char *rt_mode = std::getenv("SONATA_RUNTIME_MODE");
-    if (rt_mode != nullptr && strcmp(rt_mode, "npu") == 0) {
-        if (flat_sched != nullptr && flat_sched_size >= sizeof(FlatSchedule)) {
-            LOG_INFO_V0("Sonata: NPU — uploading schedule (%zu bytes)", flat_sched_size);
-            void *sched_dev = runtime->host_api.device_malloc(flat_sched_size);
-            if (sched_dev != nullptr) {
-                int rc = runtime->host_api.copy_to_device(sched_dev, flat_sched, flat_sched_size);
-                if (rc == 0) {
-                    runtime->set_sonata_schedule(reinterpret_cast<uint64_t>(sched_dev), flat_sched_size);
-                    LOG_INFO_V0("Sonata: schedule uploaded to 0x%llx",
-                                (unsigned long long)(uintptr_t)sched_dev);
-                } else {
-                    runtime->host_api.device_free(sched_dev);
-                    LOG_WARN("Sonata: H2D copy failed (rc=%d), TMARB fallback", rc);
-                }
-            } else {
-                LOG_WARN("Sonata: device_malloc failed, TMARB fallback");
-            }
-        } else {
-            LOG_INFO_V0("Sonata: NPU mode, no schedule — TMARB orchestrator");
+    // PTO2_ORCH_TO_SCHED (same as upstream TMARB)
+    {
+        const char *env_val = std::getenv("PTO2_ORCH_TO_SCHED");
+        if (env_val && (env_val[0] == '1' || env_val[0] == 't' || env_val[0] == 'T')) {
+            runtime->orch_to_sched = true;
         }
-        return 0;
+    }
+
+    // ── NPU path: prebuilt arena init + sonata schedule upload ──
+    {
+        const char *rt_mode = std::getenv("SONATA_RUNTIME_MODE");
+        fprintf(stderr, "C2_DEBUG: rt_mode=%s\n", rt_mode ? rt_mode : "NULL");
+        if (rt_mode != nullptr && strcmp(rt_mode, "npu") == 0) {
+            fprintf(stderr, "C2_DEBUG: arena init\n");
+            PTO2Runtime *rt = runtime_init_data_from_layout(
+                host_arena, layout, PTO2_MODE_EXECUTE, sm_ptr, sm_size,
+                gm_heap, eff_heap_sizes);
+            if (rt == nullptr) {
+                LOG_ERROR("NPU: runtime_init_data_from_layout failed");
+                return -1;
+            }
+            runtime_wire_arena_pointers(host_arena, layout, rt);
+            rt->prebuilt_layout = layout;
+            fprintf(stderr, "C2_DEBUG: init + wire done\n");
+
+            // Sonata schedule: upload to GM heap tail for C2_PROOF verification
+            // on the HOST side.  total_cycles MUST remain 0 to prevent the AICPU
+            // sonata_orchestrate branch from dereferencing a HOST virtual address
+            // (the GM heap has different SMMU mappings on HOST vs AICPU).  TMARB
+            // fallback handles execution with the corrected ring config.
+            bool sonata_ok = false;
+            if (flat_sched != nullptr && flat_sched_size >= sizeof(FlatSchedule)) {
+                uint64_t gm_heap_end = reinterpret_cast<uint64_t>(gm_heap) + total_heap_size;
+                uint64_t sched_addr = gm_heap_end - flat_sched_size;
+                runtime->set_sonata_schedule(sched_addr, flat_sched_size);
+                sonata_ok = true;
+                fprintf(stderr, "C2_DEBUG: sonata staged for host proof: sched=0x%llx\n",
+                        (unsigned long long)sched_addr);
+            }
+
+            int rc = runtime->host_api.copy_to_device(
+                runtime_arena_dev, host_arena.base(), layout.arena_size);
+            if (rc != 0) {
+                LOG_ERROR("NPU: copy_to_device(arena) failed rc=%d", rc);
+                return -1;
+            }
+            runtime->set_prebuilt_arena(runtime_arena_dev, layout.off_runtime);
+            fprintf(stderr, "C2_DEBUG: arena upload OK (%zu bytes) sonata=%d\n",
+                    layout.arena_size, sonata_ok);
+            bind_succeeded = true;
+            return 0;
+        }
     }
 
     // ── Sim path: validate schedule + dlsym ──
@@ -442,9 +611,9 @@ extern "C" int bind_callable_to_runtime_impl(
     int interp_rc = aicpu_exec_fn(
         runtime_arena_dev, layout.arena_size,
         sm_ptr, sm_size,
-        gm_heap, eff_heap_size,
+        gm_heap, eff_heap_sizes[0],
         0, 0,  // aic_count, aiv_count (unused by interpreter)
-        static_cast<int32_t>(eff_task_window_size),
+        static_cast<int32_t>(eff_task_window_sizes[0]),
         flat_sched,
         device_args.tensor_data(),
         tensor_count
@@ -476,6 +645,9 @@ extern "C" int validate_runtime_impl(Runtime *runtime) {
         LOG_ERROR("validate_runtime_impl: runtime is null");
         return -1;
     }
+    fprintf(stderr, "C2_PROOF: validate entered, sched_addr=0x%lx sched_size=%lu\n",
+            (unsigned long)runtime->get_sonata_sched_addr(),
+            (unsigned long)runtime->get_sonata_sched_size());
 
     // ── SONATA PROOF: read schedule buffer sentinel from device memory ──
     // If sonata_orchestrate_with_schedule() was entered on the AICPU, it
@@ -490,10 +662,19 @@ extern "C" int validate_runtime_impl(Runtime *runtime) {
                 marker, reinterpret_cast<void*>(static_cast<uintptr_t>(probe_addr)), 8);
             if (rc == 0 && marker[0] == 0xCAFEBABE && marker[1] == 0xFACEFEED) {
                 LOG_INFO_V0("[SONATA PROOF] orchestrator branch executed on AICPU");
+                fprintf(stderr, "C2_PROOF: SONATA ORCHESTRATOR EXECUTED ON AICPU: 0x%08x 0x%08x\n",
+                        marker[0], marker[1]);
             } else if (rc == 0) {
                 LOG_INFO_V0("[SONATA PROOF] NOT executed (magic=0x%08x 0x%08x)",
                             marker[0], marker[1]);
+                fprintf(stderr, "C2_PROOF: NOT executed (magic=0x%08x 0x%08x)\n",
+                        marker[0], marker[1]);
+            } else {
+                fprintf(stderr, "C2_PROOF: copy_from_device failed rc=%d\n", rc);
             }
+        } else {
+            fprintf(stderr, "C2_PROOF: probe_addr=0x%lx size=%lu\n",
+                    (unsigned long)probe_addr, (unsigned long)runtime->get_sonata_sched_size());
         }
     }
 

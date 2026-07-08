@@ -1,14 +1,9 @@
-// sonata_orchestrate.cpp — FlatSchedule bridge for NPU dual-path execution.
+// sonata_orchestrate.cpp — AICPU entry point for Sonata schedule branch.
 //
-// This file provides sonata_orchestrate_with_schedule(), the entry point
-// that the upstream AICPU orchestrator thread calls when a Sonata schedule
-// binary is available (detected via Runtime::sonata_sched_addr_).
-//
-// It reuses interpret_schedule() from the standalone interpreter to dispatch
-// tasks according to the FlatSchedule, using the PTO2Runtime and tensor
-// registry already set up by the TMARB runtime.
-//
-// See ADR-002 for the full architecture.
+// Called unconditionally by the patched aicpu_executor.cpp orchestrator
+// thread.  Reads the schedule address from PTO2Runtime::total_cycles
+// (stashed by host before copy_to_device) and executes it.  Falls back
+// to TMARB when no schedule is available.
 
 #include <cstdint>
 #include <cstdlib>
@@ -24,15 +19,11 @@
 
 extern "C" PTO2Runtime *framework_current_runtime(void);
 
-// ── Forward declarations of interpreter-internal functions ──
-//
-// These are shared with aicpu_executor_standalone.cpp.  Both files define
-// the same static helpers after the rename (B1); the linker keeps one copy
-// since neither is exported.
+// ── Static helpers ──
 
 static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
                       const Tensor* tensor_registry, int32_t registry_size,
-                      Arg& arg) {
+                      Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS>& arg) {
     for (int16_t i = 0; i < ftask->num_args; i++) {
         const FlatArg& fa = fargs[i];
         int32_t slot = fa.runtime_slot;
@@ -69,7 +60,7 @@ static void set_deps(int32_t task_index_in_region,
                      int32_t dep_start, int32_t num_deps,
                      const PTO2TaskId* task_ids, int32_t num_submitted,
                      PTO2TaskId* dep_buf, int32_t dep_buf_size,
-                     Arg& arg) {
+                     Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS>& arg) {
     if (num_deps == 0 || task_ids == nullptr) return;
     uint32_t count = 0;
     for (int32_t i = 0; i < num_deps; i++) {
@@ -94,19 +85,15 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                                PTO2TaskId* dep_buf,
                                const Tensor* tensor_registry,
                                int32_t registry_size) {
+    using SubmitArg = Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS>;
 
     for (int32_t r = 0; r < sched->num_regions; r++) {
         const FlatRegion& rg = regions[r];
-
-        // Bounds checks
         if (rg.task_start < 0 || rg.num_tasks > sched->total_tasks - rg.task_start) continue;
         if (rg.dep_start < 0 || rg.num_deps > sched->total_deps - rg.dep_start) continue;
-
-        // Single is_fatal check before any scope or task operations.
         if (rt->ops->is_fatal(rt)) return;
 
         if (rg.kind == 1) {
-            // Dynamic region — AUTO scope (TMARB runtime discovers tasks)
             rt->pending_scope_mode = PTO2ScopeMode::AUTO;
             rt->ops->scope_begin(rt);
             rt->ops->scope_end(rt);
@@ -114,7 +101,6 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             continue;
         }
 
-        // Static region — explicit tasks + deps
         rt->pending_scope_mode = (rg.scope_mode == 1) ? PTO2ScopeMode::MANUAL : PTO2ScopeMode::AUTO;
         rt->ops->scope_begin(rt);
 
@@ -125,11 +111,10 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
 
         for (int32_t t = 0; t < rg.num_tasks; t++) {
             const FlatTask& ft = tasks[rg.task_start + t];
-
             int32_t task_arg_base = ft.arg_base;
             if (task_arg_base < 0 || ft.num_args > sched->total_args - task_arg_base) continue;
 
-            Arg submit_arg;
+            SubmitArg submit_arg;
             build_arg(&ft, &args[task_arg_base],
                       tensor_registry, registry_size, submit_arg);
             set_deps(t, fdeps, sched->total_deps,
@@ -150,81 +135,74 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
             }
             mk.aiv1_kernel_id = INVALID_KERNEL_ID;
 
-            if (rt->ops->is_fatal(rt)) {
-                rt->ops->scope_end(rt);  // close scope before aborting
-                break;
-            }
+            if (rt->ops->is_fatal(rt)) { rt->ops->scope_end(rt); break; }
             auto result = rt->ops->submit_task(rt, mk, submit_arg);
             task_ids[num_submitted++] = result.task_id();
         }
-
         delete[] task_ids;
         rt->ops->scope_end(rt);
     }
 }
 
-// ── Public entry point (called by upstream orchestrator thread) ──
+// ── Public entry point ──
+// Returns true if a schedule was executed, false to fall back to TMARB.
 
-extern "C" void sonata_orchestrate_with_schedule(
+extern "C" bool sonata_orchestrate_with_schedule(
     PTO2Runtime* rt,
-    Runtime* runtime,
-    uint64_t sched_addr,
-    uint64_t sched_size
+    Runtime* runtime
 ) {
-    if (rt == nullptr || runtime == nullptr || sched_addr == 0 || sched_size == 0) {
-        LOG_ERROR("sonata_orchestrate_with_schedule: invalid args");
-        return;
+    if (rt == nullptr || runtime == nullptr) {
+        return false;
     }
 
-    // Reinterpret the device-address as pointer (works on both sim and NPU:
-    // sim → host virtual address; NPU → AICPU-accessible HBM address).
-    auto* raw = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(sched_addr));
-    if (raw == nullptr) {
-        LOG_ERROR("sonata_orchestrate_with_schedule: null raw pointer");
-        return;
-    }
-    if (sched_size < sizeof(FlatSchedule)) {
-        LOG_ERROR("sonata_orchestrate_with_schedule: blob too small (%zu)", sched_size);
-        return;
+    // Read sonata data offset from total_cycles field.
+    // On the NPU path, total_cycles contains the offset from rt (PTO2Runtime)
+    // to the sonata data block within the same prebuilt arena.
+    // The prebuilt arena is fully AICPU-accessible after attach().
+    // Layout at (uint8_t*)rt + total_cycles:
+    //   offset 0:                   int32_t tensor_count
+    //   offset 4:                   Tensor[tensor_count]
+    //   offset 4 + tensor_data:     FlatSchedule
+    int64_t sonata_offset = rt->total_cycles;
+    if (sonata_offset == 0) {
+        return false;
     }
 
-    // ── PROOF: immediately set a marker in the Runtime struct ──
-    // If this code runs on the AICPU, the Runtime struct in HBM is modified.
-    // The host reads it back via validate_runtime_impl; non-zero sched_size = proof.
-    // (Sentinel write to schedule buffer removed — HBM device memory may be
-    // read-only from the AICPU processor on some NPU platforms.)
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(rt) + sonata_offset;
 
-    auto* sched = reinterpret_cast<const FlatSchedule*>(raw);
+    // Tensor registry (at offset 0: count, offset 4: Tensor array)
+    int32_t registry_size = 0;
+    const Tensor* tensor_registry = nullptr;
+    std::memcpy(&registry_size, base, sizeof(registry_size));
+    if (registry_size > 0 && registry_size <= MAX_TENSOR_ARGS) {
+        tensor_registry = reinterpret_cast<const Tensor*>(base + sizeof(int32_t));
+    }
+
+    // FlatSchedule (after registry: count + tensors)
+    auto* sched = reinterpret_cast<const FlatSchedule*>(
+        base + sizeof(int32_t) + static_cast<size_t>(registry_size) * sizeof(Tensor));
     if (sched->magic != FLAT_SCHEDULE_MAGIC) {
-        LOG_ERROR("sonata_orchestrate_with_schedule: bad magic 0x%08x", sched->magic);
-        return;
+        LOG_ERROR("sonata: bad schedule magic 0x%08x", sched->magic);
+        return false;
     }
 
-    // Parse FlatSchedule arrays from the raw binary.
+    // FlatSchedule array parsing (relative to sched pointer)
     int32_t payload_skip = (sched->version >= 2) ? 4 : 0;
-    auto* regions = reinterpret_cast<const FlatRegion*>(raw + sizeof(FlatSchedule) + payload_skip);
+    const uint8_t* sched_raw = reinterpret_cast<const uint8_t*>(sched);
+    auto* regions = reinterpret_cast<const FlatRegion*>(sched_raw + sizeof(FlatSchedule) + payload_skip);
     auto* tasks   = reinterpret_cast<const FlatTask*>(regions + sched->num_regions);
     auto* args    = reinterpret_cast<const FlatArg*>(tasks  + sched->total_tasks);
     auto* fdeps   = reinterpret_cast<const FlatDep*>(args   + sched->total_args);
 
-    // Extract tensor registry from the Runtime's ChipStorageTaskArgs.
-    const auto& orch_args = runtime->get_orch_args();
-    int32_t registry_size = orch_args.tensor_count();
-    const Tensor* tensor_registry = (registry_size > 0) ? orch_args.tensor_data() : nullptr;
-
-    // Pre-allocate dependency buffer.
     auto* dep_buf = new (std::nothrow) PTO2TaskId[MAX_DEPS_PER_TASK];
-    if (!dep_buf) {
-        LOG_ERROR("sonata_orchestrate_with_schedule: dep_buf alloc failed");
-        return;
-    }
+    if (!dep_buf) { return false; }
 
-    // Run the schedule interpreter using the pre-existing PTO2Runtime.
     interpret_schedule(rt, sched, regions, tasks, args, fdeps, dep_buf,
                        tensor_registry, registry_size);
 
     delete[] dep_buf;
 
-    LOG_INFO_V0("sonata_orchestrate_with_schedule: done (%d regions, %d tasks)",
+    LOG_INFO_V0("sonata: done (%d regions, %d tasks)",
                 sched->num_regions, sched->total_tasks);
+    return true;
 }

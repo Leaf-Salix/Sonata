@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os as _os
 import warnings
 from pathlib import Path
 from typing import Any
@@ -249,6 +250,11 @@ def _patch_kernel_config_sonata(work_dir: Path, sonata_dict: dict) -> None:
     if at is not None:
         extra_lines += f'\t"aicpu_thread_num": {at!r},\n'
 
+    # Also set runtime = "sonata_tmarb" so the Worker loads the correct
+    # host_runtime.so variant. Without this, the default TMARB runtime is
+    # loaded and the NPU path (SONATA_RUNTIME_MODE=npu) never fires.
+    extra_lines += '\t"runtime": "sonata_tmarb",\n'
+
     # Insert sonata dict + promoted keys before closing brace
     insert_block = sonata_line + extra_lines
     new_content = content[:close_idx] + insert_block + content[close_idx:]
@@ -276,9 +282,20 @@ def _make_patched_execute(original_execute):
 
     v0.21: Replaces the previous block_dim monkeypatch with the
     formal runtime_hook.apply_sonata_runtime_hints() integration.
+
+    v0.29 C2: Sets SONATA_SCHEDULE_PATH env var so the sonata_tmarb
+    NPU runtime can find the schedule binary in the work directory.
     """
     @functools.wraps(original_execute)
     def patched_execute(work_dir, *args, **kwargs):
+        # Set SONATA_SCHEDULE_PATH for the NPU runtime (if schedule exists)
+        sched_path = Path(str(work_dir)) / "sonata_schedule.bin"
+        if sched_path.exists():
+            _os.environ["SONATA_SCHEDULE_PATH"] = str(sched_path)
+            log.info("[SONATA] SONATA_SCHEDULE_PATH=%s", sched_path)
+        else:
+            _os.environ.pop("SONATA_SCHEDULE_PATH", None)
+
         # Apply Sonata runtime hints before execution
         try:
             from sonata.runtime_hook import apply_sonata_runtime_hints

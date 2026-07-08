@@ -24,13 +24,13 @@ extern "C" void framework_bind_runtime(PTO2Runtime *rt);
 
 static inline PTO2Runtime *sonata_current_runtime() { return framework_current_runtime(); }
 
-static inline TaskOutputTensors sonata_rt_submit_task(const MixedKernels &mk, const Arg &args) {
+static inline TaskOutputTensors sonata_rt_submit_task(const MixedKernels &mk, const Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS> &args) {
     PTO2Runtime *rt = sonata_current_runtime();
     if (rt == nullptr || rt->ops->is_fatal(rt)) return TaskOutputTensors{};
     return rt->ops->submit_task(rt, mk, args);
 }
 
-static inline TaskOutputTensors sonata_rt_submit_aic_task(int32_t kernel_id, const Arg &args) {
+static inline TaskOutputTensors sonata_rt_submit_aic_task(int32_t kernel_id, const Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS> &args) {
     MixedKernels mk;
     mk.aic_kernel_id = kernel_id;
     mk.aiv0_kernel_id = INVALID_KERNEL_ID;
@@ -38,7 +38,7 @@ static inline TaskOutputTensors sonata_rt_submit_aic_task(int32_t kernel_id, con
     return sonata_rt_submit_task(mk, args);
 }
 
-static inline TaskOutputTensors sonata_rt_submit_aiv_task(int32_t kernel_id, const Arg &args) {
+static inline TaskOutputTensors sonata_rt_submit_aiv_task(int32_t kernel_id, const Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS> &args) {
     MixedKernels mk;
     mk.aic_kernel_id = INVALID_KERNEL_ID;
     mk.aiv0_kernel_id = kernel_id;
@@ -67,7 +67,7 @@ static inline void sonata_rt_scope_end(PTO2Runtime *rt) {
 
 static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
                       const Tensor* tensor_registry, int32_t registry_size,
-                      Arg& arg) {
+                      Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS>& arg) {
     for (int16_t i = 0; i < ftask->num_args; i++) {
         const FlatArg& fa = fargs[i];
         int32_t slot = fa.runtime_slot;
@@ -116,7 +116,7 @@ static void set_deps(int32_t task_index_in_region,
                      int32_t dep_start, int32_t num_deps,
                      const PTO2TaskId* task_ids, int32_t num_submitted,
                      PTO2TaskId* dep_buf, int32_t dep_buf_size,
-                     Arg& arg) {
+                     Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS>& arg) {
     if (num_deps == 0 || task_ids == nullptr) return;
     uint32_t count = 0;
     for (int32_t i = 0; i < num_deps; i++) {
@@ -194,7 +194,7 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                 continue;  // invalid arg range — skip task
             }
 
-            Arg submit_arg;
+            Arg<MAX_TENSOR_ARGS, MAX_SCALAR_ARGS> submit_arg;
 
             build_arg(&ft, &args[task_arg_base],
                       tensor_registry, registry_size, submit_arg);

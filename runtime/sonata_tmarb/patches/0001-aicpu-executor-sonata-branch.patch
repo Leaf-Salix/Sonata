@@ -23,23 +23,13 @@ index 1234567..abcdef0 100644
              }
              rt_scope_begin(rt);
 -            (*p_func)(*orch_args_cached_);
-+            // Sonata schedule branch (ADR-002): check for precomputed FlatSchedule
-+            uint64_t sonata_sched_addr = runtime->get_sonata_sched_addr();
-+            if (sonata_sched_addr != 0) {
-+                // Precomputed schedule available → use FlatSchedule interpreter
-+                // The bridge function is compiled into the same aicpu_kernel.so
-+                // (sonata_tmarb/aicpu/sonata_orchestrate.cpp), linked normally.
-+                extern "C" void sonata_orchestrate_with_schedule(
-+                    PTO2Runtime* rt, Runtime* runtime,
-+                    uint64_t sched_addr, uint64_t sched_size
-+                );
-+                sonata_orchestrate_with_schedule(
-+                    rt, runtime,
-+                    sonata_sched_addr,
-+                    runtime->get_sonata_sched_size()
-+                );
-+            } else {
-+                // No schedule → normal TMARB orchestrator path
++            // Sonata schedule branch (ADR-002): try interpreter first.
++            // Returns true if a schedule was found and executed; false means
++            // fall back to the standard TMARB orchestrator path.
++            extern "C" bool sonata_orchestrate_with_schedule(
++                PTO2Runtime* rt, Runtime* runtime
++            );
++            if (!sonata_orchestrate_with_schedule(rt, runtime)) {
 +                (*p_func)(*orch_args_cached_);
 +            }
              rt_scope_end(rt);
