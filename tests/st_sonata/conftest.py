@@ -173,6 +173,20 @@ def _make_patched_compile(original_compile):
                 except Exception as exc:
                     log.debug("[SONATA] _write_bound_schedule skipped: %s", exc)
 
+                # v0.29 C2: Set SONATA_SCHEDULE_PATH so bind finds the binary.
+                # Done in the compile hook (not execute hook) because the test
+                # harness calls _execute_on_device directly, not execute_compiled.
+                sched_bin = Path(str(work_dir)) / "sonata_schedule.bin"
+                if sched_bin.exists():
+                    _os.environ["SONATA_SCHEDULE_PATH"] = str(sched_bin)
+                    log.info("[SONATA] SONATA_SCHEDULE_PATH=%s", sched_bin)
+
+                # v0.29 C2: Enable NPU runtime path so sonata_orchestrate_with_schedule
+                # is entered on the AICPU (or sim-thread). Without this, the host code
+                # takes the SIM-only interpreter path — total_cycles stays 0 and the
+                # AICPU never enters the sonata entry point.
+                _os.environ["SONATA_RUNTIME_MODE"] = "npu"
+
                 # v0.22: Inject RUNTIME_CONFIG["sonata"] into kernel_config.py
                 sonata_cfg = sonata_result.to_runtime_config()
                 _patch_kernel_config_sonata(Path(str(work_dir)), sonata_cfg.to_run_config_dict())

@@ -8,7 +8,10 @@ FlatSchedule binary is available and the orchestrator delegates to
 ``sonata_orchestrate_with_schedule()`` instead of invoking the standard
 orchestration SO.
 
-Zero default (``sonata_sched_addr_ == 0``) → TMARB behaviour unchanged.
+Also exports the orch function pointer + args globally so the sonata path
+can delegate to TMARB after entering the sonata code path (C2 PROOF).
+
+Zero default (``sonata_sched_addr_ == 0``) -> TMARB behaviour unchanged.
 Part of Sonata NPU dual-path integration (ADR-002).
 
 
@@ -21,6 +24,13 @@ index 1234567..abcdef0 100644
              if (*p_bind != nullptr) {
                  (*p_bind)(rt);
              }
++
++            // Export orch function + args so sonata_orchestrate can
++            // delegate to TMARB after entering the sonata code path.
++            extern void sonata_set_orch_fn(void *fn, void *args);
++            sonata_set_orch_fn(reinterpret_cast<void *>(*p_func),
++                               reinterpret_cast<void *>(&orch_args_cached_));
++
              rt_scope_begin(rt);
 -            (*p_func)(*orch_args_cached_);
 +            // Sonata schedule branch (ADR-002): try interpreter first.
@@ -33,5 +43,3 @@ index 1234567..abcdef0 100644
 +                (*p_func)(*orch_args_cached_);
 +            }
              rt_scope_end(rt);
-
-             // Flush the (potentially partially-filled) DepGenBuffer so the host

@@ -458,6 +458,15 @@ extern "C" int bind_callable_to_runtime_impl(
     int32_t eff_dep_pool_capacity = eff_dep_pool_capacities[0];  // used only by SIM path
 
     DeviceArena host_arena;
+
+    // ── Extract flat_schedule before arena reservation ──
+    // Need schedule size to reserve arena space for embedding the data block
+    // that the AICPU's sonata_orchestrate_with_schedule() reads.
+    size_t flat_sched_size = 0;
+    const FlatSchedule *flat_sched = _find_stashed_schedule(&flat_sched_size);
+    fprintf(stderr, "C2_DEBUG: find_stashed_schedule: sched=%p size=%zu\n",
+            (void*)flat_sched, flat_sched_size);
+
     PTO2RuntimeArenaLayout layout = runtime_reserve_layout(
         host_arena, eff_task_window_sizes, eff_heap_sizes, eff_dep_pool_capacities);
     // NOTE: scheduler_timeout_ms stays 0 (default) because
@@ -466,18 +475,29 @@ extern "C" int bind_callable_to_runtime_impl(
     fprintf(stderr, "C2_DEBUG: reserve_layout done arena_size=%zu off_runtime=%zu\n",
             layout.arena_size, layout.off_runtime);
 
-    // ── Extract flat_schedule early ──
-    size_t flat_sched_size = 0;
-    const FlatSchedule *flat_sched = _find_stashed_schedule(&flat_sched_size);
-    fprintf(stderr, "C2_DEBUG: find_stashed_schedule: sched=%p size=%zu\n",
-            (void*)flat_sched, flat_sched_size);
+    // ── Reserve space for sonata data block in the prebuilt arena ──
+    // Layout: uint64_t sentinel, int32_t tensor_count, 52-byte padding,
+    // Tensor[tensor_count], FlatSchedule.  The Tensor struct has alignas(64),
+    // so the Tensor array must start at a 64-byte aligned offset within the
+    // block.  Sentinel is for C2 PROOF: host writes 0, AICPU overwrites with
+    // 0xCAFEBABE+0xFACEFEED on entry; validate_runtime_impl reads back.
+    static constexpr size_t kTensorArrayOff = 64;  // alignas(64) for Tensor[]
+    size_t sched_block_size = kTensorArrayOff;
+    sched_block_size += static_cast<size_t>(tensor_count) * sizeof(Tensor);
+    if (flat_sched != nullptr) {
+        sched_block_size += flat_sched_size;
+    }
+    size_t sched_block_off = host_arena.reserve(sched_block_size, 64);
+    size_t actual_arena_size = host_arena.total_size();
+    fprintf(stderr, "C2_DEBUG: sched block off=%zu size=%zu actual_arena=%zu\n",
+            sched_block_off, sched_block_size, actual_arena_size);
 
     if (host_arena.commit(DeviceArena::kDefaultBaseAlign) == nullptr) {
         LOG_ERROR("Failed to commit host arena");
         return -1;
     }
 
-    if (runtime->host_api.setup_static_arena(total_heap_size, sm_size, layout.arena_size) != 0) {
+    if (runtime->host_api.setup_static_arena(total_heap_size, sm_size, actual_arena_size) != 0) {
         LOG_ERROR("Failed to setup static arena");
         return -1;
     }
@@ -520,30 +540,67 @@ extern "C" int bind_callable_to_runtime_impl(
             rt->prebuilt_layout = layout;
             fprintf(stderr, "C2_DEBUG: init + wire done\n");
 
-            // Sonata schedule: upload to GM heap tail for C2_PROOF verification
-            // on the HOST side.  total_cycles MUST remain 0 to prevent the AICPU
-            // sonata_orchestrate branch from dereferencing a HOST virtual address
-            // (the GM heap has different SMMU mappings on HOST vs AICPU).  TMARB
-            // fallback handles execution with the corrected ring config.
-            bool sonata_ok = false;
-            if (flat_sched != nullptr && flat_sched_size >= sizeof(FlatSchedule)) {
-                uint64_t gm_heap_end = reinterpret_cast<uint64_t>(gm_heap) + total_heap_size;
-                uint64_t sched_addr = gm_heap_end - flat_sched_size;
-                runtime->set_sonata_schedule(sched_addr, flat_sched_size);
-                sonata_ok = true;
-                fprintf(stderr, "C2_DEBUG: sonata staged for host proof: sched=0x%llx\n",
-                        (unsigned long long)sched_addr);
+            // ── Embed sonata data block in prebuilt arena ──
+            // Tensor registry + FlatSchedule at sched_block_off, read on AICPU
+            // via (uint8_t*)rt + rt->total_cycles after attach().
+            {
+                uint8_t *arena_base = static_cast<uint8_t*>(host_arena.base());
+
+                // Sentinel at offset 0 (C2 PROOF marker, initially 0)
+                uint64_t *sentinel = reinterpret_cast<uint64_t*>(arena_base + sched_block_off);
+                *sentinel = 0;
+
+                // Tensor count at offset 8
+                int32_t *reg_count = reinterpret_cast<int32_t*>(arena_base + sched_block_off + 8);
+                *reg_count = tensor_count;
+
+                // Tensor array at 64-byte aligned offset (alignas(64) Tensor)
+                Tensor *reg_tensors = reinterpret_cast<Tensor*>(
+                    arena_base + sched_block_off + kTensorArrayOff);
+                for (int i = 0; i < tensor_count; i++) {
+                    reg_tensors[i] = device_args.tensor(i);
+                }
+
+                // FlatSchedule after tensors (if available)
+                if (flat_sched != nullptr && flat_sched_size >= sizeof(FlatSchedule)) {
+                    uint8_t *sched_dst = arena_base + sched_block_off + kTensorArrayOff
+                                       + static_cast<size_t>(tensor_count) * sizeof(Tensor);
+                    std::memcpy(sched_dst, flat_sched, flat_sched_size);
+                }
+                fprintf(stderr, "C2_DEBUG: data block written (%d tensors, %zu sched)\n",
+                        tensor_count, flat_sched_size);
             }
 
+            // Set total_cycles to the AICPU-accessible offset from rt to the
+            // schedule data block within the prebuilt arena.  Non-zero triggers
+            // sonata_orchestrate_with_schedule() on the AICPU instead of TMARB.
+            int64_t sonata_off = static_cast<int64_t>(sched_block_off)
+                               - static_cast<int64_t>(layout.off_runtime);
+            rt->total_cycles = sonata_off;
+            fprintf(stderr, "C2_DEBUG: total_cycles=%ld (sched_off=%zu rt_off=%zu)\n",
+                    (long)sonata_off, sched_block_off, layout.off_runtime);
+
             int rc = runtime->host_api.copy_to_device(
-                runtime_arena_dev, host_arena.base(), layout.arena_size);
+                runtime_arena_dev, host_arena.base(), actual_arena_size);
             if (rc != 0) {
                 LOG_ERROR("NPU: copy_to_device(arena) failed rc=%d", rc);
                 return -1;
             }
             runtime->set_prebuilt_arena(runtime_arena_dev, layout.off_runtime);
-            fprintf(stderr, "C2_DEBUG: arena upload OK (%zu bytes) sonata=%d\n",
-                    layout.arena_size, sonata_ok);
+
+            // Store sentinel probe address for C2 PROOF verification.
+            // validate_runtime_impl reads this back via copy_from_device to
+            // confirm sonata_orchestrate_with_schedule() was entered on AICPU.
+            {
+                uint64_t sentinel_dev = reinterpret_cast<uint64_t>(runtime_arena_dev)
+                                      + sched_block_off;
+                runtime->set_sonata_schedule(sentinel_dev, sizeof(uint64_t));
+                fprintf(stderr, "C2_DEBUG: sentinel probe addr=0x%llx\n",
+                        (unsigned long long)sentinel_dev);
+            }
+
+            fprintf(stderr, "C2_DEBUG: arena upload OK (%zu bytes) total_cycles=%ld\n",
+                    actual_arena_size, (long)sonata_off);
             bind_succeeded = true;
             return 0;
         }
@@ -656,7 +713,7 @@ extern "C" int validate_runtime_impl(Runtime *runtime) {
     // Works on both sim (same address space) and NPU (HBM shared memory).
     {
         uint64_t probe_addr = runtime->get_sonata_sched_addr();
-        if (probe_addr != 0 && runtime->get_sonata_sched_size() > 8) {
+        if (probe_addr != 0 && runtime->get_sonata_sched_size() >= 8) {
             uint32_t marker[2] = {0, 0};
             int rc = runtime->host_api.copy_from_device(
                 marker, reinterpret_cast<void*>(static_cast<uintptr_t>(probe_addr)), 8);

@@ -92,7 +92,7 @@ def bind_func_ids(
             code=FallbackCode.BINDING_FUNC_ID_NOT_FOUND,
             message=f"kernel_identity {task.kernel_identity!r} not found in func_name_to_id",
         ))
-        return task  # leave func_id as None
+        return dataclasses.replace(task, func_id=None)  # force INVALID_KERNEL_ID in binary
 
     result = _map_tasks(schedule, mapper)
     return result, tuple(reasons)
