@@ -382,9 +382,8 @@ def _bind_schedule_from_work_dir(work_dir: Path) -> None:
     try:
         from sonata.schedule import SonataScheduleContract
         from sonata.binding import bind_func_ids
-        from pathlib import Path as _Path
 
-        schedule = SonataScheduleContract.from_json(sched_json)
+        schedule = SonataScheduleContract.from_json(str(sched_json))
         bound, _reasons = bind_func_ids(schedule, func_name_to_id)
         bound.write_json(sched_json)
         bin_path = work_dir / "sonata_schedule.bin"
