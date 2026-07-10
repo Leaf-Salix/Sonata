@@ -181,11 +181,21 @@ def _make_patched_compile(original_compile):
                     _os.environ["SONATA_SCHEDULE_PATH"] = str(sched_bin)
                     log.info("[SONATA] SONATA_SCHEDULE_PATH=%s", sched_bin)
 
-                # v0.29 C2: Enable NPU runtime path so sonata_orchestrate_with_schedule
-                # is entered on the AICPU (or sim-thread). Without this, the host code
-                # takes the SIM-only interpreter path — total_cycles stays 0 and the
-                # AICPU never enters the sonata entry point.
-                _os.environ["SONATA_RUNTIME_MODE"] = "npu"
+                # SIM path: SONATA_RUNTIME_MODE not set → default sim.
+
+                # Set SONATA_AICPU_PATH so the host-side interpreter (SIM path)
+                # can dlsym aicpu_execute / sonata_standalone_interpreter from the
+                # aicpu_kernel.so binary.  Needed because the chip worker loads
+                # the kernel .so with RTLD_LOCAL (not RTLD_GLOBAL), so
+                # dlsym(RTLD_DEFAULT, ...) fails.
+                _aicpu_so = (
+                    Path(__file__).resolve().parents[2]
+                    / "upstream" / "pypto" / "runtime" / "build" / "lib"
+                    / "a2a3" / "sim" / "sonata_tmarb" / "libaicpu_kernel.so"
+                )
+                if _aicpu_so.exists():
+                    _os.environ["SONATA_AICPU_PATH"] = str(_aicpu_so)
+                    log.info("[SONATA] SONATA_AICPU_PATH=%s", _aicpu_so)
 
                 # v0.22: Inject RUNTIME_CONFIG["sonata"] into kernel_config.py
                 sonata_cfg = sonata_result.to_runtime_config()

@@ -39,6 +39,12 @@
 #include "pto_shared_memory.h"
 #include "common/unified_log.h"
 #include "utils/device_arena.h"
+// No-op framework_bind_runtime for the SIM path.  The standalone
+// interpreter (sonata_standalone_interpreter) calls this function,
+// but on the host side there is no AICPU orch SO to bind to.
+// Strong symbol overrides the weak one from aicpu_kernel.so when
+// host_runtime.so is loaded into the process.
+extern "C" void framework_bind_runtime(PTO2Runtime *) {}
 
 static int64_t _now_ms() {
     struct timeval tv;
@@ -455,7 +461,7 @@ extern "C" int bind_callable_to_runtime_impl(
         total_heap_size += eff_heap_sizes[r];
     }
     uint64_t sm_size = PTO2SharedMemoryHandle::calculate_size_per_ring(eff_task_window_sizes);
-    int32_t eff_dep_pool_capacity = eff_dep_pool_capacities[0];  // used only by SIM path
+
 
     DeviceArena host_arena;
 
@@ -665,8 +671,17 @@ extern "C" int bind_callable_to_runtime_impl(
                   "set SONATA_AICPU_PATH to the aicpu_kernel.so path");
         return -1;
     }
+    // ── Sim path: allocate a fresh uncommitted arena buffer ──
+    // The pooled runtime_arena_dev comes from a committed DeviceArena, so the
+    // interpreter's attach() + runtime_reserve_layout() → reserve() would fail
+    // with "reserve() called after commit()".  Allocate a plain buffer instead.
+    void* sim_prebuilt = std::malloc(layout.arena_size);
+    if (sim_prebuilt == nullptr) {
+        LOG_ERROR("Failed to allocate sim path prebuilt arena");
+        return -1;
+    }
     int interp_rc = aicpu_exec_fn(
-        runtime_arena_dev, layout.arena_size,
+        sim_prebuilt, layout.arena_size,
         sm_ptr, sm_size,
         gm_heap, eff_heap_sizes[0],
         0, 0,  // aic_count, aiv_count (unused by interpreter)
@@ -675,6 +690,7 @@ extern "C" int bind_callable_to_runtime_impl(
         device_args.tensor_data(),
         tensor_count
     );
+    std::free(sim_prebuilt);
 
     int64_t t_total_end = _now_ms();
     LOG_INFO_V0("Sonata bind total: %" PRId64 "ms (interp rc=%d)", t_total_end - t_total_start, interp_rc);

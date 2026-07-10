@@ -19,6 +19,16 @@
 
 extern "C" PTO2Runtime *framework_current_runtime(void);
 
+// ── TMARB fallback linkage (called from patched aicpu_executor.cpp) ──
+
+static void *g_orch_func = nullptr;
+static void *g_orch_args = nullptr;
+
+extern "C" void sonata_set_orch_fn(void *fn, void *args) {
+    g_orch_func = fn;
+    g_orch_args = args;
+}
+
 // ── Static helpers ──
 
 static void build_arg(const FlatTask* ftask, const FlatArg* fargs,
@@ -78,6 +88,7 @@ static void set_deps(int32_t task_index_in_region,
     }
 }
 
+__attribute__((unused))
 static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
                                const FlatRegion* regions,
                                const FlatTask* tasks,
@@ -145,6 +156,9 @@ static void interpret_schedule(PTO2Runtime* rt, const FlatSchedule* sched,
     }
 }
 
+// Data block layout constants (must match host runtime_maker.cpp).
+static constexpr size_t kTensorArrayOff = 64;  // alignas(64) for Tensor[]
+
 // ── Public entry point ──
 // Returns true if a schedule was executed, false to fall back to TMARB.
 
@@ -180,11 +194,44 @@ extern "C" bool sonata_orchestrate_with_schedule(
         marker[1] = 0xFACEFEED;
         __sync_synchronize();
     }
+    fprintf(stderr, "C2_PROOF: sonata sentinel written, activating interpret_schedule\n");
 
-    // C2 requires correct func_id binding and schedule layout alignment.
-    // The sentinel above is the primary PROOF that the sonata code path
-    // was entered on the AICPU.  interpret_schedule execution requires
-    // further func_id alignment work.
-    fprintf(stderr, "C2_PROOF: sonata sentinel written, falling back to TMARB\n");
-    return false;
+    // ── Parse data block and call interpret_schedule ──
+    // Layout: [0..7] sentinel (uint64_t), [8..11] tensor_count (int32_t),
+    //         [64..) Tensor[tensor_count], then FlatSchedule.
+    int32_t tensor_count = 0;
+    std::memcpy(&tensor_count, base + 8, sizeof(tensor_count));
+    const Tensor* tensor_registry = nullptr;
+    if (tensor_count > 0) {
+        tensor_registry = reinterpret_cast<const Tensor*>(base + kTensorArrayOff);
+    }
+    const uint8_t* sched_start = base + kTensorArrayOff
+                               + static_cast<size_t>(tensor_count) * sizeof(Tensor);
+    const FlatSchedule* sched = reinterpret_cast<const FlatSchedule*>(sched_start);
+    if (sched->magic != FLAT_SCHEDULE_MAGIC) {
+        fprintf(stderr, "C2_PROOF: bad schedule magic 0x%08x, falling back\n", sched->magic);
+        return false;
+    }
+    const auto* raw = reinterpret_cast<const uint8_t*>(sched);
+    int32_t payload_skip = (sched->version >= 2) ? 4 : 0;
+    const FlatRegion* regions = reinterpret_cast<const FlatRegion*>(
+        raw + sizeof(FlatSchedule) + payload_skip);
+    const FlatTask* tasks = reinterpret_cast<const FlatTask*>(
+        regions + sched->num_regions);
+    const FlatArg* args = reinterpret_cast<const FlatArg*>(
+        tasks + sched->total_tasks);
+    const FlatDep* fdeps = reinterpret_cast<const FlatDep*>(
+        args + sched->total_args);
+
+    PTO2TaskId* dep_buf = new (std::nothrow) PTO2TaskId[MAX_DEPS_PER_TASK];
+    if (!dep_buf) {
+        fprintf(stderr, "C2_PROOF: dep_buf alloc failed\n");
+        return false;
+    }
+    interpret_schedule(rt, sched, regions, tasks, args, fdeps, dep_buf,
+                       tensor_registry, tensor_count);
+    delete[] dep_buf;
+
+    fprintf(stderr, "C2_PROOF: interpret_schedule completed successfully\n");
+    return true;
 }
