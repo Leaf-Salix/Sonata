@@ -438,6 +438,21 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             runner_mod._execute_on_device = _patched_exec_dev
     except (ImportError, AttributeError):
         pass
+    # Also patch _execute_on_device in the test runner module (direct import)
+    for mod_name in ("harness.core.test_runner", "tests.st.harness.core.test_runner"):
+        try:
+            tr = __import__(mod_name, fromlist=["_execute_on_device"])
+            if hasattr(tr, "_execute_on_device") and not getattr(tr._execute_on_device, "_sonata_patched", False):
+                orig_exec_dev_tr = tr._execute_on_device
+                @functools.wraps(orig_exec_dev_tr)
+                def _patched_exec_dev_tr(work_dir, *args, **kwargs):
+                    _bind_schedule_from_work_dir(Path(str(work_dir)))
+                    return orig_exec_dev_tr(work_dir, *args, **kwargs)
+                _patched_exec_dev_tr._sonata_patched = True
+                tr._execute_on_device = _patched_exec_dev_tr
+                break
+        except (ImportError, AttributeError):
+            continue
 
     # Standalone analysis for logging
     module = getattr(item, "module", None)
