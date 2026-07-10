@@ -426,6 +426,16 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         if not getattr(runner_mod.execute_compiled, "_sonata_patched", False):
             runner_mod.execute_compiled = _make_patched_execute(runner_mod.execute_compiled)
             runner_mod.execute_compiled._sonata_patched = True
+        # Also monkeypatch _execute_on_device, which the test harness calls
+        # directly (bypassing execute_compiled).
+        if not getattr(runner_mod._execute_on_device, "_sonata_patched", False):
+            orig_exec_dev = runner_mod._execute_on_device
+            @functools.wraps(orig_exec_dev)
+            def _patched_exec_dev(work_dir, *args, **kwargs):
+                _bind_schedule_from_work_dir(Path(str(work_dir)))
+                return orig_exec_dev(work_dir, *args, **kwargs)
+            _patched_exec_dev._sonata_patched = True
+            runner_mod._execute_on_device = _patched_exec_dev
     except (ImportError, AttributeError):
         pass
 
