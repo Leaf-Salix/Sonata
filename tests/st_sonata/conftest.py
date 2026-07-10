@@ -317,6 +317,9 @@ def _make_patched_execute(original_execute):
         if sched_path.exists():
             _os.environ["SONATA_SCHEDULE_PATH"] = str(sched_path)
             log.info("[SONATA] SONATA_SCHEDULE_PATH=%s", sched_path)
+
+            # v0.29 C2: bind func_ids from kernel_config.py now that it exists
+            _bind_schedule_from_work_dir(Path(str(work_dir)))
         else:
             _os.environ.pop("SONATA_SCHEDULE_PATH", None)
 
@@ -338,6 +341,62 @@ def _make_patched_execute(original_execute):
             log.warning("[SONATA] hook failed: %s", e)
         return original_execute(work_dir, *args, **kwargs)
     return patched_execute
+
+
+def _bind_schedule_from_work_dir(work_dir: Path) -> None:
+    """Rebind func_ids in sonata_schedule.json/binary using kernel_config.py KERNELS.
+
+    Called during the execute hook (patched_execute), when kernel_config.py
+    already exists with the ``KERNELS`` list populated by compile_and_assemble.
+    Fail-open: any error logs a warning and leaves the schedule unbound.
+    """
+    sched_json = work_dir / "sonata_schedule.json"
+    if not sched_json.exists():
+        return
+
+    # Read KERNELS from kernel_config.py
+    kc_path = work_dir / "kernel_config.py"
+    if not kc_path.exists():
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_kc_bind", str(kc_path))
+        if spec is None or spec.loader is None:
+            return
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        kernels = getattr(mod, "KERNELS", None)
+        if not kernels or not isinstance(kernels, (list, tuple)):
+            return
+        func_name_to_id: dict[str, int] = {}
+        for k in kernels:
+            if isinstance(k, dict) and "name" in k and "func_id" in k:
+                func_name_to_id[str(k["name"])] = int(k["func_id"])
+        if not func_name_to_id:
+            return
+    except Exception as exc:
+        log.debug("[SONATA] bind_from_kc: read failed: %s", exc)
+        return
+
+    # Read the existing (unbound) schedule JSON and rebuild with bound func_ids
+    try:
+        from sonata.schedule import SonataScheduleContract
+        from sonata.binding import bind_func_ids
+        from pathlib import Path as _Path
+
+        schedule = SonataScheduleContract.from_json(sched_json)
+        bound, _reasons = bind_func_ids(schedule, func_name_to_id)
+        bound.write_json(sched_json)
+        bin_path = work_dir / "sonata_schedule.bin"
+        if bin_path.exists():
+            bin_path.write_bytes(bound.to_binary())
+            log.info(
+                "[SONATA] binding applied post-compile: %d func_ids mapped, binary rewritten (%d bytes)",
+                len(func_name_to_id), len(bin_path.read_bytes()),
+            )
+    except Exception as exc:
+        log.warning("[SONATA] bind_from_kc: rebind failed: %s", exc)
+        return
 
 
 @pytest.hookimpl(tryfirst=True)

@@ -635,8 +635,15 @@ def _extract_func_name_to_id(
         )
         if result is not None:
             return result
+        if program is not None:
+            _region_log.debug(
+                "[SONATA] generate_orchestration returned no func_name_to_id "
+                "for program=%s", type(program).__name__,
+            )
     except ImportError:
-        pass
+        _region_log.debug("[SONATA] pypto.pypto_core.codegen not available")
+    except Exception as exc:
+        _region_log.debug("[SONATA] generate_orchestration failed: %s", exc)
 
     # Strategy 2: read kernel_config.py KERNELS list
     for src in (compiled, work_dir):
@@ -655,9 +662,14 @@ def _extract_via_generate_orchestration(compiled, generate_orchestration, *, pro
     if program is None:
         program = getattr(compiled, "_program", None)
     if program is None:
+        _region_log.debug("[SONATA] gen_orch: no program available")
         return None
     functions = getattr(program, "functions", None) or []
     get_func = getattr(program, "get_function", None)
+    _region_log.debug(
+        "[SONATA] gen_orch: program=%s has %d functions",
+        type(program).__name__, len(functions),
+    )
     for gv in functions:
         name = getattr(gv, "name", None)
         if name is None:
@@ -666,9 +678,16 @@ def _extract_via_generate_orchestration(compiled, generate_orchestration, *, pro
         try:
             result = generate_orchestration(program, func)
             raw = getattr(result, "func_name_to_id", None)
+            _region_log.debug(
+                "[SONATA] gen_orch: func=%s result_type=%s raw=%s",
+                name, type(result).__name__, raw,
+            )
             if raw is not None and len(raw) > 0:
                 return dict(raw)
-        except Exception:
+        except Exception as e:
+            _region_log.debug(
+                "[SONATA] gen_orch: func=%s error=%s", name, e,
+            )
             continue
     return None
 
