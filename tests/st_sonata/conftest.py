@@ -165,7 +165,7 @@ def _make_patched_compile(original_compile):
                 # v0.27: Write sonata_schedule.json + sonata_schedule.bin
                 try:
                     from sonata.pipeline import _write_bound_schedule
-                    _write_bound_schedule(sonata_result, result, Path(str(work_dir)))
+                    _write_bound_schedule(sonata_result, result, Path(str(work_dir)), program=program)
                     log.info(
                         "[SONATA] bound schedule + binary written to %s",
                         work_dir,

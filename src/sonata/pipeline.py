@@ -530,11 +530,20 @@ def _write_bound_schedule(
     result: SonataAnalysisResult,
     compiled: Any,
     work_dir: Path,
+    program: Any = None,
 ) -> None:
     """Build ``SonataScheduleContract`` and bind ``func_id`` from codegen output.
 
     Writes ``sonata_schedule.json`` (bound) to work_dir.
     Fail-open: any error logs a warning but does not raise.
+
+    Args:
+        result: Sonata analysis result with score and plan.
+        compiled: Return value of ``compile_program`` (may be ``None``).
+        work_dir: Compilation output directory (also used for kernel_config.py).
+        program: The original ``@pl.program`` Python class, passed through
+            so ``_extract_func_name_to_id`` can call ``generate_orchestration``
+            even when ``compiled`` is ``None``.
     """
     from .schedule import build_schedule
     from .binding import bind_func_ids, bind_runtime_slots
@@ -542,7 +551,7 @@ def _write_bound_schedule(
     schedule = build_schedule(result.score, result)
 
     # Attempt to extract func_name_to_id from codegen
-    func_name_to_id = _extract_func_name_to_id(compiled)
+    func_name_to_id = _extract_func_name_to_id(compiled, program=program)
     if func_name_to_id:
         bound_schedule, reasons = bind_func_ids(schedule, func_name_to_id)
         if reasons:
@@ -556,7 +565,7 @@ def _write_bound_schedule(
 
     # Attempt to bind runtime_slots (positional tensor/scalar from kernel_config)
     try:
-        tensor_names, scalar_names = _extract_arg_names(compiled)
+        tensor_names, scalar_names = _extract_arg_names(compiled, work_dir=work_dir)
         if tensor_names or scalar_names:
             bound_schedule, r2 = bind_runtime_slots(bound_schedule, tensor_names, scalar_names)
             if r2:
@@ -602,35 +611,49 @@ def _write_bound_schedule(
         _region_log.debug("[SONATA] trace generation skipped: %s", exc)
 
 
-def _extract_func_name_to_id(compiled: Any) -> dict[str, int] | None:
+def _extract_func_name_to_id(
+    compiled: Any,
+    *,
+    program: Any = None,
+    work_dir: Path | str | None = None,
+) -> dict[str, int] | None:
     """Extract ``func_name_to_id`` map from a compiled PyPTO program.
 
-    Tries two sources (fail-open):
-    1. ``pypto.pypto_core.codegen.generate_orchestration`` if available.
+    Tries three sources (fail-open):
+    1. ``pypto.pypto_core.codegen.generate_orchestration`` from the program.
     2. ``kernel_config.py``'s ``KERNELS`` list written to the output dir.
+    3. ``kernel_config.py`` read from the given *work_dir* (used when
+       ``compiled`` is ``None``).
 
-    Returns ``None`` when neither source is available.
+    Returns ``None`` when no source is available.
     """
     # Strategy 1: try generate_orchestration (C++ codegen API)
     try:
         from pypto.pypto_core.codegen import generate_orchestration
-        result = _extract_via_generate_orchestration(compiled, generate_orchestration)
+        result = _extract_via_generate_orchestration(
+            compiled, generate_orchestration, program=program,
+        )
         if result is not None:
             return result
     except ImportError:
         pass
 
     # Strategy 2: read kernel_config.py KERNELS list
-    try:
-        return _extract_via_kernel_config(compiled)
-    except Exception:
-        pass
+    for src in (compiled, work_dir):
+        try:
+            result = _extract_via_kernel_config(src)
+            if result is not None:
+                return result
+        except Exception:
+            continue
 
     return None
 
 
-def _extract_via_generate_orchestration(compiled, generate_orchestration):
-    program = getattr(compiled, "_program", None)
+def _extract_via_generate_orchestration(compiled, generate_orchestration, *, program=None):
+    # Prefer caller-supplied program over extracting from compiled.
+    if program is None:
+        program = getattr(compiled, "_program", None)
     if program is None:
         return None
     functions = getattr(program, "functions", None) or []
@@ -650,12 +673,20 @@ def _extract_via_generate_orchestration(compiled, generate_orchestration):
     return None
 
 
-def _extract_via_kernel_config(compiled):
-    """Read KERNELS list from kernel_config.py in the output dir."""
-    output_dir = getattr(compiled, "output_dir", None) or getattr(compiled, "_output_dir", None)
+def _extract_via_kernel_config(compiled_or_dir):
+    """Read KERNELS list from kernel_config.py in the output dir.
+
+    Accepts either a compiled object (with ``output_dir`` attr) or a ``Path``.
+    Returns ``None`` when no KERNELS list is available.
+    """
+    if isinstance(compiled_or_dir, (Path, str)):
+        output_dir = Path(compiled_or_dir)
+    else:
+        output_dir = getattr(compiled_or_dir, "output_dir", None) or getattr(compiled_or_dir, "_output_dir", None)
     if output_dir is None:
         return None
-    kc_path = Path(output_dir) / "kernel_config.py"
+    output_dir = Path(output_dir)
+    kc_path = output_dir / "kernel_config.py"
     if not kc_path.exists():
         return None
     import importlib.util
@@ -674,18 +705,28 @@ def _extract_via_kernel_config(compiled):
     return result if result else None
 
 
-def _extract_arg_names(compiled: Any) -> tuple[list[str], list[str]]:
+def _extract_arg_names(
+    compiled: Any,
+    *,
+    work_dir: Path | str | None = None,
+) -> tuple[list[str], list[str]]:
     """Extract tensor and scalar arg names from compiled output.
 
     Reads ``kernel_config.py``'s ``MUTABLE_PARAMS`` or ``PARAMS`` to
     determine the positional order of function parameters. Tensor args
     come before scalar args, matching codegen's ``std::stable_partition``.
     Returns ``([], [])`` when the source is unavailable (fail-open).
+
+    When *compiled* is ``None``, reads from *work_dir* instead.
     """
-    output_dir = getattr(compiled, "output_dir", None) or getattr(compiled, "_output_dir", None)
-    if output_dir is None:
-        return [], []
-    kc_path = Path(output_dir) / "kernel_config.py"
+    # Determine kernel_config.py path from compiled or work_dir
+    if work_dir is not None:
+        kc_path = Path(work_dir) / "kernel_config.py"
+    else:
+        output_dir = getattr(compiled, "output_dir", None) or getattr(compiled, "_output_dir", None)
+        if output_dir is None:
+            return [], []
+        kc_path = Path(output_dir) / "kernel_config.py"
     if not kc_path.exists():
         return [], []
     try:
