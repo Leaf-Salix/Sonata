@@ -383,6 +383,15 @@ def _bind_schedule_from_work_dir(work_dir: Path) -> None:
         from sonata.schedule import SonataScheduleContract
         from sonata.binding import bind_func_ids
 
+        # Debug: check file state
+        sched_json = work_dir / "sonata_schedule.json"
+        log.debug("[SONATA] bind_from_kc: sched_json=%s exists=%s size=%d",
+                  sched_json, sched_json.exists(), sched_json.stat().st_size if sched_json.exists() else 0)
+
+        if not sched_json.exists() or sched_json.stat().st_size == 0:
+            log.warning("[SONATA] bind_from_kc: schedule JSON missing or empty")
+            return
+
         schedule = SonataScheduleContract.from_json(str(sched_json))
         bound, _reasons = bind_func_ids(schedule, func_name_to_id)
         bound.write_json(sched_json)
